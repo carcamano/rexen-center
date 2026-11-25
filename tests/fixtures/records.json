@@ -1,0 +1,160 @@
+{
+  "_comment": "Mock XAPI database for tests: one pool with two hosts, their control domains, three guest VMs in different power states, a template and a snapshot. Records are partial; the client ignores missing fields.",
+  "pool": {
+    "OpaqueRef:pool-0001": {
+      "uuid": "5a0e3b3c-0000-4000-8000-000000000001",
+      "name_label": "Lab Pool",
+      "name_description": "",
+      "master": "OpaqueRef:host-0001",
+      "default_SR": "OpaqueRef:NULL",
+      "other_config": {}
+    }
+  },
+  "host": {
+    "OpaqueRef:host-0001": {
+      "uuid": "1c0e3b3c-0000-4000-8000-000000000001",
+      "name_label": "xcp-host-01",
+      "name_description": "Default install",
+      "hostname": "xcp-host-01",
+      "address": "192.0.2.11",
+      "enabled": true,
+      "API_version_major": 2,
+      "API_version_minor": 21,
+      "software_version": {"product_brand": "XCP-ng", "product_version": "8.3.0"},
+      "resident_VMs": ["OpaqueRef:vm-dom0-01", "OpaqueRef:vm-web"],
+      "other_config": {}
+    },
+    "OpaqueRef:host-0002": {
+      "uuid": "1c0e3b3c-0000-4000-8000-000000000002",
+      "name_label": "xcp-host-02",
+      "name_description": "Default install",
+      "hostname": "xcp-host-02",
+      "address": "192.0.2.12",
+      "enabled": true,
+      "API_version_major": 2,
+      "API_version_minor": 21,
+      "software_version": {"product_brand": "XCP-ng", "product_version": "8.3.0"},
+      "resident_VMs": ["OpaqueRef:vm-dom0-02"],
+      "other_config": {}
+    }
+  },
+  "vm": {
+    "OpaqueRef:vm-dom0-01": {
+      "uuid": "d0d0d0d0-0000-4000-8000-000000000001",
+      "name_label": "Control domain on host: xcp-host-01",
+      "power_state": "Running",
+      "allowed_operations": [],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": true,
+      "resident_on": "OpaqueRef:host-0001",
+      "affinity": "OpaqueRef:host-0001",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-dom0-02": {
+      "uuid": "d0d0d0d0-0000-4000-8000-000000000002",
+      "name_label": "Control domain on host: xcp-host-02",
+      "power_state": "Running",
+      "allowed_operations": [],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": true,
+      "resident_on": "OpaqueRef:host-0002",
+      "affinity": "OpaqueRef:host-0002",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-web": {
+      "uuid": "0b0b0b0b-0000-4000-8000-000000000001",
+      "name_label": "web-01",
+      "name_description": "Debian 12 web server",
+      "power_state": "Running",
+      "allowed_operations": ["clean_shutdown", "clean_reboot", "hard_shutdown", "hard_reboot", "suspend", "pause", "snapshot", "pool_migrate"],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:host-0001",
+      "affinity": "OpaqueRef:host-0001",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-db": {
+      "uuid": "0b0b0b0b-0000-4000-8000-000000000002",
+      "name_label": "db-01",
+      "name_description": "PostgreSQL",
+      "power_state": "Halted",
+      "allowed_operations": ["start", "start_on", "clone", "copy", "export", "destroy", "snapshot", "make_into_template"],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:host-0002",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-build": {
+      "uuid": "0b0b0b0b-0000-4000-8000-000000000003",
+      "name_label": "build-runner",
+      "name_description": "",
+      "power_state": "Halted",
+      "allowed_operations": ["start", "start_on", "clone", "copy", "export", "destroy", "snapshot", "make_into_template"],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:NULL",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-legacy": {
+      "uuid": "0b0b0b0b-0000-4000-8000-000000000004",
+      "name_label": "legacy-app",
+      "name_description": "",
+      "power_state": "Suspended",
+      "allowed_operations": ["resume", "resume_on", "hard_shutdown", "snapshot"],
+      "current_operations": {},
+      "is_a_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:host-0001",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-template-debian": {
+      "uuid": "7e7e7e7e-0000-4000-8000-000000000001",
+      "name_label": "Debian Bookworm 12",
+      "power_state": "Halted",
+      "allowed_operations": ["clone", "copy", "export", "provision"],
+      "current_operations": {},
+      "is_a_template": true,
+      "is_default_template": true,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:NULL",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {}
+    },
+    "OpaqueRef:vm-web-snap": {
+      "uuid": "5e5e5e5e-0000-4000-8000-000000000001",
+      "name_label": "web-01 before upgrade",
+      "power_state": "Halted",
+      "allowed_operations": ["revert", "clone", "copy", "export", "destroy"],
+      "current_operations": {},
+      "is_a_template": true,
+      "is_a_snapshot": true,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:host-0001",
+      "snapshot_of": "OpaqueRef:vm-web",
+      "other_config": {}
+    }
+  }
+}

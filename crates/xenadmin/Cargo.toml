@@ -1,0 +1,28 @@
+[package]
+name = "xenadmin"
+description = "Desktop management console for XCP-ng / XAPI pools (egui)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "xenadmin"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { workspace = true }
+egui = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+xapi = { workspace = true }
+xen-core = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe"] }
+xapi-mock = { workspace = true }
+
+[lints]
+workspace = true
