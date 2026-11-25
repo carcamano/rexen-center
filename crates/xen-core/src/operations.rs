@@ -42,6 +42,7 @@ use crate::actions::{self, ActionRequest, HostAction, PerfmonObjectRef, VmAction
 use crate::backend::{ConnectionError, ConnectionId, Notification, OperationId, Shared};
 use crate::model::ConnectionModel;
 use crate::objects;
+use crate::provisioning::CopyMode;
 
 /// `other_config` key marking a host put in maintenance mode by a console.
 pub const MAINTENANCE_MODE: &str = "MAINTENANCE_MODE";
@@ -74,6 +75,68 @@ pub enum OperationKind {
     DismissAlerts { count: usize, title: Option<String> },
     /// Saving the performance alerts of `object_name`.
     SavePerfmon { object_name: String },
+    /// A VM creation, template, snapshot or disk operation.
+    Provision(ProvisionKind),
+}
+
+/// The VM creation, template, snapshot and disk operations, with the names
+/// their titles show (the original's action titles).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionKind {
+    /// "Create VM '{vm}'".
+    CreateVm { vm: String, template: String },
+    /// "Creating '{vm}' by cloning '{source}'".
+    CloneVm { vm: String, source: String },
+    /// "Copying VM '{source}' to '{vm}' on SR '{sr}'".
+    CopyVm {
+        vm: String,
+        source: String,
+        sr: String,
+    },
+    /// "Converting VM '{vm}' to template".
+    MakeTemplate { vm: String },
+    /// "Deleting VM '{vm}' from '{location}'".
+    DeleteVm { vm: String, location: String },
+    /// "Taking a snapshot of VM '{vm}'...".
+    Snapshot { vm: String },
+    /// "Revert snapshot '{snapshot}'".
+    Revert { snapshot: String },
+    /// "Deleting snapshot '{0}'..." / "Deleting snapshots".
+    DeleteSnapshots { names: Vec<String> },
+    /// "Creating disk '{disk}' on SR '{sr}'".
+    NewDisk { disk: String, sr: String },
+    /// "Attaching virtual disk '{disk}' to VM '{vm}'".
+    AttachDisk { disk: String, vm: String },
+    /// "Detaching disk '{disk}' from VM '{vm}'".
+    DetachDisk { disk: String, vm: String },
+    /// "Deleting disk '{disk}' from SR '{sr}'".
+    DeleteDisk { disk: String, sr: String },
+    /// "Changing disk size for '{disk}'...".
+    ResizeDisk { disk: String },
+    /// "Moving Virtual Disk '{disk}' from SR '{from}' to SR '{to}'".
+    MoveDisk {
+        disk: String,
+        from: String,
+        to: String,
+    },
+    /// "Loading ISO '{iso}' into the DVD Drive on VM {vm}" / "Setting DVD
+    /// Drive on {vm} as empty.".
+    ChangeCd { vm: String, iso: Option<String> },
+    /// "Creating new DVD drive on VM {vm}".
+    NewCdDrive { vm: String },
+    /// "Installing {tools} on VM {vm}".
+    InstallTools { vm: String },
+}
+
+/// Something the user must know once an operation succeeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationNotice {
+    /// The new disk could not be plugged into the running VM: "You need to
+    /// shut down and then restart the VM before it can access the new
+    /// disk."
+    RestartForDisk,
+    /// Same for a new DVD drive.
+    RestartForDrive,
 }
 
 /// What a running operation is doing now (the original's action
@@ -94,6 +157,29 @@ pub enum OperationStep {
     Evacuating,
     /// Re-enabling a host after a failure.
     Reenabling,
+    /// New VM: "Cloning template '{template}'" / copying it to an SR.
+    CloningTemplate {
+        template: String,
+        sr: Option<String>,
+    },
+    /// New VM: "Provisioning VM".
+    Provisioning,
+    /// New VM: "Setting VM properties".
+    SettingProperties,
+    /// New VM: "Creating CD drive".
+    CreatingCdDrive,
+    /// New VM: "Creating disks".
+    CreatingDisks,
+    /// New VM: "Creating networks".
+    CreatingNetworks,
+    /// New VM: "Attaching a new vTPM".
+    AttachingVtpm,
+    /// New VM: "Starting VM".
+    StartingVm,
+    /// New VM: undoing what was made after a failure.
+    RollingBack,
+    /// Revert: "Reverting the power state of {vm}".
+    RevertingPowerState { vm: String },
 }
 
 /// How an operation ended (or that it has not).
@@ -143,6 +229,11 @@ pub struct Operation {
     pub step: Option<OperationStep>,
     /// Run with the session of another user (role elevation).
     pub elevated_as: Option<String>,
+    /// The VM, template or snapshot it made (New VM, Copy, Take Snapshot),
+    /// once known.
+    pub created: Option<Ref<Vm>>,
+    /// What the user must know after it succeeded.
+    pub notice: Option<OperationNotice>,
     pub started: SystemTime,
     pub finished: Option<SystemTime>,
 }
@@ -212,7 +303,149 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
             }
             .unwrap_or_default(),
         },
+        request => OperationKind::Provision(provision_kind(model, request)),
     }
+}
+
+/// The history entry of an F7 request.
+fn provision_kind(model: &ConnectionModel, request: &ActionRequest) -> ProvisionKind {
+    let vm_name = |r: &Ref<Vm>| {
+        model
+            .vms
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_else(|| r.to_string())
+    };
+    let sr_name = |r: &Ref<xapi::Sr>| {
+        model
+            .srs
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_default()
+    };
+    let vdi = |r: &Ref<xapi::Vdi>| model.vdis.get(r);
+    let vdi_name = |r: &Ref<xapi::Vdi>| vdi(r).map(|v| v.name_label.clone()).unwrap_or_default();
+    let vdi_sr = |r: &Ref<xapi::Vdi>| vdi(r).map(|v| sr_name(&v.sr)).unwrap_or_default();
+    match request {
+        ActionRequest::NewVm(spec) => ProvisionKind::CreateVm {
+            vm: spec.name.clone(),
+            template: vm_name(&spec.template),
+        },
+        ActionRequest::CopyVm { vm, name, mode, .. } => match mode {
+            CopyMode::Clone => ProvisionKind::CloneVm {
+                vm: name.clone(),
+                source: vm_name(vm),
+            },
+            CopyMode::Copy(sr) => ProvisionKind::CopyVm {
+                vm: name.clone(),
+                source: vm_name(vm),
+                sr: sr_name(sr),
+            },
+        },
+        ActionRequest::TemplateFromSnapshot { snapshot, name, .. } => ProvisionKind::CloneVm {
+            vm: name.clone(),
+            source: vm_name(snapshot),
+        },
+        ActionRequest::MakeTemplate { vm } => ProvisionKind::MakeTemplate { vm: vm_name(vm) },
+        ActionRequest::DeleteVm { vm, .. } => {
+            let pool = model
+                .pool()
+                .map(|(_, p)| objects::pool_name(model, p))
+                .unwrap_or_default();
+            let location = model
+                .vms
+                .get(vm)
+                .and_then(|r| objects::vm_home(model, r))
+                .and_then(|h| model.hosts.get(h))
+                .map(|h| h.name_label.clone())
+                .unwrap_or(pool);
+            ProvisionKind::DeleteVm {
+                vm: vm_name(vm),
+                location,
+            }
+        }
+        ActionRequest::Snapshot { vm, .. } => ProvisionKind::Snapshot { vm: vm_name(vm) },
+        ActionRequest::Revert { snapshot, .. } => ProvisionKind::Revert {
+            snapshot: vm_name(snapshot),
+        },
+        ActionRequest::DeleteSnapshots { snapshots } => ProvisionKind::DeleteSnapshots {
+            names: snapshots.iter().map(vm_name).collect(),
+        },
+        ActionRequest::NewDisk { disk, .. } => ProvisionKind::NewDisk {
+            disk: disk.name.clone(),
+            sr: sr_name(&disk.sr),
+        },
+        ActionRequest::AttachDisk { vm, vdi, .. } => ProvisionKind::AttachDisk {
+            disk: vdi_name(vdi),
+            vm: vm_name(vm),
+        },
+        ActionRequest::DetachDisk { vm, vbd } => ProvisionKind::DetachDisk {
+            disk: model.get(vbd).map(|b| vdi_name(&b.vdi)).unwrap_or_default(),
+            vm: vm_name(vm),
+        },
+        ActionRequest::DeleteDisk { vdi } => ProvisionKind::DeleteDisk {
+            disk: vdi_name(vdi),
+            sr: vdi_sr(vdi),
+        },
+        ActionRequest::ResizeDisk { vdi, .. } => ProvisionKind::ResizeDisk {
+            disk: vdi_name(vdi),
+        },
+        ActionRequest::MoveDisk { vdi, sr } => ProvisionKind::MoveDisk {
+            disk: vdi_name(vdi),
+            from: vdi_sr(vdi),
+            to: sr_name(sr),
+        },
+        ActionRequest::ChangeCd { vm, iso, .. } => ProvisionKind::ChangeCd {
+            vm: vm_name(vm),
+            iso: iso.as_ref().map(vdi_name),
+        },
+        ActionRequest::NewCdDrive { vm } => ProvisionKind::NewCdDrive { vm: vm_name(vm) },
+        ActionRequest::InstallTools { vm } => ProvisionKind::InstallTools { vm: vm_name(vm) },
+        ActionRequest::Vm { .. }
+        | ActionRequest::Host { .. }
+        | ActionRequest::DismissAlerts { .. }
+        | ActionRequest::SetPerfmon { .. } => unreachable!("not a provisioning request"),
+    }
+}
+
+/// The VM an operation works on (busy while it runs).
+fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<OperationObject> {
+    let vm_of_vdi = |vdi: &Ref<xapi::Vdi>| {
+        model
+            .vdis
+            .get(vdi)?
+            .vbds
+            .iter()
+            .filter_map(|b| model.get(b))
+            .map(|b| b.vm.clone())
+            .find(|v| model.vms.contains_key(v))
+    };
+    let vm = match request {
+        ActionRequest::Vm { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::Host { host, .. } => return Some(OperationObject::Host(host.clone())),
+        ActionRequest::DismissAlerts { .. }
+        | ActionRequest::SetPerfmon { .. }
+        | ActionRequest::NewVm(_)
+        | ActionRequest::DeleteSnapshots { .. } => None,
+        ActionRequest::CopyVm { vm, .. }
+        | ActionRequest::MakeTemplate { vm }
+        | ActionRequest::DeleteVm { vm, .. }
+        | ActionRequest::Snapshot { vm, .. }
+        | ActionRequest::NewDisk { vm, .. }
+        | ActionRequest::AttachDisk { vm, .. }
+        | ActionRequest::DetachDisk { vm, .. }
+        | ActionRequest::ChangeCd { vm, .. }
+        | ActionRequest::NewCdDrive { vm }
+        | ActionRequest::InstallTools { vm } => Some(vm.clone()),
+        ActionRequest::TemplateFromSnapshot { snapshot, .. } => Some(snapshot.clone()),
+        ActionRequest::Revert { snapshot, .. } => {
+            model.vms.get(snapshot).map(|s| s.snapshot_of.clone())
+        }
+        ActionRequest::DeleteDisk { vdi }
+        | ActionRequest::ResizeDisk { vdi, .. }
+        | ActionRequest::MoveDisk { vdi, .. } => vm_of_vdi(vdi),
+    };
+    vm.map(OperationObject::Vm)
 }
 
 fn kind_of(shared: &Shared, connection: ConnectionId, request: &ActionRequest) -> OperationKind {
@@ -240,10 +473,13 @@ pub(crate) fn start_action(
         .map(|v| v.server.clone())
         .unwrap_or_default();
     let kind = kind_of(shared, connection, &request);
-    let object = match &request {
-        ActionRequest::Vm { vm, .. } => Some(OperationObject::Vm(vm.clone())),
-        ActionRequest::Host { host, .. } => Some(OperationObject::Host(host.clone())),
-        ActionRequest::DismissAlerts { .. } | ActionRequest::SetPerfmon { .. } => None,
+    let object = {
+        let state = shared.state();
+        let model = state
+            .connection(connection)
+            .map(|v| v.model.clone())
+            .unwrap_or_default();
+        request_object(&model, &request)
     };
     let op = shared.start_operation(Some(connection), &server, kind.clone());
     let elevated = elevated_as.is_some();
@@ -273,6 +509,7 @@ pub(crate) fn start_action(
             ActionRequest::SetPerfmon { object, config } => {
                 set_perfmon(&shared, connection, &session, object, config.as_deref()).await
             }
+            request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
         if let Some(object) = &object {
             set_busy(&shared, connection, object, false);
@@ -705,7 +942,7 @@ fn set_busy(shared: &Shared, connection: ConnectionId, object: &OperationObject,
     });
 }
 
-enum TaskOutcome {
+pub(crate) enum TaskOutcome {
     Succeeded,
     Cancelled,
     Failed(xapi::Error),
@@ -713,10 +950,10 @@ enum TaskOutcome {
 
 /// The share of an operation's progress bar a task fills.
 #[derive(Clone, Copy)]
-struct Span(f64, f64);
+pub(crate) struct Span(pub(crate) f64, pub(crate) f64);
 
 impl Span {
-    const FULL: Span = Span(0.0, 1.0);
+    pub(crate) const FULL: Span = Span(0.0, 1.0);
 
     fn at(self, progress: f64) -> f64 {
         self.0 + (self.1 - self.0) * progress.clamp(0.0, 1.0)
@@ -729,7 +966,7 @@ impl Span {
 /// With `goes_away` (the operation restarts or stops the server this
 /// connection talks to), losing the server while following the task means
 /// it did its job.
-async fn run_task(
+pub(crate) async fn run_task(
     shared: &Shared,
     op: OperationId,
     session: &Session,
@@ -737,10 +974,26 @@ async fn run_task(
     span: Span,
     goes_away: bool,
 ) -> TaskOutcome {
+    run_task_result(shared, op, session, start, span, goes_away)
+        .await
+        .0
+}
+
+/// Like [`run_task`], also returning the task's `result` once it succeeded
+/// (the value the call returns, e.g. the new object of `Async.VM.clone`).
+pub(crate) async fn run_task_result(
+    shared: &Shared,
+    op: OperationId,
+    session: &Session,
+    start: impl Future<Output = xapi::Result<Ref<Task>>>,
+    span: Span,
+    goes_away: bool,
+) -> (TaskOutcome, String) {
     let task = match start.await {
         Ok(t) => t,
-        Err(e) => return TaskOutcome::Failed(e),
+        Err(e) => return (TaskOutcome::Failed(e), String::new()),
     };
+    let mut result = String::new();
     shared.update_operation(op, |o| {
         o.task = Some(task.clone());
         o.progress = Some(span.at(0.0));
@@ -751,7 +1004,7 @@ async fn run_task(
             Ok(r) => r,
             Err(e) if goes_away && (e.is_unreachable() || e.is_api(codes::SESSION_INVALID)) => {
                 tracing::info!(error = %e, "the server went away as asked");
-                return TaskOutcome::Succeeded;
+                return (TaskOutcome::Succeeded, String::new());
             }
             // `AsyncAction.Poll`: a task that vanished has finished.
             Err(e) if is_task_gone(&e) => break TaskOutcome::Succeeded,
@@ -762,7 +1015,10 @@ async fn run_task(
                 let progress = span.at(record.progress);
                 shared.update_operation(op, |o| o.progress = Some(progress));
             }
-            TaskStatusType::Success => break TaskOutcome::Succeeded,
+            TaskStatusType::Success => {
+                result = task_result_value(&record.result);
+                break TaskOutcome::Succeeded;
+            }
             TaskStatusType::Cancelled => break TaskOutcome::Cancelled,
             TaskStatusType::Failure => {
                 let error = task_error(record.error_info);
@@ -785,7 +1041,22 @@ async fn run_task(
     if let Err(e) = xapi::task::destroy(session, &task).await {
         tracing::debug!(error = %e, "task.destroy failed");
     }
-    outcome
+    (outcome, result)
+}
+
+/// The value in a task's `result`: XAPI writes it as XML-RPC
+/// (`<value>OpaqueRef:…</value>`), sometimes as a bare string.
+pub fn task_result_value(result: &str) -> String {
+    let trimmed = result.trim();
+    let inner = trimmed
+        .strip_prefix("<value>")
+        .and_then(|r| r.strip_suffix("</value>"))
+        .unwrap_or(trimmed);
+    let inner = inner
+        .strip_prefix("<string>")
+        .and_then(|r| r.strip_suffix("</string>"))
+        .unwrap_or(inner);
+    inner.trim().to_owned()
 }
 
 /// `HANDLE_INVALID` on the task itself.

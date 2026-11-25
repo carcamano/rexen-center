@@ -38,6 +38,12 @@ pub enum Entry {
         enabled: bool,
         request: ActionRequest,
     },
+    /// An item that opens a dialog (VM creation, snapshots, disks).
+    Dialog {
+        label: &'static str,
+        enabled: bool,
+        dialog: crate::provision_ui::DialogRequest,
+    },
     /// A submenu listing the pool's servers.
     Servers {
         label: &'static str,
@@ -240,8 +246,8 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => return None,
             })
         }
-        // Asked by the Alerts view itself; saving alerts is not confirmed.
-        ActionRequest::DismissAlerts { .. } | ActionRequest::SetPerfmon { .. } => None,
+        // Asked by the Alerts view and the F7 dialogs themselves; saving
+        // alerts is not confirmed.
         ActionRequest::Host { host, action } => {
             let record = model.hosts.get(host)?;
             let name = ("host", record.name_label.as_str());
@@ -275,6 +281,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
+        _ => None,
     }
 }
 
@@ -350,6 +357,8 @@ pub struct OpsUi {
     /// VMs this window just asked to start or resume (the window shows
     /// their Console tab once they run).
     pub started: Vec<(xen_core::ConnectionId, Ref<Vm>)>,
+    /// Dialogs a menu asked for (opened by the window).
+    pub dialog_requests: Vec<(ConnectionId, crate::provision_ui::DialogRequest)>,
 }
 
 impl OpsUi {
@@ -648,11 +657,28 @@ impl OpsUi {
         backend: &BackendHandle,
     ) -> bool {
         let mut chosen = None;
+        let mut dialog = None;
         let mut pending_separator = false;
         let mut drawn = 0;
         for entry in entries {
             match entry {
                 Entry::Separator => pending_separator = drawn > 0,
+                Entry::Dialog {
+                    label,
+                    enabled,
+                    dialog: request,
+                } => {
+                    if only_enabled && !enabled {
+                        continue;
+                    }
+                    if std::mem::take(&mut pending_separator) {
+                        ui.separator();
+                    }
+                    drawn += 1;
+                    if ui.add_enabled(enabled, Button::new(label)).clicked() {
+                        dialog = Some(request);
+                    }
+                }
                 Entry::Item {
                     label,
                     enabled,
@@ -698,6 +724,11 @@ impl OpsUi {
         }
         if drawn == 0 {
             ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+        }
+        if let Some(dialog) = dialog {
+            self.dialog_requests.push((conn.id, dialog));
+            ui.close();
+            return true;
         }
         match chosen {
             Some(request) => {
@@ -1131,9 +1162,9 @@ mod tests {
         entries
             .iter()
             .filter_map(|e| match e {
-                Entry::Item { label, enabled, .. } | Entry::Servers { label, enabled, .. } => {
-                    Some((*label, *enabled))
-                }
+                Entry::Item { label, enabled, .. }
+                | Entry::Servers { label, enabled, .. }
+                | Entry::Dialog { label, enabled, .. } => Some((*label, *enabled)),
                 Entry::Separator => None,
             })
             .collect()

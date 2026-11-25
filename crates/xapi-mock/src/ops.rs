@@ -92,6 +92,52 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("host.remove_from_other_config/key:perfmon", "pool-operator"),
     ("sr.add_to_other_config/key:perfmon", "pool-operator"),
     ("sr.remove_from_other_config/key:perfmon", "pool-operator"),
+    ("vbd.insert", "vm-operator"),
+    ("vbd.eject", "vm-operator"),
+    ("vm.snapshot", "vm-power-admin"),
+    ("vm.checkpoint", "vm-power-admin"),
+    ("vm.revert", "vm-power-admin"),
+    ("vm.clone", "vm-admin"),
+    ("vm.copy", "vm-admin"),
+    ("vm.provision", "vm-admin"),
+    ("vm.destroy", "vm-admin"),
+    ("vm.set_is_a_template", "vm-admin"),
+    ("vm.set_name_label", "vm-admin"),
+    ("vm.set_name_description", "vm-admin"),
+    ("vm.set_affinity", "vm-admin"),
+    ("vm.set_memory_limits", "vm-admin"),
+    ("vm.set_vcpus_max", "vm-admin"),
+    ("vm.set_vcpus_at_startup", "vm-admin"),
+    ("vm.set_hvm_boot_params", "vm-admin"),
+    ("vm.set_platform", "vm-admin"),
+    ("vm.set_other_config", "vm-admin"),
+    ("vm.add_to_platform", "vm-admin"),
+    ("vm.remove_from_platform", "vm-admin"),
+    ("vm.add_to_hvm_boot_params", "vm-admin"),
+    ("vm.remove_from_hvm_boot_params", "vm-admin"),
+    ("vm.add_to_other_config", "vm-admin"),
+    ("vm.remove_from_other_config", "vm-admin"),
+    ("vdi.create", "vm-admin"),
+    ("vdi.destroy", "vm-admin"),
+    ("vdi.resize", "vm-admin"),
+    ("vdi.resize_online", "vm-admin"),
+    ("vdi.copy", "vm-admin"),
+    ("vdi.set_name_label", "vm-admin"),
+    ("vdi.set_name_description", "vm-admin"),
+    ("vdi.pool_migrate", "vm-power-admin"),
+    ("vbd.create", "vm-admin"),
+    ("vbd.destroy", "vm-admin"),
+    ("vbd.plug", "vm-admin"),
+    ("vbd.unplug", "vm-admin"),
+    ("vif.create", "vm-admin"),
+    ("vif.destroy", "vm-admin"),
+    ("vtpm.create", "vm-admin"),
+    ("vtpm.destroy", "vm-admin"),
+    ("vm.set_suspend_sr", "vm-admin"),
+    ("vm.set_has_vendor_device", "vm-admin"),
+    ("vdi.set_sm_config", "vm-admin"),
+    ("vdi.add_to_sm_config", "vm-admin"),
+    ("vdi.remove_from_sm_config", "vm-admin"),
 ];
 
 fn rank(role: &str) -> usize {
@@ -188,6 +234,7 @@ const ALLOWED_RUNNING: &[&str] = &[
     "suspend",
     "pause",
     "snapshot",
+    "checkpoint",
     "pool_migrate",
 ];
 const ALLOWED_SUSPENDED: &[&str] = &["resume", "resume_on", "hard_shutdown", "snapshot"];
@@ -228,6 +275,13 @@ pub(crate) enum Work {
         effect: HostEffect,
     },
     Fail((String, Vec<String>)),
+    /// Runs `class.call` (see [`crate::provisioning`]) when the task ends;
+    /// its result becomes the task's.
+    Call {
+        class: String,
+        call: String,
+        params: Vec<Value>,
+    },
 }
 
 pub(crate) enum HostEffect {
@@ -356,7 +410,12 @@ impl Db {
             "pool_migrate" => ("pool_migrate", &["Running"], "Running"),
             _ => return Err(("MESSAGE_METHOD_UNKNOWN".into(), vec![format!("VM.{call}")])),
         };
-        if flag("is_a_template") || flag("is_control_domain") || flag("is_a_snapshot") {
+        // A snapshot with memory can be forced off (before it is deleted).
+        let suspended_snapshot =
+            flag("is_a_snapshot") && op == "hard_shutdown" && state == "Suspended";
+        if (flag("is_a_template") || flag("is_control_domain") || flag("is_a_snapshot"))
+            && !suspended_snapshot
+        {
             return Err(("OPERATION_NOT_ALLOWED".into(), vec![op.into()]));
         }
         if !required.contains(&state.as_str()) {
@@ -365,7 +424,7 @@ impl Db {
                 vec![vm, required[0].to_lowercase(), state.to_lowercase()],
             ));
         }
-        if !self.vm_allows(&vm, op) {
+        if !self.vm_allows(&vm, op) && !suspended_snapshot {
             if op == "clean_shutdown" || op == "clean_reboot" {
                 // No guest agent: the cooperative operations are missing.
                 return Err(("VM_LACKS_FEATURE".into(), vec![vm]));
@@ -532,7 +591,7 @@ impl Db {
     /// forgotten (the toolstack restarted).
     pub(crate) fn apply(&mut self, work: &Work) -> bool {
         match work {
-            Work::Nothing | Work::Fail(_) => false,
+            Work::Nothing | Work::Fail(_) | Work::Call { .. } => false,
             Work::Vm {
                 vm,
                 power_state,

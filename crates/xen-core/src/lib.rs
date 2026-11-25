@@ -22,6 +22,10 @@
 //!   configuration (`other_config["perfmon"]`).
 //! * [`operations`]: the operation history behind the Events panel, and the
 //!   operations themselves (run as XAPI tasks).
+//! * [`provisioning`]: VM creation, templates, snapshots and disks (the
+//!   New VM wizard's request, when each operation is offered, the ISO and
+//!   disk lists); [`provision_run`]: how each runs, call for call as the
+//!   original's actions.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -39,6 +43,8 @@ pub mod objects;
 pub mod operations;
 pub mod perfmon;
 pub mod performance;
+pub mod provision_run;
+pub mod provisioning;
 pub mod rbac;
 pub mod secrets;
 pub mod settings;

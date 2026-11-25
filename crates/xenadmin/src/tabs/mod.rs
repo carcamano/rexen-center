@@ -38,6 +38,9 @@ pub enum Tab {
     /// Performance graphs (`PerformancePage`), drawn by
     /// [`crate::perf_view`].
     Performance,
+    /// A VM's snapshots (`SnapshotsPage`), drawn by
+    /// [`crate::provision_ui`].
+    Snapshots,
 }
 
 impl Tab {
@@ -51,6 +54,7 @@ impl Tab {
             Self::Nics => t.tab_nics,
             Self::Console => t.tab_console,
             Self::Performance => crate::perf_strings::perf_strings().tab_performance,
+            Self::Snapshots => crate::prov_strings::prov_strings().tab_snapshots,
         }
     }
 }
@@ -105,6 +109,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             if objects::vm_kind(vm) == VmKind::Guest {
                 tabs.push(Tab::Console);
                 tabs.push(Tab::Performance);
+                tabs.push(Tab::Snapshots);
             }
             tabs
         }
@@ -134,6 +139,7 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Nics, _) => t.hdr_nics,
         (Tab::Console, _) => t.tab_console,
         (Tab::Performance, _) => crate::perf_strings::perf_strings().hdr_performance,
+        (Tab::Snapshots, _) => crate::prov_strings::prov_strings().hdr_snapshots,
     }
 }
 
@@ -321,7 +327,8 @@ mod tests {
                 Tab::VmStorage,
                 Tab::Networking,
                 Tab::Console,
-                Tab::Performance
+                Tab::Performance,
+                Tab::Snapshots
             ]
         );
         // A built-in template still to be provisioned has no Storage tab,
@@ -331,6 +338,7 @@ mod tests {
         assert!(!template_tabs.contains(&Tab::VmStorage));
         assert!(!template_tabs.contains(&Tab::Console));
         assert!(!template_tabs.contains(&Tab::Performance));
+        assert!(!template_tabs.contains(&Tab::Snapshots));
         let sr = Ref::new("OpaqueRef:sr-nfs");
         assert_eq!(
             tabs_for(&m, Subject::Sr(&sr, &m.srs[&sr])),

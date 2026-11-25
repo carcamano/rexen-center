@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use xapi::error::codes;
+use xen_core::operations::ProvisionKind;
 use xen_core::rbac;
 use xen_core::{
     ConnectionError, ConnectionModel, ConnectionStatus, ConnectionView, HostAction,
@@ -609,6 +610,54 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
             crate::perf_strings::perf_strings().op_save_alerts,
             &[("object", object_name)],
         ),
+        OperationKind::Provision(kind) => provision_title(kind),
+    }
+}
+
+/// The title of a VM creation, template, snapshot or disk operation.
+fn provision_title(kind: &ProvisionKind) -> String {
+    let p = crate::prov_strings::prov_strings();
+    match kind {
+        ProvisionKind::CreateVm { vm, .. } => fill(p.op_create_vm, &[("vm", vm)]),
+        ProvisionKind::CloneVm { vm, source } => {
+            fill(p.op_clone_vm, &[("vm", vm), ("source", source)])
+        }
+        ProvisionKind::CopyVm { vm, source, sr } => {
+            fill(p.op_copy_vm, &[("vm", vm), ("source", source), ("sr", sr)])
+        }
+        ProvisionKind::MakeTemplate { vm } => fill(p.op_make_template, &[("vm", vm)]),
+        ProvisionKind::DeleteVm { vm, location } => {
+            fill(p.op_delete_vm, &[("vm", vm), ("location", location)])
+        }
+        ProvisionKind::Snapshot { vm } => fill(p.op_snapshot, &[("vm", vm)]),
+        ProvisionKind::Revert { snapshot } => fill(p.op_revert, &[("snapshot", snapshot)]),
+        ProvisionKind::DeleteSnapshots { names } => match names.as_slice() {
+            [one] => fill(p.op_delete_snapshot, &[("snapshot", one)]),
+            _ => p.op_delete_snapshots.to_owned(),
+        },
+        ProvisionKind::NewDisk { disk, sr } => fill(p.op_new_disk, &[("disk", disk), ("sr", sr)]),
+        ProvisionKind::AttachDisk { disk, vm } => {
+            fill(p.op_attach_disk, &[("disk", disk), ("vm", vm)])
+        }
+        ProvisionKind::DetachDisk { disk, vm } => {
+            fill(p.op_detach_disk, &[("disk", disk), ("vm", vm)])
+        }
+        ProvisionKind::DeleteDisk { disk, sr } => {
+            fill(p.op_delete_disk, &[("disk", disk), ("sr", sr)])
+        }
+        ProvisionKind::ResizeDisk { disk } => fill(p.op_resize_disk, &[("disk", disk)]),
+        ProvisionKind::MoveDisk { disk, from, to } => fill(
+            p.op_move_disk,
+            &[("disk", disk), ("from", from), ("to", to)],
+        ),
+        ProvisionKind::ChangeCd { vm, iso } => match iso {
+            Some(iso) => fill(p.op_load_iso, &[("iso", iso), ("vm", vm)]),
+            None => fill(p.op_eject_iso, &[("vm", vm)]),
+        },
+        ProvisionKind::NewCdDrive { vm } => fill(p.op_new_dvd, &[("vm", vm)]),
+        ProvisionKind::InstallTools { vm } => {
+            fill(p.op_install_tools, &[("tools", p.tools_name), ("vm", vm)])
+        }
     }
 }
 
@@ -636,6 +685,36 @@ pub fn operation_step(step: &OperationStep) -> String {
         OperationStep::Disabling => o.step_disabling.to_owned(),
         OperationStep::Evacuating => o.step_evacuating.to_owned(),
         OperationStep::Reenabling => o.step_reenabling.to_owned(),
+        step => provision_step(step),
+    }
+}
+
+fn provision_step(step: &OperationStep) -> String {
+    let p = crate::prov_strings::prov_strings();
+    match step {
+        OperationStep::CloningTemplate { template, sr } => match sr {
+            Some(sr) => fill(p.step_copying, &[("template", template), ("sr", sr)]),
+            None => fill(p.step_cloning, &[("template", template)]),
+        },
+        OperationStep::Provisioning => p.step_provisioning.to_owned(),
+        OperationStep::SettingProperties => p.step_properties.to_owned(),
+        OperationStep::CreatingCdDrive => p.step_cd_drive.to_owned(),
+        OperationStep::CreatingDisks => p.step_disks.to_owned(),
+        OperationStep::CreatingNetworks => p.step_networks.to_owned(),
+        OperationStep::AttachingVtpm => p.step_vtpm.to_owned(),
+        OperationStep::StartingVm => p.step_starting.to_owned(),
+        OperationStep::RollingBack => p.step_rolling_back.to_owned(),
+        OperationStep::RevertingPowerState { vm } => fill(p.step_revert_power, &[("vm", vm)]),
+        _ => String::new(),
+    }
+}
+
+/// What the user must know after an operation succeeded.
+pub fn operation_notice(notice: xen_core::operations::OperationNotice) -> &'static str {
+    let p = crate::prov_strings::prov_strings();
+    match notice {
+        xen_core::operations::OperationNotice::RestartForDisk => p.restart_for_disk,
+        xen_core::operations::OperationNotice::RestartForDrive => p.restart_for_drive,
     }
 }
 

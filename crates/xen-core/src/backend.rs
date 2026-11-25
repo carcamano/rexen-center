@@ -657,6 +657,8 @@ impl Shared {
             object: None,
             step: None,
             elevated_as: None,
+            created: None,
+            notice: None,
             started: SystemTime::now(),
             finished: None,
         };

@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use xapi::{Host, Ref, SrRecord, VbdMode, VbdType, VdiRecord, Vm, VmRecord};
+use xapi::{Host, Ref, SrRecord, VbdMode, VbdRecord, VbdType, VdiRecord, Vm, VmRecord};
 use xen_core::format::disk_size;
 use xen_core::objects;
 
@@ -22,11 +22,10 @@ fn vdi_size(vdi: &VdiRecord) -> String {
     }
 }
 
-/// The disks of a VM (CD drives excluded), by position.
-pub fn vm_disks(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
+/// The columns of a VM's disk list.
+pub fn vm_disk_columns() -> Vec<&'static str> {
     let t = tab_strings();
-    let m = ctx.model;
-    let mut table = Table::new(vec![
+    vec![
         t.col_position,
         t.col_name,
         t.col_description,
@@ -36,46 +35,64 @@ pub fn vm_disks(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
         t.col_priority,
         t.col_active,
         t.col_device_path,
-    ]);
+    ]
+}
+
+/// The cells of one disk of a VM's list (`VMStoragePage`).
+pub fn vm_disk_row(ctx: Ctx<'_>, vbd: &VbdRecord, vdi: &VdiRecord) -> Vec<String> {
+    let t = tab_strings();
+    let m = ctx.model;
+    let priority: i64 = vbd
+        .qos_algorithm_params
+        .get("class")
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    let priority = match priority {
+        0 => fill(t.priority_lowest, &[("n", "0")]),
+        7 => fill(t.priority_highest, &[("n", "7")]),
+        n => n.to_string(),
+    };
+    vec![
+        vbd.userdevice.clone(),
+        objects::vdi_name(m, vdi),
+        vdi.name_description.clone(),
+        m.get(&vdi.sr)
+            .map(|sr| sr.name_label.clone())
+            .unwrap_or_default(),
+        vdi_size(vdi),
+        yes_no(vbd.mode == VbdMode::Ro),
+        priority,
+        yes_no(vbd.currently_attached),
+        if vbd.device.is_empty() {
+            t.unknown_angle.to_owned()
+        } else {
+            format!("/dev/{}", vbd.device)
+        },
+    ]
+}
+
+/// Whether a VM's disk list shows this disk: not a CD drive, shown
+/// (hidden disks only with View > Hidden Objects), not on the tools SR.
+pub fn vm_disk_shown(ctx: Ctx<'_>, vbd: &VbdRecord, vdi: &VdiRecord) -> bool {
+    vbd.r#type != VbdType::Cd
+        && objects::vdi_is_shown(vdi, ctx.show_hidden)
+        && ctx
+            .model
+            .get(&vdi.sr)
+            .is_some_and(|sr| !objects::is_tools_sr(sr))
+}
+
+/// The disks of a VM (CD drives excluded), by position.
+#[cfg(test)]
+pub fn vm_disks(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
+    let m = ctx.model;
+    let mut table = Table::new(vm_disk_columns());
     let mut rows = Vec::new();
     for vbd in vm.vbds.iter().filter_map(|r| m.get(r)) {
-        if vbd.r#type == VbdType::Cd {
-            continue;
-        }
-        let Some(vdi) = m
-            .get(&vbd.vdi)
-            .filter(|v| objects::vdi_is_shown(v, ctx.show_hidden))
-        else {
+        let Some(vdi) = m.get(&vbd.vdi).filter(|v| vm_disk_shown(ctx, vbd, v)) else {
             continue;
         };
-        let Some(sr) = m.get(&vdi.sr).filter(|sr| !objects::is_tools_sr(sr)) else {
-            continue;
-        };
-        let priority: i64 = vbd
-            .qos_algorithm_params
-            .get("class")
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
-        let priority = match priority {
-            0 => fill(t.priority_lowest, &[("n", "0")]),
-            7 => fill(t.priority_highest, &[("n", "7")]),
-            n => n.to_string(),
-        };
-        rows.push(vec![
-            vbd.userdevice.clone(),
-            objects::vdi_name(m, vdi),
-            vdi.name_description.clone(),
-            sr.name_label.clone(),
-            vdi_size(vdi),
-            yes_no(vbd.mode == VbdMode::Ro),
-            priority,
-            yes_no(vbd.currently_attached),
-            if vbd.device.is_empty() {
-                t.unknown_angle.to_owned()
-            } else {
-                format!("/dev/{}", vbd.device)
-            },
-        ]);
+        rows.push(vm_disk_row(ctx, vbd, vdi));
     }
     rows.sort_by(|a, b| objects::natural_cmp(&a[0], &b[0]));
     for row in rows {

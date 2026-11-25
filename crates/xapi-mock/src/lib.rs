@@ -31,6 +31,7 @@
 //! * performance data: `GET /rrd_updates`, `/host_rrds` and `/vm_rrds`
 //!   (JSON with `json=true`, else XML) and `host.get_data_sources` /
 //!   `VM.get_data_sources`, made up from the time (see [`rrd`]);
+//! * VM creation, templates, snapshots and disks (see [`provisioning`]);
 //! * messages: `message.create` and `message.destroy` (with their events),
 //!   and `host.call_plugin` for perfmon's `refresh` / `start`.
 //!
@@ -51,6 +52,7 @@
 //! its task fails with a given XAPI error).
 
 pub mod ops;
+pub mod provisioning;
 pub mod rrd;
 
 pub use ops::RBAC_USERS;
@@ -612,29 +614,42 @@ impl State {
                 objects.insert(("role".to_owned(), r), record);
             }
         }
+        let mut db = Db {
+            objects,
+            events: Vec::new(),
+            seq: 0,
+            sessions: HashMap::new(),
+            calls: Vec::new(),
+            next_session: 1,
+            lose_events: false,
+            unknown_classes: HashSet::new(),
+            coordinator: None,
+            task_steps: 4,
+            task_step: Duration::from_millis(100),
+            next_task: 1,
+            failures: HashMap::new(),
+            console_base: String::new(),
+            next_console: 1,
+            rrd_json: true,
+            rrd_units: true,
+            rrd_clock_offset: 0,
+            next_message: 1,
+            plugin_calls: Vec::new(),
+            next_object: 1,
+        };
+        // Drives without `allowed_operations` get them from their VM.
+        let bare: Vec<String> = db
+            .objects
+            .iter()
+            .filter(|((c, _), rec)| c == "vbd" && rec.get("allowed_operations").is_none())
+            .map(|((_, r), _)| r.clone())
+            .collect();
+        for vbd in bare {
+            db.refresh_vbd_ops(&vbd);
+        }
+        db.events.clear();
         Self {
-            db: Mutex::new(Db {
-                objects,
-                events: Vec::new(),
-                seq: 0,
-                sessions: HashMap::new(),
-                calls: Vec::new(),
-                next_session: 1,
-                lose_events: false,
-                unknown_classes: HashSet::new(),
-                coordinator: None,
-                task_steps: 4,
-                task_step: Duration::from_millis(100),
-                next_task: 1,
-                failures: HashMap::new(),
-                console_base: String::new(),
-                next_console: 1,
-                rrd_json: true,
-                rrd_units: true,
-                rrd_clock_offset: 0,
-                next_message: 1,
-                plugin_calls: Vec::new(),
-            }),
+            db: Mutex::new(db),
             consoles: Mutex::new(HashMap::new()),
             changed: Notify::new(),
             certificate: Mutex::new(MockCertificate::Original),
@@ -720,6 +735,8 @@ struct Db {
     next_message: u64,
     /// `host.call_plugin` calls: `(plugin, function)`.
     plugin_calls: Vec<(String, String)>,
+    /// Counter for the references of objects the mock creates.
+    next_object: u64,
 }
 
 impl Db {
@@ -807,14 +824,15 @@ impl Db {
         } else {
             NULL_REF.to_owned()
         };
-        let allowed = ops::allowed_for(power_state);
         self.modify("vm", vm, |rec| {
             rec.insert("power_state".into(), json!(power_state));
             rec.insert("resident_on".into(), json!(new_host));
+            let allowed = provisioning::vm_allowed(rec);
             rec.insert("allowed_operations".into(), json!(allowed));
             rec.insert("current_operations".into(), json!({}));
         });
         self.sync_consoles(vm, power_state);
+        self.sync_vbds(vm);
         if old_host != new_host {
             if old_host != NULL_REF {
                 self.modify("host", &old_host, |rec| {
@@ -1194,6 +1212,24 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
         _ if sync_call == "add_to_other_config" || sync_call == "remove_from_other_config" => {
             db.other_config(&sync_class.to_lowercase(), sync_call, params)
         }
+        _ if provisioning::handles(sync_class, sync_call) => {
+            if method.starts_with("Async.") {
+                let work = match failure {
+                    Some(error) => ops::Work::Fail(error),
+                    None => ops::Work::Call {
+                        class: sync_class.to_owned(),
+                        call: sync_call.to_owned(),
+                        params: params.to_vec(),
+                    },
+                };
+                drop(db);
+                let task = spawn_task(state, method, work);
+                state.changed.notify_waiters();
+                return Ok(json!(task));
+            }
+            db.provisioning_call(sync_class, sync_call, params)
+                .expect("handled call")
+        }
         _ if (sync_class == "VM" || sync_class == "host")
             && ops::required_permission(method).is_some()
             && !matches!(
@@ -1373,6 +1409,33 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
                 });
             } else {
                 match &work {
+                    ops::Work::Call {
+                        class,
+                        call,
+                        params,
+                    } => match db.provisioning_call(class, call, params) {
+                        Some(Ok(value)) => {
+                            let result = match value.as_str() {
+                                Some(r) if !r.is_empty() => format!("<value>{r}</value>"),
+                                _ => String::new(),
+                            };
+                            db.finish_task(&task_ref, "success", &result, &[]);
+                        }
+                        Some(Err((code, params))) => {
+                            let mut info = vec![code.as_str()];
+                            info.extend(params.iter().map(String::as_str));
+                            db.finish_task(&task_ref, "failure", "", &info);
+                        }
+                        None => {
+                            let name = format!("{class}.{call}");
+                            db.finish_task(
+                                &task_ref,
+                                "failure",
+                                "",
+                                &["MESSAGE_METHOD_UNKNOWN", &name],
+                            );
+                        }
+                    },
                     ops::Work::Fail((code, params)) => {
                         let mut info = vec![code.as_str()];
                         info.extend(params.iter().map(String::as_str));

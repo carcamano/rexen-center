@@ -8,9 +8,9 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F6 (performance graphs, alerts and notifications) on top
-of F1–F5 (base, connection and model, detail tabs, VM and host
-operations, VNC console).** What works:
+**Status: phase F7 (VM creation, templates, snapshots and disks) on top
+of F1–F6 (base, connection and model, detail tabs, VM and host
+operations, VNC console, performance graphs and alerts).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -119,6 +119,39 @@ operations, VNC console).** What works:
   the repeat interval, saved to `other_config["perfmon"]` in the
   original's XML (other perfmon variables are kept), followed by the
   perfmon plugin's `refresh` on the hosts concerned;
+- the **New VM wizard**, as the original's: Template (custom templates,
+  built-in ones and snapshots, with a search box), Name, Installation
+  Media (an ISO from the ISO libraries, or the network) with the **boot
+  mode** (BIOS, UEFI, UEFI Secure Boot, as the template supports) and an
+  optional **vTPM**, Home Server, CPU & Memory (vCPUs, topology, memory),
+  Storage (the template's disks, sizes and SRs, extra disks, fast clone
+  or full copy of a custom template), Networking and Finish (start the VM
+  automatically). It runs like `CreateVMAction`: the template is cloned
+  (or copied) under a hidden name, provisioned with its disk instructions
+  removed, then named and given its settings, DVD drive and ISO, disks
+  (each owned by the VM), interfaces and vTPM, and started; a failure
+  before the interfaces are made removes the half-made VM and its disks.
+  The new VM is selected once made;
+- **Copy VM / Copy Template** (fast clone or full copy to an SR),
+  **Convert to Template**, **Delete VM / Delete Template** with the
+  original's dialog (the disks only this VM uses, checked when its drives
+  own them, and its snapshots), **New VM from Snapshot** and **Create
+  Template from Snapshot**;
+- the **Snapshots tab** of a VM: Take Snapshot (disks only, or disks and
+  memory of a running VM), Revert To (optionally taking a snapshot of the
+  current state first; a VM running at the snapshot is started or
+  resumed again), the Actions menu and Delete (several at once; the
+  snapshots' own disks go with them);
+- on a VM's **Storage tab**: its **DVD drives** (load an ISO, Eject, or
+  create a drive when it has none) and its disks with **Add**, **Attach**
+  (an existing disk, optionally read-only), **Properties** (resize; a
+  disk cannot shrink), **Detach**, **Move** (to another SR: storage live
+  migration while a running VM uses it, else copy and re-attach) and
+  **Delete**, with the original's confirmations; a disk or drive that
+  cannot be plugged into a running VM says it needs a restart;
+- **Install XCP-ng VM Tools**: the guest tools ISO into the VM's DVD
+  drive (the original's leftover `InstallPVToolsAction`; XCP-ng Center
+  25.04 offers no such menu on XCP-ng 8.x);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -126,9 +159,11 @@ operations, VNC console).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs, custom graphs (New/Edit Graph), VM creation and
-cross-pool migration come in later phases (RDP is not embedded). See the
-port plan for the full roadmap.
+Editing from the tabs (VM properties, SR management), custom graphs
+(New/Edit Graph), import/export and cross-pool migration come in later
+phases (RDP is not embedded). The New VM wizard leaves out the pages the
+original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
+copying BIOS strings). See the port plan for the full roadmap.
 
 Console limitations: shortcuts the operating system keeps (Alt+Tab, the
 Windows key, Ctrl+Alt+Del) never reach the console, as in the original
@@ -290,6 +325,22 @@ end to end:
   removed when nothing is on, the perfmon refresh); in the window: the
   Performance tab's graphs, zoom and feeds, the Alerts view with its
   questions, and the settings window;
+- VM creation, templates, snapshots and disks against the mock, which
+  implements `VM.clone` / `copy` / `provision` / `snapshot` /
+  `checkpoint` / `revert` / `destroy`, the `VDI`, `VBD`, `VIF` and `VTPM`
+  calls, field setters and map calls, and refuses empty enum values in
+  records as XAPI does: a new VM from a built-in template (ISO, disks,
+  networks, UEFI Secure Boot, vTPM, start) and the exact call order, a
+  network boot, the rollback of a half-made VM, new VMs from a snapshot
+  and from a custom template copied to an SR, copy and fast clone,
+  templates, deletion with chosen disks and snapshots, snapshots with and
+  without memory, revert (restarting or resuming the VM), deleting
+  snapshots with their disks, every disk operation (new, attach, detach,
+  resize, move halted and live, delete, a full SR), DVD drives, ISOs and
+  the tools ISO, and RBAC; in the window: the New VM wizard end to end,
+  the Snapshots tab and its dialogs, Copy / Convert / Delete from the
+  menus, the Storage tab's disk buttons and DVD drives, Install Tools,
+  and role elevation;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -337,6 +388,23 @@ view (checking every other message is still there), turns its CPU alert
 on and off again (the `perfmon` key ends as found; the perfmon refresh is
 not called), and shuts it down.
 
+VM creation, snapshots and disks on a real host
+(`app/tests/provisioning_real.rs`, same variables plus `XENADMIN_REAL_LOG`
+and `XENADMIN_REAL_SHOTS`):
+
+- `real_f7_fluxer` acts on the VM named exactly "09 - Ubuntu Fluxer" only
+  (refused unless exactly one VM has that name and it is halted): it
+  takes a snapshot, loads an ISO into its DVD drive and ejects it,
+  reverts to the snapshot it took and deletes it, leaving the VM halted
+  with no new snapshot or disk;
+- `real_f7_test_vm_create` makes one disposable test VM
+  (`xenadmin-rs-test-f7`, refused if one exists) with the New VM wizard,
+  its disk on the SR named "Local storage"; `real_f7_console_driver`
+  types into that VM's console from command files
+  (`XENADMIN_REAL_DRIVER`); `real_f7_test_vm_operations` runs the disk,
+  DVD, tools, snapshot, copy and template operations on it and then
+  deletes everything named after it.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -372,7 +440,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

@@ -17,7 +17,7 @@ use super::*;
 use crate::console_keys;
 use crate::console_view::{ConsoleKey, framebuffer_point};
 
-fn view<'h>(
+pub(super) fn view<'h>(
     h: &'h Harness<'_, XenAdminApp>,
     key: &ConsoleKey,
 ) -> Option<&'h crate::console_view::ConsoleView> {
@@ -28,20 +28,25 @@ fn status(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey) -> Option<ConsoleStatu
     view(h, key).map(|v| v.handle.status())
 }
 
-fn connected(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey) -> bool {
+pub(super) fn connected(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey) -> bool {
     matches!(status(h, key), Some(ConsoleStatus::Connected { .. }))
         && view(h, key).is_some_and(|v| v.image.is_some())
 }
 
 /// The egui key whose position is `code`.
-fn egui_key(code: KeyCode) -> Key {
+pub(super) fn egui_key(code: KeyCode) -> Key {
     *Key::ALL
         .iter()
         .find(|k| console_keys::key_code(**k, Some(**k)) == Some(code))
         .unwrap_or_else(|| panic!("no egui key for {code:?}"))
 }
 
-fn key_event(h: &Harness<'_, XenAdminApp>, key: Key, physical: Option<Key>, pressed: bool) {
+pub(super) fn key_event(
+    h: &Harness<'_, XenAdminApp>,
+    key: Key,
+    physical: Option<Key>,
+    pressed: bool,
+) {
     h.event(Event::Key {
         key,
         physical_key: physical,
@@ -53,7 +58,7 @@ fn key_event(h: &Harness<'_, XenAdminApp>, key: Key, physical: Option<Key>, pres
 
 /// Presses and releases the key at `code`'s position (with Shift if asked),
 /// as a keyboard would.
-fn tap(h: &mut Harness<'_, XenAdminApp>, code: KeyCode, shift: bool) {
+pub(super) fn tap(h: &mut Harness<'_, XenAdminApp>, code: KeyCode, shift: bool) {
     let k = egui_key(code);
     if shift {
         key_event(h, Key::ShiftLeft, Some(Key::ShiftLeft), true);
@@ -68,7 +73,7 @@ fn tap(h: &mut Harness<'_, XenAdminApp>, code: KeyCode, shift: bool) {
 }
 
 /// Types `text` (US layout in the guest).
-fn type_us(h: &mut Harness<'_, XenAdminApp>, text: &str) {
+pub(super) fn type_us(h: &mut Harness<'_, XenAdminApp>, text: &str) {
     for c in text.chars() {
         let (code, shift) = KeyCode::for_us_char(c).unwrap_or_else(|| panic!("{c:?}"));
         tap(h, code, shift);
@@ -76,7 +81,7 @@ fn type_us(h: &mut Harness<'_, XenAdminApp>, text: &str) {
 }
 
 /// Moves the mouse to `pos` and clicks there (focuses the console).
-fn click_at(h: &mut Harness<'_, XenAdminApp>, pos: Pos2) {
+pub(super) fn click_at(h: &mut Harness<'_, XenAdminApp>, pos: Pos2) {
     h.event(Event::PointerMoved(pos));
     h.step();
     h.event(Event::PointerButton {
@@ -95,14 +100,14 @@ fn click_at(h: &mut Harness<'_, XenAdminApp>, pos: Pos2) {
     h.step();
 }
 
-fn image_rect(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey) -> egui::Rect {
+pub(super) fn image_rect(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey) -> egui::Rect {
     view(h, key)
         .and_then(|v| v.image)
         .expect("the console is drawn")
 }
 
 /// Writes the console's framebuffer as a PPM image.
-fn snapshot(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey, path: &str) -> (u16, u16) {
+pub(super) fn snapshot(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey, path: &str) -> (u16, u16) {
     let v = view(h, key).expect("console open");
     let state = v.handle.screen().lock();
     let fb = &state.framebuffer;
@@ -387,7 +392,7 @@ fn start_switches_to_the_console_and_the_host_console_is_dom0() {
 // ---- real host ------------------------------------------------------------
 
 /// Appends a line to the log (and prints it).
-fn note(log: &mut String, line: String) {
+pub(super) fn note(log: &mut String, line: String) {
     println!("{line}");
     let _ = writeln!(log, "{line}");
 }

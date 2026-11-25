@@ -147,6 +147,18 @@ fn operation_row(
                 );
             });
         }
+        OperationStatus::Succeeded if op.notice.is_some() => {
+            ui.vertical(|ui| {
+                ui.label(title);
+                if let Some(notice) = op.notice {
+                    ui.label(
+                        RichText::new(i18n::operation_notice(notice))
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                }
+            });
+        }
         OperationStatus::Running if op.step.is_some() => {
             ui.vertical(|ui| {
                 ui.label(title);

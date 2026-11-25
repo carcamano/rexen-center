@@ -1,5 +1,5 @@
 {
-  "_comment": "Mock XAPI database for tests: one pool with two hosts (the second in maintenance mode), their control domains, guest VMs in different power states, a default and a user template, a snapshot, local, shared NFS and ISO storage (the ISO SR is broken: unplugged on the second host), networks with a VLAN and the hidden host-internal network, NICs and metrics. Records are partial; the client ignores missing fields.",
+  "_comment": "Mock XAPI database for tests: one pool with two hosts (the second in maintenance mode), their control domains, guest VMs in different power states, a default and a user template, a snapshot, local, shared NFS and ISO storage (the ISO SR is broken: unplugged on the second host), the guest tools SR, networks with a VLAN and the hidden host-internal network, NICs and metrics. Records are partial; the client ignores missing fields.",
   "pool": {
     "OpaqueRef:pool-0001": {
       "uuid": "5a0e3b3c-0000-4000-8000-000000000001",
@@ -24,7 +24,15 @@
       "hostname": "xcp-host-01",
       "address": "192.0.2.11",
       "enabled": true,
-      "allowed_operations": ["provision", "evacuate", "shutdown", "reboot", "vm_start", "vm_resume", "vm_migrate"],
+      "allowed_operations": [
+        "provision",
+        "evacuate",
+        "shutdown",
+        "reboot",
+        "vm_start",
+        "vm_resume",
+        "vm_migrate"
+      ],
       "power_on_mode": "",
       "API_version_major": 2,
       "API_version_minor": 21,
@@ -82,7 +90,15 @@
       "hostname": "xcp-host-02",
       "address": "192.0.2.12",
       "enabled": false,
-      "allowed_operations": ["provision", "evacuate", "shutdown", "reboot", "vm_start", "vm_resume", "vm_migrate"],
+      "allowed_operations": [
+        "provision",
+        "evacuate",
+        "shutdown",
+        "reboot",
+        "vm_start",
+        "vm_resume",
+        "vm_migrate"
+      ],
       "power_on_mode": "wake-on-lan",
       "API_version_major": 2,
       "API_version_minor": 21,
@@ -290,6 +306,7 @@
         "suspend",
         "pause",
         "snapshot",
+        "checkpoint",
         "pool_migrate"
       ],
       "current_operations": {},
@@ -526,15 +543,20 @@
       "snapshot_of": "OpaqueRef:NULL",
       "other_config": {
         "default_template": "true",
-        "disks": "<provision/>"
+        "disks": "<provision><disk bootable=\"true\" device=\"0\" size=\"10737418240\" sr=\"\" type=\"system\"/></provision>",
+        "install-methods": "cdrom,nfs,http,ftp"
       },
       "memory_overhead": 33554432,
       "VCPUs_params": {},
-      "platform": {},
+      "platform": {
+        "secureboot": "auto",
+        "device_id": "0001",
+        "vga": "std"
+      },
       "HVM_boot_policy": "BIOS order",
       "HVM_boot_params": {
-        "order": "cd",
-        "firmware": "bios"
+        "order": "cdn",
+        "firmware": "uefi"
       },
       "PV_args": "",
       "tags": [],
@@ -549,12 +571,13 @@
       "appliance": "OpaqueRef:NULL",
       "snapshot_time": "19700101T00:00:00Z",
       "memory_static_min": 536870912,
-      "memory_dynamic_min": 1073741824,
-      "memory_dynamic_max": 1073741824,
-      "memory_static_max": 1073741824,
-      "memory_target": 1073741824,
+      "memory_dynamic_min": 2147483648,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 2147483648,
+      "memory_target": 2147483648,
       "VCPUs_max": 1,
-      "VCPUs_at_startup": 1
+      "VCPUs_at_startup": 1,
+      "recommendations": "<restrictions><restriction field=\"memory-static-max\" max=\"1649267441664\"/><restriction field=\"vcpus-max\" max=\"64\"/><restriction field=\"supports-bios\" value=\"yes\"/><restriction field=\"supports-uefi\" value=\"yes\"/><restriction field=\"supports-secure-boot\" value=\"yes\"/><restriction max=\"255\" property=\"number-of-vbds\"/><restriction max=\"7\" property=\"number-of-vifs\"/></restrictions>"
     },
     "OpaqueRef:vm-web-snap": {
       "uuid": "5e5e5e5e-0000-4000-8000-000000000001",
@@ -795,7 +818,8 @@
         "OpaqueRef:pbd-iso-02"
       ],
       "VDIs": [
-        "OpaqueRef:vdi-debian-iso"
+        "OpaqueRef:vdi-debian-iso",
+        "OpaqueRef:vdi-ubuntu-iso"
       ],
       "physical_size": 107374182400,
       "physical_utilisation": 42949672960,
@@ -805,6 +829,31 @@
       "tags": [],
       "introduced_by": "OpaqueRef:NULL",
       "is_tools_sr": false
+    },
+    "OpaqueRef:sr-tools": {
+      "uuid": "5e000000-0000-4000-8000-000000000005",
+      "name_label": "XCP-ng Tools",
+      "name_description": "XCP-ng VM Tools ISOs",
+      "type": "iso",
+      "content_type": "iso",
+      "shared": true,
+      "PBDs": [
+        "OpaqueRef:pbd-tools-01",
+        "OpaqueRef:pbd-tools-02"
+      ],
+      "VDIs": [
+        "OpaqueRef:vdi-tools-iso"
+      ],
+      "physical_size": -1,
+      "physical_utilisation": -1,
+      "virtual_allocation": 0,
+      "other_config": {
+        "xenserver_tools_sr": "true"
+      },
+      "sm_config": {},
+      "tags": [],
+      "introduced_by": "OpaqueRef:NULL",
+      "is_tools_sr": true
     }
   },
   "pbd": {
@@ -854,6 +903,22 @@
       "SR": "OpaqueRef:sr-iso",
       "device_config": {},
       "currently_attached": false,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-tools-01": {
+      "uuid": "8e000000-0000-4000-8000-000000000021",
+      "host": "OpaqueRef:host-0001",
+      "SR": "OpaqueRef:sr-tools",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-tools-02": {
+      "uuid": "8e000000-0000-4000-8000-000000000022",
+      "host": "OpaqueRef:host-0002",
+      "SR": "OpaqueRef:sr-tools",
+      "device_config": {},
+      "currently_attached": true,
       "other_config": {}
     }
   },
@@ -997,6 +1062,43 @@
         "HideFromXenCenter": "true"
       },
       "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-tools-iso": {
+      "uuid": "ad000000-0000-4000-8000-000000000010",
+      "name_label": "guest-tools.iso",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-tools",
+      "VBDs": [],
+      "virtual_size": 52428800,
+      "physical_utilisation": 52428800,
+      "type": "user",
+      "read_only": true,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false,
+      "is_tools_iso": true
+    },
+    "OpaqueRef:vdi-ubuntu-iso": {
+      "uuid": "ad000000-0000-4000-8000-000000000011",
+      "name_label": "ubuntu-24.04-live-server.iso",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-iso",
+      "VBDs": [],
+      "virtual_size": 2147483648,
+      "physical_utilisation": 2147483648,
+      "type": "user",
+      "read_only": true,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
     }
   },
   "vbd": {
@@ -1013,7 +1115,9 @@
       "empty": false,
       "qos_algorithm_type": "",
       "qos_algorithm_params": {},
-      "other_config": {}
+      "other_config": {
+        "owner": "true"
+      }
     },
     "OpaqueRef:vbd-web-1": {
       "uuid": "bd000000-0000-4000-8000-000000000002",
@@ -1030,7 +1134,9 @@
       "qos_algorithm_params": {
         "class": "7"
       },
-      "other_config": {}
+      "other_config": {
+        "owner": "true"
+      }
     },
     "OpaqueRef:vbd-web-cd": {
       "uuid": "bd000000-0000-4000-8000-000000000003",
@@ -1060,7 +1166,9 @@
       "empty": false,
       "qos_algorithm_type": "",
       "qos_algorithm_params": {},
-      "other_config": {}
+      "other_config": {
+        "owner": "true"
+      }
     },
     "OpaqueRef:vbd-legacy-0": {
       "uuid": "bd000000-0000-4000-8000-000000000005",
@@ -1075,7 +1183,9 @@
       "empty": false,
       "qos_algorithm_type": "",
       "qos_algorithm_params": {},
-      "other_config": {}
+      "other_config": {
+        "owner": "true"
+      }
     },
     "OpaqueRef:vbd-snap-0": {
       "uuid": "bd000000-0000-4000-8000-000000000006",
@@ -1090,7 +1200,9 @@
       "empty": false,
       "qos_algorithm_type": "",
       "qos_algorithm_params": {},
-      "other_config": {}
+      "other_config": {
+        "owner": "true"
+      }
     }
   },
   "network": {

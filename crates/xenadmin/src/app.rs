@@ -28,6 +28,8 @@ use crate::ops_ui::{self, Entry, OpsUi};
 use crate::perf_strings::perf_strings;
 use crate::perf_view::{PerfAction, PerfKey, Performance};
 use crate::perfmon_ui::{self, PerfmonDialog};
+use crate::prov_strings::prov_strings;
+use crate::provision_ui::{self, DialogRequest, ProvisionUi};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
 
@@ -118,6 +120,9 @@ pub struct XenAdminApp {
     notifications: Notifications,
     /// The performance alert settings window.
     perfmon: Option<PerfmonDialog>,
+    /// VM creation, templates, snapshots and disks: the wizard, dialogs
+    /// and tab selections.
+    provision: ProvisionUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -156,6 +161,7 @@ impl XenAdminApp {
             alerts: AlertsView::default(),
             notifications: Notifications::Events,
             perfmon: None,
+            provision: ProvisionUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -380,8 +386,36 @@ impl XenAdminApp {
         }
     }
 
+    /// The selected connection, if connected.
+    fn selected_connection<'a>(&self, state: &'a AppState) -> Option<&'a ConnectionView> {
+        let c = self.selection.as_ref().and_then(Selection::connection)?;
+        state.connection(c).map(|c| &**c)
+    }
+
+    /// What New VM starts from: the selected template or snapshot, and the
+    /// selected host as home server.
+    fn new_vm_request(&self, state: &AppState) -> DialogRequest {
+        let template = self
+            .selected_vm(state)
+            .and_then(|(_, r, vm)| xen_core::provisioning::can_create_from(vm).then_some(r));
+        let affinity = self.selected_host(state).map(|(_, r, _)| r);
+        DialogRequest::NewVm { template, affinity }
+    }
+
     /// The toolbar buttons of the selected VM or host.
     fn selection_buttons(&mut self, ui: &mut Ui, state: &AppState) {
+        if let Some(conn) = self.selected_connection(state) {
+            let entry = provision_ui::new_vm_entry(conn, None);
+            let enabled = matches!(entry, Entry::Dialog { enabled: true, .. });
+            if ui
+                .add_enabled(enabled, Button::new(prov_strings().new_vm_toolbar))
+                .clicked()
+            {
+                let request = self.new_vm_request(state);
+                self.provision.open(conn, request);
+            }
+            ui.separator();
+        }
         if let Some((conn, r, vm)) = self.selected_vm(state)
             && model::is_guest(vm)
         {
@@ -460,15 +494,26 @@ impl XenAdminApp {
                         .push(Action::Send(Command::SetPreferences(prefs)));
                 }
             });
-            ui.menu_button(s.menu_vm, |ui| match self.selected_vm(state) {
-                Some((conn, r, vm)) if model::is_guest(vm) => {
-                    let entries = ops_ui::vm_entries(conn, &r, vm);
-                    self.ops
-                        .menu(ui, conn, Some((&r, vm)), entries, false, &self.backend);
-                }
-                _ => {
+            ui.menu_button(s.menu_vm, |ui| {
+                let Some(conn) = self.selected_connection(state) else {
                     ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                    return;
+                };
+                let mut entries = vec![provision_ui::new_vm_entry(conn, None)];
+                let mut vm_arg = None;
+                if let Some((_, r, vm)) = self.selected_vm(state) {
+                    entries.push(Entry::Separator);
+                    if model::is_guest(vm) {
+                        entries.extend(ops_ui::vm_entries(conn, &r, vm));
+                        entries.extend(provision_ui::vm_entries(conn, &r, vm));
+                    } else {
+                        entries.extend(provision_ui::template_entries(conn, &r, vm));
+                    }
+                    vm_arg = Some((r, vm.clone()));
                 }
+                let vm_arg = vm_arg.as_ref().map(|(r, v)| (r, &**v));
+                self.ops
+                    .menu(ui, conn, vm_arg, entries, false, &self.backend);
             });
             ui.menu_button(ops_strings().menu_server, |ui| {
                 match self.selected_host(state) {
@@ -639,7 +684,14 @@ impl XenAdminApp {
                         .italics(),
                 );
             }
-            response.context_menu(|ui| self.connection_menu(ui, conn));
+            response.context_menu(|ui| {
+                if conn.status.is_connected() {
+                    let entries = vec![provision_ui::new_vm_entry(conn, None)];
+                    self.ops.menu(ui, conn, None, entries, true, &self.backend);
+                    ui.separator();
+                }
+                self.connection_menu(ui, conn);
+            });
         })
         .body(|ui| {
             for host in &pool.hosts {
@@ -889,14 +941,15 @@ impl XenAdminApp {
 
     /// The operations a guest offers now, on its tree row.
     fn vm_context_menu(&mut self, response: &egui::Response, conn: &ConnectionView, vm: &TreeVm) {
-        if let Some(record) = conn
-            .model
-            .vms
-            .get(&vm.vm_ref)
-            .filter(|r| model::is_guest(r))
-        {
+        if let Some(record) = conn.model.vms.get(&vm.vm_ref) {
             response.context_menu(|ui| {
-                let entries = ops_ui::vm_entries(conn, &vm.vm_ref, record);
+                let entries = if model::is_guest(record) {
+                    let mut e = ops_ui::vm_entries(conn, &vm.vm_ref, record);
+                    e.extend(provision_ui::vm_entries(conn, &vm.vm_ref, record));
+                    e
+                } else {
+                    provision_ui::template_entries(conn, &vm.vm_ref, record)
+                };
                 self.ops.menu(
                     ui,
                     conn,
@@ -918,7 +971,11 @@ impl XenAdminApp {
     ) {
         if let Some(record) = conn.model.hosts.get(host) {
             response.context_menu(|ui| {
-                let entries = ops_ui::host_entries(conn, host, record);
+                let mut entries = vec![
+                    provision_ui::new_vm_entry(conn, Some(host.clone())),
+                    Entry::Separator,
+                ];
+                entries.extend(ops_ui::host_entries(conn, host, record));
                 self.ops.menu(ui, conn, None, entries, true, &self.backend);
             });
         }
@@ -1112,6 +1169,18 @@ impl XenAdminApp {
             }
             return;
         }
+        if self.tab == Tab::Snapshots {
+            if let Subject::Vm(r, vm) = subject {
+                ui.label(
+                    RichText::new(tabs::page_title(self.tab, subject))
+                        .strong()
+                        .size(15.0),
+                );
+                ui.add_space(4.0);
+                self.provision.snapshots_tab(ui, conn, r, vm);
+            }
+            return;
+        }
         if self.tab == Tab::Console {
             let (key, title) = match subject {
                 Subject::Vm(r, vm) => (
@@ -1151,6 +1220,23 @@ impl XenAdminApp {
                 .unwrap_or(0),
             show_hidden: state.settings.preferences.show_hidden_objects,
         };
+        if let (Tab::VmStorage, Subject::Vm(r, vm)) = (self.tab, subject) {
+            ScrollArea::vertical()
+                .id_salt("vm-storage-scroll")
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    self.provision.vm_storage_tab(
+                        ui,
+                        conn,
+                        r,
+                        vm,
+                        ctx,
+                        &mut self.ops,
+                        &self.backend,
+                    );
+                });
+            return;
+        }
         let kind = match subject {
             Subject::Pool(..) => "pool",
             Subject::Host(..) => "host",
@@ -1175,9 +1261,6 @@ impl XenAdminApp {
                 }
                 (Tab::Memory, _) => {
                     tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject));
-                }
-                (Tab::VmStorage, Subject::Vm(_, vm)) => {
-                    tabs::render::table(ui, "vm-disks", &tabs::storage::vm_disks(ctx, vm));
                 }
                 (Tab::SrStorage, Subject::Sr(_, sr)) => {
                     tabs::render::table(ui, "sr-disks", &tabs::storage::sr_disks(ctx, sr));
@@ -1571,6 +1654,17 @@ impl eframe::App for XenAdminApp {
             &self.backend,
         );
         self.ops.windows(&ctx, &state, &self.backend);
+        for (c, request) in std::mem::take(&mut self.ops.dialog_requests) {
+            if let Some(conn) = state.connection(c) {
+                self.provision.open(conn, request);
+            }
+        }
+        self.provision
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.provision.errors);
+        if let Some((c, vm)) = self.provision.take_created(&state) {
+            self.selection = Some(Selection::Vm(c, vm));
+        }
         self.errors_window(&ctx);
         self.apply_actions(&state);
 
@@ -1730,6 +1824,11 @@ mod tests {
     // F6: the Performance tab, the Alerts view and the alert settings
     // (`app/tests/performance.rs`).
     mod performance;
+    // F7: VM creation, templates, snapshots and disks
+    // (`app/tests/provisioning.rs`), and on a real host
+    // (`app/tests/provisioning_real.rs`).
+    mod provisioning;
+    mod provisioning_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

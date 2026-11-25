@@ -23,11 +23,14 @@ mod i18n;
 mod icons;
 mod logging;
 mod message_names;
+mod new_vm;
 mod ops_strings;
 mod ops_ui;
 mod perf_strings;
 mod perf_view;
 mod perfmon_ui;
+mod prov_strings;
+mod provision_ui;
 mod tab_strings;
 mod tabs;
 

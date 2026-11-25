@@ -8,12 +8,13 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Host, HostAllowedOperations, HostRecord, Message, Ref, Sr, Vm, VmOperations, VmPowerState,
-    VmRecord,
+    Host, HostAllowedOperations, HostRecord, Message, Ref, Sr, Vbd, Vdi, Vm, VmOperations,
+    VmPowerState, VmRecord,
 };
 
 use crate::model::{ConnectionModel, is_guest};
 use crate::objects;
+use crate::provisioning::{CopyMode, DiskSpec, NewVmSpec};
 
 /// VM operations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -119,6 +120,99 @@ pub enum ActionRequest {
         object: PerfmonObjectRef,
         config: Option<String>,
     },
+    /// The New VM wizard (`CreateVMAction`).
+    NewVm(Box<NewVmSpec>),
+    /// Copy VM / Copy Template (`VMCloneAction`, `VMCopyAction`).
+    CopyVm {
+        vm: Ref<Vm>,
+        name: String,
+        description: String,
+        mode: CopyMode,
+    },
+    /// Create Template From Snapshot: a clone of the snapshot, marked
+    /// `instant` (`NewTemplateFromSnapshotCommand`).
+    TemplateFromSnapshot {
+        snapshot: Ref<Vm>,
+        name: String,
+        description: String,
+    },
+    /// Convert to Template (`VMToTemplateAction`).
+    MakeTemplate {
+        vm: Ref<Vm>,
+    },
+    /// Delete VM or template with the chosen disks and snapshots
+    /// (`VMDestroyAction`).
+    DeleteVm {
+        vm: Ref<Vm>,
+        disks: Vec<Ref<Vdi>>,
+        snapshots: Vec<Ref<Vm>>,
+    },
+    /// Take Snapshot (`VMSnapshotCreateAction`); `memory` takes a
+    /// checkpoint.
+    Snapshot {
+        vm: Ref<Vm>,
+        name: String,
+        description: String,
+        memory: bool,
+    },
+    /// Revert to a snapshot (`VMSnapshotRevertAction`). With
+    /// `snapshot_first` (name, description), a snapshot of the VM's current
+    /// state is taken first and the revert only runs if it worked (the
+    /// confirmation's "Take a snapshot of the VM's current state and then
+    /// revert").
+    Revert {
+        snapshot: Ref<Vm>,
+        snapshot_first: Option<(String, String)>,
+    },
+    /// Delete snapshots with their own disks (`VMSnapshotDeleteAction`).
+    DeleteSnapshots {
+        snapshots: Vec<Ref<Vm>>,
+    },
+    /// Add Virtual Disk (`CreateDiskAction` + `VbdCreateAndPlugAction`).
+    NewDisk {
+        vm: Ref<Vm>,
+        disk: DiskSpec,
+    },
+    /// Attach an existing disk (`AttachDiskDialog`).
+    AttachDisk {
+        vm: Ref<Vm>,
+        vdi: Ref<Vdi>,
+        read_only: bool,
+    },
+    /// Detach a disk, keeping it (`DetachVirtualDiskAction`).
+    DetachDisk {
+        vm: Ref<Vm>,
+        vbd: Ref<Vbd>,
+    },
+    /// Delete a disk (`DestroyDiskAction`).
+    DeleteDisk {
+        vdi: Ref<Vdi>,
+    },
+    /// Resize a disk (the disk's Size and Location page); bytes.
+    ResizeDisk {
+        vdi: Ref<Vdi>,
+        size: i64,
+    },
+    /// Move a disk to another SR (`MoveVirtualDiskAction`, or
+    /// `MigrateVirtualDiskAction` while a running VM uses it).
+    MoveDisk {
+        vdi: Ref<Vdi>,
+        sr: Ref<Sr>,
+    },
+    /// Load an ISO into a DVD drive, or empty it (`ChangeVMISOAction`).
+    ChangeCd {
+        vm: Ref<Vm>,
+        vbd: Ref<Vbd>,
+        iso: Option<Ref<Vdi>>,
+    },
+    /// Add a DVD drive to a VM (`CreateCdDriveAction`).
+    NewCdDrive {
+        vm: Ref<Vm>,
+    },
+    /// Insert the guest tools ISO (`InstallPVToolsAction`).
+    InstallTools {
+        vm: Ref<Vm>,
+    },
 }
 
 /// `task.destroy`, called once a task has been followed to its end.
@@ -151,6 +245,98 @@ impl ActionRequest {
                     None => vec![remove],
                 };
             }
+            Self::NewVm(spec) => {
+                let mut m = vec![
+                    "vm.clone",
+                    "vm.provision",
+                    "vm.set_other_config",
+                    "vm.set_name_label",
+                    "vm.set_name_description",
+                    "vm.set_vcpus_max",
+                    "vm.set_vcpus_at_startup",
+                    "vm.set_platform",
+                    "vm.set_hvm_boot_params",
+                    "vm.set_memory_limits",
+                    "vm.set_affinity",
+                    "vm.set_suspend_sr",
+                    "vbd.create",
+                    "vbd.destroy",
+                    "vbd.eject",
+                    "vbd.insert",
+                    "vdi.create",
+                    "vdi.destroy",
+                    "vdi.copy",
+                    "vdi.set_sm_config",
+                    "vif.create",
+                    "vif.destroy",
+                    "vm.destroy",
+                ];
+                if spec.full_copy_sr.is_some() {
+                    m.push("vm.copy");
+                }
+                if spec.vtpm {
+                    m.push("vtpm.create");
+                }
+                if spec.start {
+                    m.push("vm.start");
+                }
+                m.push("task.destroy");
+                return m;
+            }
+            Self::CopyVm { mode, .. } => match mode {
+                CopyMode::Clone => &["vm.clone", "vm.set_name_description"],
+                CopyMode::Copy(_) => &["vm.copy", "vm.set_name_description"],
+            },
+            Self::TemplateFromSnapshot { .. } => &[
+                "vm.clone",
+                "vm.set_name_description",
+                "vm.add_to_other_config",
+                "vm.remove_from_other_config",
+            ],
+            Self::MakeTemplate { .. } => &[
+                "vm.add_to_other_config",
+                "vm.remove_from_other_config",
+                "vm.set_is_a_template",
+            ],
+            Self::DeleteVm { .. } => &["vm.destroy", "vm.hard_shutdown", "vdi.destroy"],
+            Self::Snapshot { memory, .. } => {
+                if *memory {
+                    &["vm.checkpoint", "vm.set_name_description"]
+                } else {
+                    &["vm.snapshot", "vm.set_name_description"]
+                }
+            }
+            Self::Revert { snapshot_first, .. } => {
+                let mut m = vec![
+                    "vm.revert",
+                    "vm.start",
+                    "vm.start_on",
+                    "vm.resume",
+                    "vm.resume_on",
+                    "vm.assert_can_boot_here",
+                ];
+                if snapshot_first.is_some() {
+                    m.extend(["vm.snapshot", "vm.set_name_description"]);
+                }
+                m.push("task.destroy");
+                return m;
+            }
+            Self::DeleteSnapshots { .. } => &["vm.destroy", "vm.hard_shutdown", "vdi.destroy"],
+            Self::NewDisk { .. } => &["vdi.create", "vbd.create", "vbd.plug"],
+            Self::AttachDisk { .. } => &["vbd.create", "vbd.plug"],
+            Self::DetachDisk { .. } => &["vbd.unplug", "vbd.destroy"],
+            Self::DeleteDisk { .. } => &["vbd.unplug", "vbd.destroy", "vdi.destroy"],
+            Self::ResizeDisk { .. } => &["vdi.resize"],
+            Self::MoveDisk { .. } => &[
+                "vdi.pool_migrate",
+                "vdi.copy",
+                "vdi.destroy",
+                "vbd.create",
+                "vbd.destroy",
+                "vbd.unplug",
+            ],
+            Self::ChangeCd { .. } | Self::InstallTools { .. } => &["vbd.eject", "vbd.insert"],
+            Self::NewCdDrive { .. } => &["vbd.create", "vbd.plug"],
             Self::Vm { action, .. } => match action {
                 VmAction::Start => &["vm.start"],
                 VmAction::CleanShutdown => &["vm.clean_shutdown"],
