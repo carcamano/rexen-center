@@ -353,6 +353,21 @@ pub fn coordinator(model: &ConnectionModel) -> Option<&Ref<Host>> {
 }
 
 /// `Host.vSwitchNetworkBackend()` of the coordinator.
+/// `Pool.vSwitchController()`: the pool has a vSwitch Controller and every
+/// host runs Open vSwitch with a licence that allows it.
+pub fn vswitch_controller(model: &ConnectionModel) -> bool {
+    model
+        .pool()
+        .is_some_and(|(_, p)| !p.vswitch_controller.is_empty())
+        && model.hosts.values().all(|h| {
+            !crate::pool::host_restricts(h, crate::pool::Restriction::VswitchController)
+                && h.software_version
+                    .get("network_backend")
+                    .map(String::as_str)
+                    == Some("openvswitch")
+        })
+}
+
 pub fn vswitch_backend(model: &ConnectionModel) -> bool {
     coordinator(model)
         .and_then(|h| model.hosts.get(h))

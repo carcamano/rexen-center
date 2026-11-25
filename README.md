@@ -179,8 +179,9 @@ and disks, storage repositories, networking).** What works:
   Networking tab), as the original's: an **external network** (a VLAN on
   a NIC or bond of every host, with the original's NIC, VLAN tag and MTU
   checks), a **single-server private network**, a **cross-server private
-  network** (a tunnel over each host's management interface; offered on
-  the Open vSwitch backend) and a **bonded network** (2 to 4 NICs,
+  network** (a tunnel over each host's management interface; as the
+  original, not shown on XCP-ng 8.2 and later, and on older servers
+  offered only with a vSwitch Controller) and a **bonded network** (2 to 4 NICs,
   active-active, active-passive or LACP with its load balancing; the
   original's warnings before moving a management or secondary interface
   onto the bond). It runs like `NetworkAction`, `CreateChinAction` and

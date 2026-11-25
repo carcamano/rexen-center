@@ -331,7 +331,9 @@ fn the_wizard_makes_external_and_private_networks() {
     press(&mut h, n.add_network);
     h.get_by_label(n.page_type_title);
     assert_eq!(wizard(&mut h).kind, NetType::External);
-    // No Open vSwitch backend here: no cross-server private network.
+    // No vSwitch Controller here: the cross-server private network is
+    // shown (this fixture's server predates XCP-ng 8.2) but disabled.
+    assert!(shows(&h, n.type_chin));
     assert!(shows(&h, n.chin_needs_vswitch));
     press(&mut h, n.next);
     assert_eq!(wizard(&mut h).page, Page::Name);
@@ -525,8 +527,9 @@ fn bonds_from_the_wizard_and_the_nics_tab() {
 
     // Bonded network: NIC 2 + NIC 3, LACP on the Open vSwitch backend.
     press(&mut h, n.add_network);
-    // The cross-server network is offered here.
-    assert!(!shows(&h, n.chin_needs_vswitch));
+    // Open vSwitch without a vSwitch Controller: the cross-server
+    // network is not offered (as the original).
+    assert!(shows(&h, n.chin_needs_vswitch));
     press(&mut h, n.type_bonded);
     press(&mut h, n.next);
     h.get_by_label(n.page_bond_title);
@@ -790,4 +793,38 @@ fn interfaces_go_through_role_elevation() {
     press(&mut h, n.add);
     step_until(&mut h, "elevation", |h| h.state().ops.elevation.is_some());
     assert!(vif_of(&server, DB, "1").is_none());
+}
+
+/// As the original (`NetWTypeSelect.PopulatePage`), the New Network wizard
+/// shows no cross-server private network on XCP-ng 8.2 and later (no
+/// vSwitch Controller), and offers it on an older server only with one.
+#[test]
+fn cross_server_network_follows_the_original() {
+    let runtime = runtime();
+    let mut records = xapi_mock::fixture_records();
+    for host in ["OpaqueRef:host-0001", "OpaqueRef:host-0002"] {
+        records["host"][host]["software_version"]["platform_version"] = json!("3.4.0");
+    }
+    let (_server, mut h) = connect_with(&runtime, records);
+    let n = net_strings();
+    let t = crate::tab_strings::tab_strings();
+    select_pool(&mut h);
+    tab(&mut h, t.tab_networking);
+    press(&mut h, n.add_network);
+    h.get_by_label(n.page_type_title);
+    assert!(!shows(&h, n.type_chin), "hidden on XCP-ng 8.x");
+    assert!(!shows(&h, n.chin_needs_vswitch));
+    let m = first_conn(&h).unwrap().model.clone();
+    assert!(!crate::new_network::NewNetworkWizard::chin_shown(&m));
+    assert!(!crate::new_network::NewNetworkWizard::chin_offered(&m));
+
+    // An older server on Open vSwitch with a vSwitch Controller: offered.
+    let mut records = bond_lab_records();
+    records["pool"][POOL]["vswitch_controller"] = json!("192.0.2.250");
+    for host in ["OpaqueRef:host-0001", "OpaqueRef:host-0002"] {
+        records["host"][host]["license_params"] = json!({"restrict_vswitch_controller": "false"});
+    }
+    let m = xen_core::ConnectionModel::from_database(&records);
+    assert!(crate::new_network::NewNetworkWizard::chin_shown(&m));
+    assert!(crate::new_network::NewNetworkWizard::chin_offered(&m));
 }

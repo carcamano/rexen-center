@@ -475,9 +475,17 @@ impl NewNetworkWizard {
         })
     }
 
-    /// Whether the cross-server private network can be chosen.
+    /// Whether the wizard shows the cross-server private network at all
+    /// (`NetWTypeSelect.PopulatePage`): not on XCP-ng 8.x (Stockholm or
+    /// later), which has no vSwitch Controller.
+    pub fn chin_shown(model: &ConnectionModel) -> bool {
+        !xen_core::pool::stockholm_or_greater(model.coordinator().map(|h| &**h))
+    }
+
+    /// Whether the cross-server private network can be chosen: shown, and
+    /// the pool has a vSwitch Controller (`Pool.vSwitchController`).
     pub fn chin_offered(model: &ConnectionModel) -> bool {
-        network::vswitch_backend(model)
+        Self::chin_shown(model) && network::vswitch_controller(model)
     }
 
     fn pages(&self) -> Vec<Page> {
@@ -795,6 +803,7 @@ impl NewNetworkWizard {
         ui.label(n.type_blurb);
         ui.add_space(6.0);
         let chin = Self::chin_offered(model);
+        let shown = Self::chin_shown(model);
         for (kind, label, blurb, enabled) in [
             (
                 NetType::External,
@@ -811,6 +820,9 @@ impl NewNetworkWizard {
             (NetType::Bonded, n.type_bonded, n.type_bonded_blurb, true),
             (NetType::CrossServer, n.type_chin, n.type_chin_blurb, chin),
         ] {
+            if kind == NetType::CrossServer && !shown {
+                continue;
+            }
             ui.add_enabled_ui(enabled, |ui| {
                 ui.radio_value(&mut self.kind, kind, label);
                 ui.indent(("net-type", label), |ui| {

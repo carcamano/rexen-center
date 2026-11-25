@@ -321,9 +321,12 @@ fn f9_run(h: &mut Harness<'static, XenAdminApp>, long: Duration) -> String {
     press(h, n.add_network);
     h.get_by_label(n.page_type_title);
     let chin = crate::new_network::NewNetworkWizard::chin_offered(&m);
+    let shown = crate::new_network::NewNetworkWizard::chin_shown(&m);
     note(
         &mut log,
-        format!("New Network wizard opened (cross-server offered {chin}), cancelled"),
+        format!(
+            "New Network wizard opened (cross-server shown {shown}, offered {chin}), cancelled"
+        ),
     );
     for _ in 0..4 {
         if h.state().network.wizard.is_none() {
