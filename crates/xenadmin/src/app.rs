@@ -23,6 +23,7 @@ use crate::console_view::{ConsoleKey, Consoles, TabAction};
 use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
+use crate::net_ui::NetUi;
 use crate::ops_strings::ops_strings;
 use crate::ops_ui::{self, Entry, OpsUi};
 use crate::perf_strings::perf_strings;
@@ -127,6 +128,9 @@ pub struct XenAdminApp {
     provision: ProvisionUi,
     /// Storage repositories: the New SR wizard and the SR dialogs.
     storage: StorageUi,
+    /// Networking: the New Network wizard, the networking dialogs and the
+    /// selections of the Networking and NICs tabs.
+    network: NetUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -167,6 +171,7 @@ impl XenAdminApp {
             perfmon: None,
             provision: ProvisionUi::default(),
             storage: StorageUi::default(),
+            network: NetUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -1326,26 +1331,21 @@ impl XenAdminApp {
                 (Tab::PhysicalStorage, _) => {
                     tabs::render::table(ui, "srs", &tabs::storage::physical_storage(ctx, None));
                 }
-                (Tab::Networking, Subject::Vm(_, vm)) => {
-                    tabs::render::table(ui, "vifs", &tabs::network::vm_interfaces(ctx, vm));
+                (Tab::Networking, Subject::Vm(r, vm)) => {
+                    self.network
+                        .vm_tab(ui, conn, r, vm, ctx, &mut self.ops, &self.backend);
                 }
                 (Tab::Networking, subject) => {
                     let host = match subject {
                         Subject::Host(r, _) => Some(r),
                         _ => None,
                     };
-                    ui.strong(t.networks_label);
-                    tabs::render::table(ui, "networks", &tabs::network::networks(ctx, host));
-                    ui.add_space(12.0);
-                    ui.strong(t.ip_config_label);
-                    tabs::render::table(
-                        ui,
-                        "ip-config",
-                        &tabs::network::ip_configuration(ctx, host),
-                    );
+                    self.network
+                        .host_tab(ui, conn, host, ctx, &mut self.ops, &self.backend);
                 }
                 (Tab::Nics, Subject::Host(r, _)) => {
-                    tabs::render::table(ui, "nics", &tabs::network::nics(ctx, r));
+                    self.network
+                        .nics_tab(ui, conn, r, ctx, &mut self.ops, &self.backend);
                 }
                 _ => {}
             });
@@ -1724,6 +1724,9 @@ impl eframe::App for XenAdminApp {
         self.storage
             .windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.storage.errors);
+        self.network
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.network.errors);
         if let Some((c, vm)) = self.provision.take_created(&state) {
             self.selection = Some(Selection::Vm(c, vm));
         }
@@ -1895,6 +1898,10 @@ mod tests {
     // host's SRs read only (`app/tests/storage_real.rs`).
     mod storage;
     mod storage_real;
+    // F9: networking (`app/tests/network.rs`), and the real host's networks
+    // read only plus one VM's interfaces (`app/tests/network_real.rs`).
+    mod network;
+    mod network_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -2168,7 +2175,8 @@ mod tests {
         harness.get_by_label(&fingerprint.to_uppercase());
         harness.get_by_label(s.cert_trust).click();
 
-        step_until(&mut harness, "connected", |h| {
+        // A real host may take longer than the mock to load its cache.
+        let connected = step_for(&mut harness, Duration::from_secs(90), |h| {
             h.state()
                 .backend
                 .state()
@@ -2176,6 +2184,7 @@ mod tests {
                 .first()
                 .is_some_and(|c| c.status.is_connected() && c.model.object_count() > 0)
         });
+        assert!(connected, "timed out waiting for connected");
         harness
     }
 

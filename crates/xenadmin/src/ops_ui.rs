@@ -320,7 +320,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
-        _ => None,
+        request => crate::net_ui::confirmation(conn, request),
     }
 }
 

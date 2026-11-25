@@ -8,10 +8,10 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F8 (storage repositories) on top of F1–F7 (base,
-connection and model, detail tabs, VM and host operations, VNC console,
-performance graphs and alerts, VM creation, templates, snapshots and
-disks).** What works:
+**Status: phase F9 (networking) on top of F1–F8 (base, connection and
+model, detail tabs, VM and host operations, VNC console, performance
+graphs and alerts, VM creation, templates, snapshots and disks, storage
+repositories).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -175,6 +175,37 @@ disks).** What works:
   confirmations) and **Properties** (name, description, tags, the SR's
   performance alerts and read caching); **New SR** on the toolbar and the
   pool and host menus; **Rescan** on an SR's Storage tab;
+- the **New Network wizard** (Add Network on a host's or the pool's
+  Networking tab), as the original's: an **external network** (a VLAN on
+  a NIC or bond of every host, with the original's NIC, VLAN tag and MTU
+  checks), a **single-server private network**, a **cross-server private
+  network** (a tunnel over each host's management interface; offered on
+  the Open vSwitch backend) and a **bonded network** (2 to 4 NICs,
+  active-active, active-passive or LACP with its load balancing; the
+  original's warnings before moving a management or secondary interface
+  onto the bond). It runs like `NetworkAction`, `CreateChinAction` and
+  `CreateBondAction` (bonds on every host, the coordinator last); unlike
+  the original, a network whose VLAN or tunnels cannot be made is
+  removed again, and a bond that fails on one host is undone on every
+  host. SR-IOV networks are not offered;
+- a host's or the pool's **Networking tab** with **Properties** (name,
+  description, tags, automatically add to new VMs, MTU, the NIC and VLAN
+  of a VLAN or private network, a bond's mode; a new MTU replugs the
+  network) and **Remove Network** (a bond's network is deleted as a
+  bond), and **Configure** for the **IP addresses**: the management
+  interface and secondary interfaces of a host, or of every host of a
+  pool (an address range), DHCP or static, added, renamed, moved to
+  another network or removed, with the original's warning before the
+  management interface changes (`ChangeNetworkingAction`; a pool moves
+  its management interface with `pool.management_reconfigure`);
+- the **NICs tab**: **Create Bond**, **Delete Bond** (with the original's
+  warnings) and **Rescan** (`PIF.scan`);
+- a VM's **Networking tab**: **Add Interface** (network, MAC address
+  generated or typed, with the original's duplicate MAC question, and a
+  QoS limit), **Properties** (the interface made again with the new
+  settings), **Remove Interface** (confirmed) and **Activate** /
+  **Deactivate**; a new interface of a running VM is hot-plugged when the
+  server allows it, else the user is told to restart the VM;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -182,7 +213,7 @@ disks).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs (VM properties, SR management), custom graphs
+Editing from the tabs (VM properties), custom graphs
 (New/Edit Graph), import/export and cross-pool migration come in later
 phases (RDP is not embedded). The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
@@ -376,6 +407,19 @@ end to end:
   type with its scans, LUN choice, warnings and errors, the Storage menu
   and context menu with their confirmations, the Repair and Properties
   dialogs, Rescan, and role elevation;
+- networking against the mock's networks, VLANs, bonds, tunnels and PIF
+  configuration (`xapi_mock::networking`, with
+  `networking::bond_lab_records` adding NICs for bonds): every network
+  type, the rollbacks of a half-made VLAN network, cross-server network
+  and bond, bonds over management and secondary interfaces, removing
+  networks and bonds, the network properties (NIC and VLAN changes, MTU
+  replug, bond mode), NIC rescans, IP configuration of one host and of a
+  pool (secondary interfaces, the management interface's address and its
+  move) with failures, a VM's interfaces on halted, running and
+  driverless VMs, and RBAC; in the window: a VM's Networking tab, the
+  wizard for every type with its checks, the network Properties and
+  Remove Network, the NICs tab (Create Bond, Delete Bond, Rescan), the
+  Configure IP Addresses dialog, and role elevation;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -448,6 +492,17 @@ Storage menu (only to read what it offers) and its Properties dialog
 type page and cancels; it never presses an operation's button, and the
 history must hold the connection only at the end.
 
+Networking on a real host (`app/tests/network_real.rs`, same variables
+plus `XENADMIN_REAL_LOG`): `real_f9_networking` checks the pool's and the
+host's Networking tabs and the NICs tab against the cache, opens each
+network's Properties, the Configure IP Addresses dialog, the Create Bond
+dialog and the New Network wizard and cancels them (no network, VLAN,
+bond, tunnel or PIF is ever changed); then, on the halted VM named
+exactly "09 - Ubuntu Fluxer" only, it adds an interface on the network
+of its first interface, changes its QoS limit and removes it, and checks
+the VM ends with exactly the interfaces it had. `f9_real_run_on_the_mock`
+rehearses the same run on the capture.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -483,7 +538,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

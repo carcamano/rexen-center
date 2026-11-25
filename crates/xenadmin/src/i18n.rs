@@ -454,6 +454,7 @@ pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error
     let s = strings();
     if let xapi::Error::Api { code, params } = error
         && let Some(text) = crate::sr_strings::storage_error(code, params)
+            .or_else(|| crate::net_strings::network_error(code))
     {
         return text;
     }
@@ -617,6 +618,38 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         ),
         OperationKind::Provision(kind) => provision_title(kind),
         OperationKind::Storage(kind) => storage_title(kind),
+        OperationKind::Network(kind) => network_title(kind),
+    }
+}
+
+/// The title of a networking operation.
+fn network_title(kind: &xen_core::operations::NetworkKind) -> String {
+    use xen_core::operations::NetworkKind;
+    let n = crate::net_strings::net_strings();
+    match kind {
+        NetworkKind::CreateNetwork { name, pool } => {
+            fill(n.op_create_network, &[("name", name), ("pool", pool)])
+        }
+        NetworkKind::RemoveNetwork { name, pool } => {
+            fill(n.op_remove_network, &[("name", name), ("pool", pool)])
+        }
+        NetworkKind::UpdateNetwork { name, pool } => {
+            fill(n.op_update_network, &[("name", name), ("pool", pool)])
+        }
+        NetworkKind::CreateBond { name } => fill(n.op_create_bond, &[("bond", name)]),
+        NetworkKind::DestroyBond { name } => fill(n.op_destroy_bond, &[("bond", name)]),
+        NetworkKind::RescanPifs { host } => fill(n.op_rescan, &[("host", host)]),
+        NetworkKind::ChangeNetworking => n.op_change_networking.to_owned(),
+        NetworkKind::RenameInterfaces => n.op_rename_interfaces.to_owned(),
+        NetworkKind::NewVif { vm } => fill(n.op_new_vif, &[("vm", vm)]),
+        NetworkKind::DeleteVif { network, vm } => {
+            fill(n.op_delete_vif, &[("network", network), ("vm", vm)])
+        }
+        NetworkKind::UpdateVif { network, vm } => {
+            fill(n.op_update_vif, &[("network", network), ("vm", vm)])
+        }
+        NetworkKind::PlugVif { vm } => fill(n.op_plug_vif, &[("vm", vm)]),
+        NetworkKind::UnplugVif { vm } => fill(n.op_unplug_vif, &[("vm", vm)]),
     }
 }
 
@@ -761,6 +794,24 @@ fn storage_step(step: &OperationStep) -> String {
         OperationStep::PluggingPbd { host } => fill(s.step_plug_pbd, &[("host", host)]),
         OperationStep::ReclaimingSpace => s.step_trim.to_owned(),
         OperationStep::UndoingSr => s.step_undo.to_owned(),
+        step => network_step(step),
+    }
+}
+
+fn network_step(step: &OperationStep) -> String {
+    let n = crate::net_strings::net_strings();
+    match step {
+        OperationStep::CreatingNetwork => n.step_creating.to_owned(),
+        OperationStep::RemovingNetwork => n.step_removing.to_owned(),
+        OperationStep::UpdatingNetwork => n.step_updating.to_owned(),
+        OperationStep::BringingUp { pif } => fill(n.step_bringing_up, &[("pif", pif)]),
+        OperationStep::Depurposing { pif } => fill(n.step_depurposing, &[("pif", pif)]),
+        OperationStep::ManagementReconfiguring { pif } => fill(n.step_management, &[("pif", pif)]),
+        OperationStep::BringingDown { pif } => fill(n.step_bringing_down, &[("pif", pif)]),
+        OperationStep::WaitingForMembers => n.step_waiting_members.to_owned(),
+        OperationStep::ScanningNics => n.step_scanning.to_owned(),
+        OperationStep::RefreshingNetworks => n.step_refreshing.to_owned(),
+        OperationStep::UndoingNetwork => n.step_undo.to_owned(),
         _ => String::new(),
     }
 }
@@ -771,6 +822,9 @@ pub fn operation_notice(notice: xen_core::operations::OperationNotice) -> &'stat
     match notice {
         xen_core::operations::OperationNotice::RestartForDisk => p.restart_for_disk,
         xen_core::operations::OperationNotice::RestartForDrive => p.restart_for_drive,
+        xen_core::operations::OperationNotice::RestartForVif => {
+            crate::net_strings::net_strings().hotplug_text
+        }
     }
 }
 

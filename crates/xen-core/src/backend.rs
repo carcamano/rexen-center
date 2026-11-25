@@ -413,6 +413,12 @@ pub struct BackendOptions {
     /// to read its configuration again (`host.call_plugin perfmon
     /// refresh`), as the original does.
     pub perfmon_refresh: bool,
+    /// How long a pool-wide management interface change waits for the
+    /// other hosts to go away and come back
+    /// (`NetworkingActionHelpers.WaitForMembersToRecover`: 60 s each way),
+    /// and how often it looks.
+    pub member_recovery_timeout: Duration,
+    pub member_recovery_poll: Duration,
 }
 
 impl Default for BackendOptions {
@@ -431,6 +437,8 @@ impl Default for BackendOptions {
             restore_connections: true,
             perf_interval: Duration::from_secs(5),
             perfmon_refresh: true,
+            member_recovery_timeout: Duration::from_secs(60),
+            member_recovery_poll: Duration::from_secs(1),
         }
     }
 }

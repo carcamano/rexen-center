@@ -137,7 +137,20 @@ pub(crate) async fn run(
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewSr(_)
         | ActionRequest::Sr { .. }
-        | ActionRequest::SetSrProperties { .. } => {
+        | ActionRequest::SetSrProperties { .. }
+        | ActionRequest::NewNetwork(_)
+        | ActionRequest::NewBond(_)
+        | ActionRequest::RemoveNetwork { .. }
+        | ActionRequest::DestroyBond { .. }
+        | ActionRequest::SetNetworkProperties { .. }
+        | ActionRequest::RescanPifs { .. }
+        | ActionRequest::ChangeNetworking(_)
+        | ActionRequest::RenameInterfaces { .. }
+        | ActionRequest::NewVif { .. }
+        | ActionRequest::DeleteVif { .. }
+        | ActionRequest::UpdateVif { .. }
+        | ActionRequest::PlugVif { .. }
+        | ActionRequest::UnplugVif { .. } => {
             unreachable!("run by crate::operations")
         }
     }

@@ -111,7 +111,7 @@ pub(crate) async fn run(
 }
 
 /// The model of `connection` now.
-fn model(shared: &Shared, connection: ConnectionId) -> std::sync::Arc<ConnectionModel> {
+pub(crate) fn model(shared: &Shared, connection: ConnectionId) -> std::sync::Arc<ConnectionModel> {
     shared
         .state()
         .connection(connection)
@@ -119,18 +119,18 @@ fn model(shared: &Shared, connection: ConnectionId) -> std::sync::Arc<Connection
         .unwrap_or_default()
 }
 
-fn step(shared: &Shared, op: OperationId, step: OperationStep) {
+pub(crate) fn step(shared: &Shared, op: OperationId, step: OperationStep) {
     shared.update_operation(op, |o| o.step = Some(step));
 }
 
-fn outcome(result: Result<(), TaskOutcome>) -> TaskOutcome {
+pub(crate) fn outcome(result: Result<(), TaskOutcome>) -> TaskOutcome {
     match result {
         Ok(()) => TaskOutcome::Succeeded,
         Err(o) => o,
     }
 }
 
-fn done(outcome: TaskOutcome) -> Result<(), TaskOutcome> {
+pub(crate) fn done(outcome: TaskOutcome) -> Result<(), TaskOutcome> {
     match outcome {
         TaskOutcome::Succeeded => Ok(()),
         other => Err(other),
@@ -148,7 +148,7 @@ macro_rules! tri {
 }
 
 /// Runs a task and returns the object it made (its result).
-async fn made<T>(
+pub(crate) async fn made<T>(
     shared: &Shared,
     op: OperationId,
     session: &Session,

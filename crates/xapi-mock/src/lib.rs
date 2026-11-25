@@ -32,6 +32,8 @@
 //!   (JSON with `json=true`, else XML) and `host.get_data_sources` /
 //!   `VM.get_data_sources`, made up from the time (see [`rrd`]);
 //! * VM creation, templates, snapshots and disks (see [`provisioning`]);
+//! * storage repositories (see [`storage`]) and networking (see
+//!   [`networking`]);
 //! * messages: `message.create` and `message.destroy` (with their events),
 //!   and `host.call_plugin` for perfmon's `refresh` / `start`.
 //!
@@ -51,6 +53,7 @@
 //! behind a dead network link) and [`MockServer::fail_method`] (a call or
 //! its task fails with a given XAPI error).
 
+pub mod networking;
 pub mod ops;
 pub mod provisioning;
 pub mod rrd;
@@ -295,6 +298,27 @@ impl MockServer {
     /// (`"nfs.lab:/exports/iso"`, `"//smb.lab/iso"`); a scan finds it.
     pub fn add_iso_file(&self, share: &str, name: &str) {
         self.state.db().storage.add_iso(share, name);
+    }
+
+    /// Makes `method` (`Bond.create`, `tunnel.create` or
+    /// `PIF.reconfigure_ip`) fail on `host` only (`fail` false: works
+    /// again).
+    pub fn fail_on_host(&self, method: &str, host: &str, fail: bool) {
+        let mut db = self.state.db();
+        let entry = (method.to_owned(), host.to_owned());
+        db.networking.host_failures.retain(|e| *e != entry);
+        if fail {
+            db.networking.host_failures.push(entry);
+        }
+    }
+
+    /// A NIC `device` (with `mac`) that the next `PIF.scan` of `host` finds.
+    pub fn add_spare_nic(&self, host: &str, device: &str, mac: &str) {
+        self.state.db().networking.spare_nics.push((
+            host.to_owned(),
+            device.to_owned(),
+            mac.to_owned(),
+        ));
     }
 
     /// Makes `method` (e.g. `"VM.clean_reboot"`; its `Async.*` form too)
@@ -654,8 +678,10 @@ impl State {
             plugin_calls: Vec::new(),
             next_object: 1,
             storage: storage::World::default(),
+            networking: networking::World::default(),
         };
         db.init_sr_ops();
+        db.init_vif_ops();
         // Drives without `allowed_operations` get them from their VM.
         let bare: Vec<String> = db
             .objects
@@ -758,6 +784,8 @@ struct Db {
     next_object: u64,
     /// The simulated storage behind the SRs.
     storage: storage::World,
+    /// Networking knobs.
+    networking: networking::World,
 }
 
 impl Db {
@@ -854,6 +882,7 @@ impl Db {
         });
         self.sync_consoles(vm, power_state);
         self.sync_vbds(vm);
+        self.sync_vifs(vm);
         if old_host != new_host {
             if old_host != NULL_REF {
                 self.modify("host", &old_host, |rec| {

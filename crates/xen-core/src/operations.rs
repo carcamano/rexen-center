@@ -82,6 +82,41 @@ pub enum OperationKind {
     Provision(ProvisionKind),
     /// A storage repository operation.
     Storage(StorageKind),
+    /// A networking operation.
+    Network(NetworkKind),
+}
+
+/// The networking operations, with the names their titles show (the
+/// original's action titles). `pool` is the pool's name
+/// (`Helpers.GetName(connection)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkKind {
+    /// "Creating network '{name}' on {pool}".
+    CreateNetwork { name: String, pool: String },
+    /// "Removing network '{name}' from {pool}".
+    RemoveNetwork { name: String, pool: String },
+    /// "Updating network '{name}' on {pool}" (the Properties dialog).
+    UpdateNetwork { name: String, pool: String },
+    /// "Creating {bond}".
+    CreateBond { name: String },
+    /// "Destroying {bond}".
+    DestroyBond { name: String },
+    /// "Scanning NICs on server '{host}'".
+    RescanPifs { host: String },
+    /// "Reconfiguring server networking".
+    ChangeNetworking,
+    /// "Renaming server network interface".
+    RenameInterfaces,
+    /// "Creating new virtual network interface on VM {vm}".
+    NewVif { vm: String },
+    /// "Deleting virtual network interface '{network}' from VM '{vm}'".
+    DeleteVif { network: String, vm: String },
+    /// "Updating virtual network interface '{network}' on VM '{vm}'".
+    UpdateVif { network: String, vm: String },
+    /// "Activating virtual network interface on VM '{vm}'".
+    PlugVif { vm: String },
+    /// "Deactivating virtual network interface on VM '{vm}'".
+    UnplugVif { vm: String },
 }
 
 /// The SR operations, with the names their titles show (the original's
@@ -164,6 +199,9 @@ pub enum OperationNotice {
     RestartForDisk,
     /// Same for a new DVD drive.
     RestartForDrive,
+    /// A new or changed interface could not be plugged into the running VM
+    /// (`VIF_HOTPLUG_FAILED_MESSAGE`).
+    RestartForVif,
 }
 
 /// What a running operation is doing now (the original's action
@@ -219,6 +257,28 @@ pub enum OperationStep {
     ReclaimingSpace,
     /// New SR / reattach: undoing what was made after a failure.
     UndoingSr,
+    /// "Creating network".
+    CreatingNetwork,
+    /// "Removing network".
+    RemovingNetwork,
+    /// "Updating network".
+    UpdatingNetwork,
+    /// "Configuring IP address on {pif}...".
+    BringingUp { pif: String },
+    /// "Deconfiguring management facility on {pif}...".
+    Depurposing { pif: String },
+    /// "Configuring management interface on {pif}...".
+    ManagementReconfiguring { pif: String },
+    /// "Removing IP address from {pif}...".
+    BringingDown { pif: String },
+    /// "Waiting for other pool members to recover...".
+    WaitingForMembers,
+    /// "Scanning...".
+    ScanningNics,
+    /// "Refreshing networks...".
+    RefreshingNetworks,
+    /// New network or bond: undoing what was made after a failure.
+    UndoingNetwork,
 }
 
 /// How an operation ended (or that it has not).
@@ -348,7 +408,82 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         | ActionRequest::SetSrProperties { .. } => {
             OperationKind::Storage(storage_kind(model, request))
         }
+        request if request.is_network() => OperationKind::Network(network_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an F9 request.
+fn network_kind(model: &ConnectionModel, request: &ActionRequest) -> NetworkKind {
+    let pool = model
+        .pool()
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    let network_name = |r: &Ref<xapi::Network>| {
+        model
+            .networks
+            .get(r)
+            .map(|n| objects::network_name(model, n))
+            .unwrap_or_default()
+    };
+    let vm_name = |r: &Ref<Vm>| {
+        model
+            .vms
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_default()
+    };
+    let vif_vm = |r: &Ref<xapi::Vif>| model.get(r).map(|v| vm_name(&v.vm)).unwrap_or_default();
+    let vif_network = |r: &Ref<xapi::Vif>| {
+        model
+            .get(r)
+            .map(|v| network_name(&v.network))
+            .unwrap_or_default()
+    };
+    match request {
+        ActionRequest::NewNetwork(spec) => NetworkKind::CreateNetwork {
+            name: spec.name.clone(),
+            pool,
+        },
+        ActionRequest::NewBond(spec) => NetworkKind::CreateBond {
+            name: spec.name.clone(),
+        },
+        ActionRequest::RemoveNetwork { network } => NetworkKind::RemoveNetwork {
+            name: network_name(network),
+            pool,
+        },
+        ActionRequest::DestroyBond { bond } => NetworkKind::DestroyBond {
+            name: model
+                .get(bond)
+                .and_then(|b| model.get(&b.master))
+                .map(|p| objects::pif_name(model, p))
+                .unwrap_or_default(),
+        },
+        ActionRequest::SetNetworkProperties { network, .. } => NetworkKind::UpdateNetwork {
+            name: network_name(network),
+            pool,
+        },
+        ActionRequest::RescanPifs { host } => NetworkKind::RescanPifs {
+            host: model
+                .hosts
+                .get(host)
+                .map(|h| h.name_label.clone())
+                .unwrap_or_default(),
+        },
+        ActionRequest::ChangeNetworking(_) => NetworkKind::ChangeNetworking,
+        ActionRequest::RenameInterfaces { .. } => NetworkKind::RenameInterfaces,
+        ActionRequest::NewVif { vm, .. } => NetworkKind::NewVif { vm: vm_name(vm) },
+        ActionRequest::DeleteVif { vif } => NetworkKind::DeleteVif {
+            network: vif_network(vif),
+            vm: vif_vm(vif),
+        },
+        ActionRequest::UpdateVif { vif, .. } => NetworkKind::UpdateVif {
+            network: vif_network(vif),
+            vm: vif_vm(vif),
+        },
+        ActionRequest::PlugVif { vif } => NetworkKind::PlugVif { vm: vif_vm(vif) },
+        ActionRequest::UnplugVif { vif } => NetworkKind::UnplugVif { vm: vif_vm(vif) },
+        _ => unreachable!("not a networking request"),
     }
 }
 
@@ -483,13 +618,7 @@ fn provision_kind(model: &ConnectionModel, request: &ActionRequest) -> Provision
         },
         ActionRequest::NewCdDrive { vm } => ProvisionKind::NewCdDrive { vm: vm_name(vm) },
         ActionRequest::InstallTools { vm } => ProvisionKind::InstallTools { vm: vm_name(vm) },
-        ActionRequest::Vm { .. }
-        | ActionRequest::Host { .. }
-        | ActionRequest::DismissAlerts { .. }
-        | ActionRequest::SetPerfmon { .. }
-        | ActionRequest::NewSr(_)
-        | ActionRequest::Sr { .. }
-        | ActionRequest::SetSrProperties { .. } => unreachable!("not a provisioning request"),
+        _ => unreachable!("not a provisioning request"),
     }
 }
 
@@ -518,6 +647,19 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewVm(_)
         | ActionRequest::DeleteSnapshots { .. } => None,
+        ActionRequest::NewVif { vm, .. } => Some(vm.clone()),
+        ActionRequest::DeleteVif { vif }
+        | ActionRequest::UpdateVif { vif, .. }
+        | ActionRequest::PlugVif { vif }
+        | ActionRequest::UnplugVif { vif } => model.get(vif).map(|v| v.vm.clone()),
+        ActionRequest::NewNetwork(_)
+        | ActionRequest::NewBond(_)
+        | ActionRequest::RemoveNetwork { .. }
+        | ActionRequest::DestroyBond { .. }
+        | ActionRequest::SetNetworkProperties { .. }
+        | ActionRequest::RescanPifs { .. }
+        | ActionRequest::ChangeNetworking(_)
+        | ActionRequest::RenameInterfaces { .. } => None,
         ActionRequest::CopyVm { vm, .. }
         | ActionRequest::MakeTemplate { vm }
         | ActionRequest::DeleteVm { vm, .. }
@@ -604,6 +746,9 @@ pub(crate) fn start_action(
             | ActionRequest::Sr { .. }
             | ActionRequest::SetSrProperties { .. }) => {
                 crate::storage_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_network() => {
+                crate::network_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };

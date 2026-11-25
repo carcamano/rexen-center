@@ -8,11 +8,14 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Host, HostAllowedOperations, HostRecord, Message, Ref, Sr, Vbd, Vdi, Vm, VmOperations,
-    VmPowerState, VmRecord,
+    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Ref, Sr, Vbd, Vdi, Vif,
+    Vm, VmOperations, VmPowerState, VmRecord,
 };
 
 use crate::model::{ConnectionModel, is_guest};
+use crate::network::{
+    IpChange, NetworkChanges, NewBondSpec, NewNetworkKind, NewNetworkSpec, VifSpec,
+};
 use crate::objects;
 use crate::provisioning::{CopyMode, DiskSpec, NewVmSpec};
 use crate::storage::{NewSrMode, NewSrSpec, SrAction, SrChanges};
@@ -227,6 +230,176 @@ pub enum ActionRequest {
         sr: Ref<Sr>,
         changes: SrChanges,
     },
+    /// The New Network wizard: an external (VLAN), single-server or
+    /// cross-server private network (`NetworkAction`, `CreateChinAction`).
+    NewNetwork(Box<NewNetworkSpec>),
+    /// A bonded network (`CreateBondAction`).
+    NewBond(Box<NewBondSpec>),
+    /// Remove Network (`NetworkAction` destroying a network).
+    RemoveNetwork {
+        network: Ref<Network>,
+    },
+    /// Delete Bond (`DestroyBondAction`): `bond` and its equivalents on the
+    /// other hosts, and their network.
+    DestroyBond {
+        bond: Ref<Bond>,
+    },
+    /// The network Properties dialog: the fields that changed.
+    SetNetworkProperties {
+        network: Ref<Network>,
+        changes: NetworkChanges,
+    },
+    /// Rescan on the NICs tab (`RescanPIFsAction`).
+    RescanPifs {
+        host: Ref<Host>,
+    },
+    /// Configure IP Addresses (`ChangeNetworkingAction`).
+    ChangeNetworking(Box<IpChange>),
+    /// Renaming secondary interfaces (`SetSecondaryManagementPurposeAction`);
+    /// with `pool`, on every host's PIF of the same network.
+    RenameInterfaces {
+        pool: bool,
+        pifs: Vec<(Ref<Pif>, String)>,
+    },
+    /// Add Interface (`CreateVIFAction`).
+    NewVif {
+        vm: Ref<Vm>,
+        spec: VifSpec,
+    },
+    /// Remove Interface (`DeleteVIFAction`).
+    DeleteVif {
+        vif: Ref<Vif>,
+    },
+    /// The interface's Properties (`UpdateVIFAction`: deleted and made
+    /// again).
+    UpdateVif {
+        vif: Ref<Vif>,
+        spec: VifSpec,
+    },
+    /// Activate (`PlugVIFAction`).
+    PlugVif {
+        vif: Ref<Vif>,
+    },
+    /// Deactivate (`UnplugVIFAction`).
+    UnplugVif {
+        vif: Ref<Vif>,
+    },
+}
+
+impl ActionRequest {
+    /// An F9 networking request.
+    pub fn is_network(&self) -> bool {
+        matches!(
+            self,
+            Self::NewNetwork(_)
+                | Self::NewBond(_)
+                | Self::RemoveNetwork { .. }
+                | Self::DestroyBond { .. }
+                | Self::SetNetworkProperties { .. }
+                | Self::RescanPifs { .. }
+                | Self::ChangeNetworking(_)
+                | Self::RenameInterfaces { .. }
+                | Self::NewVif { .. }
+                | Self::DeleteVif { .. }
+                | Self::UpdateVif { .. }
+                | Self::PlugVif { .. }
+                | Self::UnplugVif { .. }
+        )
+    }
+
+    /// The RBAC calls of an F9 request.
+    fn network_rbac_methods(&self) -> Vec<&'static str> {
+        match self {
+            Self::NewNetwork(spec) => match &spec.kind {
+                NewNetworkKind::External { .. } => {
+                    vec![
+                        "network.create",
+                        "pool.create_vlan_from_pif",
+                        "network.destroy",
+                    ]
+                }
+                NewNetworkKind::Internal => vec!["network.create"],
+                NewNetworkKind::CrossServer { .. } => vec![
+                    "network.create",
+                    "tunnel.create",
+                    "tunnel.destroy",
+                    "network.destroy",
+                ],
+            },
+            Self::NewBond(_) => vec![
+                "host.management_reconfigure",
+                "network.create",
+                "network.destroy",
+                "network.remove_from_other_config",
+                "pif.reconfigure_ip",
+                "pif.plug",
+                "pif.set_other_config",
+                "bond.create",
+                "bond.destroy",
+            ],
+            Self::RemoveNetwork { .. } => vec!["network.destroy", "vlan.destroy", "tunnel.destroy"],
+            Self::DestroyBond { .. } => vec![
+                "host.management_reconfigure",
+                "network.destroy",
+                "pif.reconfigure_ip",
+                "pif.plug",
+                "pif.set_other_config",
+                "bond.destroy",
+            ],
+            Self::SetNetworkProperties { changes, .. } => {
+                let mut m = Vec::new();
+                if changes.name.is_some() {
+                    m.push("network.set_name_label");
+                }
+                if changes.description.is_some() {
+                    m.push("network.set_name_description");
+                }
+                if changes.tags.is_some() {
+                    m.push("network.set_tags");
+                }
+                if changes.auto_plug.is_some() {
+                    m.extend([
+                        "network.remove_from_other_config",
+                        "network.add_to_other_config",
+                    ]);
+                }
+                if changes.mtu.is_some() {
+                    m.push("network.set_mtu");
+                }
+                if changes.bond_mode.is_some() {
+                    m.push("bond.set_mode");
+                }
+                if changes.hashing.is_some() {
+                    m.push("bond.set_property");
+                }
+                if let Some(pifs) = &changes.pifs {
+                    m.extend(["vlan.destroy", "tunnel.destroy"]);
+                    if matches!(pifs, crate::network::PifChange::External { .. }) {
+                        m.push("pool.create_vlan_from_pif");
+                    }
+                } else if changes.replug() {
+                    m.extend(["pif.unplug", "pif.plug", "vif.unplug", "vif.plug"]);
+                }
+                m
+            }
+            Self::RescanPifs { .. } => vec!["pif.scan"],
+            Self::ChangeNetworking(_) => vec![
+                "host.management_reconfigure",
+                "pool.management_reconfigure",
+                "pif.reconfigure_ip",
+                "pif.plug",
+                "pif.set_disallow_unplug",
+                "pif.set_other_config",
+            ],
+            Self::RenameInterfaces { .. } => vec!["pif.set_other_config"],
+            Self::NewVif { .. } => vec!["vif.create", "vif.plug"],
+            Self::DeleteVif { .. } => vec!["vif.unplug", "vif.destroy"],
+            Self::UpdateVif { .. } => vec!["vif.unplug", "vif.destroy", "vif.create", "vif.plug"],
+            Self::PlugVif { .. } => vec!["vif.plug"],
+            Self::UnplugVif { .. } => vec!["vif.unplug"],
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// `task.destroy`, called once a task has been followed to its end.
@@ -237,6 +410,11 @@ impl ActionRequest {
     /// (lowercase `class.method`, without `async_`). The original lists the
     /// same calls in each action's `ApiMethodsToRoleCheck`.
     pub fn rbac_methods(&self) -> Vec<&'static str> {
+        if self.is_network() {
+            let mut m = self.network_rbac_methods();
+            m.push("task.destroy");
+            return m;
+        }
         let own: &[&str] = match self {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
             Self::SetPerfmon { object, config } => {
@@ -421,6 +599,19 @@ impl ActionRequest {
                 }
                 return m;
             }
+            Self::NewNetwork(_)
+            | Self::NewBond(_)
+            | Self::RemoveNetwork { .. }
+            | Self::DestroyBond { .. }
+            | Self::SetNetworkProperties { .. }
+            | Self::RescanPifs { .. }
+            | Self::ChangeNetworking(_)
+            | Self::RenameInterfaces { .. }
+            | Self::NewVif { .. }
+            | Self::DeleteVif { .. }
+            | Self::UpdateVif { .. }
+            | Self::PlugVif { .. }
+            | Self::UnplugVif { .. } => &[],
             Self::ChangeCd { .. } | Self::InstallTools { .. } => &["vbd.eject", "vbd.insert"],
             Self::NewCdDrive { .. } => &["vbd.create", "vbd.plug"],
             Self::Vm { action, .. } => match action {

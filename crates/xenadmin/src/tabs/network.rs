@@ -1,6 +1,6 @@
 //! Networking and NICs tabs (`NetworkPage`, `NetworkList`, `NICPage`).
 
-use xapi::{Host, IpConfigurationMode, PifRecord, Ref, VmRecord};
+use xapi::{Host, IpConfigurationMode, Network, Pif, PifRecord, Ref, Vif, VmRecord};
 use xen_core::objects::{self, LinkStatus, NetworkLinkStatus};
 
 use super::{Ctx, Table, yes_no};
@@ -8,7 +8,13 @@ use crate::i18n::fill;
 use crate::tab_strings::tab_strings;
 
 /// The virtual interfaces of a VM, by device number.
+#[cfg(test)]
 pub fn vm_interfaces(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
+    vm_interface_rows(ctx, vm).0
+}
+
+/// [`vm_interfaces`] with the interface of each row.
+pub fn vm_interface_rows(ctx: Ctx<'_>, vm: &VmRecord) -> (Table, Vec<Ref<Vif>>) {
     let t = tab_strings();
     let m = ctx.model;
     let mut table = Table::new(vec![
@@ -19,20 +25,10 @@ pub fn vm_interfaces(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
         t.col_ip,
         t.col_active,
     ]);
-    let mut vifs: Vec<&xapi::VifRecord> = vm
-        .vifs
-        .iter()
-        .filter_map(|r| m.get(r))
-        .map(|v| &**v)
-        .filter(|vif| {
-            ctx.show_hidden
-                || !m
-                    .get(&vif.network)
-                    .is_some_and(|n| objects::is_guest_installer_network(n))
-        })
-        .collect();
-    vifs.sort_by(|a, b| objects::natural_cmp(&a.device, &b.device));
-    for vif in vifs {
+    let vifs = xen_core::network::vm_vifs(m, vm, ctx.show_hidden);
+    let mut refs = Vec::new();
+    for (vif_ref, vif) in vifs {
+        refs.push(vif_ref.clone());
         let ips = if vm.is_a_template {
             Vec::new()
         } else {
@@ -64,7 +60,7 @@ pub fn vm_interfaces(ctx: Ctx<'_>, vm: &VmRecord) -> Table {
             yes_no(vif.currently_attached),
         ]);
     }
-    table
+    (table, refs)
 }
 
 fn link_label(status: LinkStatus) -> &'static str {
@@ -77,7 +73,13 @@ fn link_label(status: LinkStatus) -> &'static str {
 }
 
 /// The networks of a host or, with `host` `None`, of the pool.
+#[cfg(test)]
 pub fn networks(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
+    network_rows(ctx, host).0
+}
+
+/// [`networks`] with the network of each row.
+pub fn network_rows(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> (Table, Vec<Ref<Network>>) {
     let t = tab_strings();
     let m = ctx.model;
     let mut table = Table::new(vec![
@@ -91,7 +93,7 @@ pub fn networks(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
         t.col_mtu,
     ]);
     let mut rows = Vec::new();
-    for (_, network) in objects::shown_networks(m, ctx.show_hidden) {
+    for (network_ref, network) in objects::shown_networks(m, ctx.show_hidden) {
         let pif = objects::network_pif(m, network, host).map(|(_, p)| &**p);
         let mut name = objects::network_name(m, network);
         let bond_member = objects::is_bond_member_network(m, network);
@@ -142,22 +144,30 @@ pub fn networks(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
                 network.mtu.to_string()
             },
         ];
-        rows.push((cells, bond_member));
+        rows.push((cells, bond_member, network_ref.clone()));
     }
     // The original sorts by the NIC column.
-    rows.sort_by(|(a, _), (b, _)| objects::natural_cmp(&a[2], &b[2]));
-    for (cells, greyed) in rows {
+    rows.sort_by(|(a, _, _), (b, _, _)| objects::natural_cmp(&a[2], &b[2]));
+    let mut refs = Vec::new();
+    for (cells, greyed, r) in rows {
         table.push(cells);
+        refs.push(r);
         if let Some(last) = table.rows.last_mut() {
             last.greyed = greyed;
         }
     }
-    table
+    (table, refs)
 }
 
 /// "IP Address Configuration": the management interfaces of a host or of
 /// every host of the pool.
+#[cfg(test)]
 pub fn ip_configuration(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
+    ip_configuration_rows(ctx, host).0
+}
+
+/// [`ip_configuration`] with the PIF of each row.
+pub fn ip_configuration_rows(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> (Table, Vec<Ref<Pif>>) {
     let t = tab_strings();
     let m = ctx.model;
     let mut table = Table::new(vec![
@@ -175,13 +185,14 @@ pub fn ip_configuration(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
         .into_iter()
         .filter(|(r, _)| host.is_none_or(|h| h == *r))
         .collect();
+    let mut refs = Vec::new();
     for (host_ref, host) in hosts {
-        let mut pifs: Vec<&PifRecord> = m
+        let mut pifs: Vec<(&Ref<Pif>, &PifRecord)> = m
             .pifs
-            .values()
-            .filter(|p| &p.host == host_ref)
-            .map(|p| &**p)
-            .filter(|p| {
+            .iter()
+            .filter(|(_, p)| &p.host == host_ref)
+            .map(|(r, p)| (r, &**p))
+            .filter(|(_, p)| {
                 let primary = p.management
                     && !m
                         .get(&p.network)
@@ -189,12 +200,13 @@ pub fn ip_configuration(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
                 primary || objects::pif_is_secondary_management(m, p, ctx.show_hidden)
             })
             .collect();
-        pifs.sort_by(|a, b| {
+        pifs.sort_by(|(_, a), (_, b)| {
             b.management.cmp(&a.management).then_with(|| {
                 objects::natural_cmp(&objects::pif_name(m, a), &objects::pif_name(m, b))
             })
         });
-        for pif in pifs {
+        for (pif_ref, pif) in pifs {
+            refs.push(pif_ref.clone());
             table.push(vec![
                 host.name_label.clone(),
                 if pif.management {
@@ -223,7 +235,7 @@ pub fn ip_configuration(ctx: Ctx<'_>, host: Option<&Ref<Host>>) -> Table {
             ]);
         }
     }
-    table
+    (table, refs)
 }
 
 /// SR-IOV capability text of a NIC (without the remaining-VF count, which
@@ -248,7 +260,13 @@ fn sriov_text(ctx: Ctx<'_>, pif: &PifRecord) -> String {
 }
 
 /// The physical NICs (and bonds) of a host, in the server's order.
+#[cfg(test)]
 pub fn nics(ctx: Ctx<'_>, host: &Ref<Host>) -> Table {
+    nic_rows(ctx, host).0
+}
+
+/// [`nics`] with the PIF of each row.
+pub fn nic_rows(ctx: Ctx<'_>, host: &Ref<Host>) -> (Table, Vec<Ref<Pif>>) {
     let t = tab_strings();
     let m = ctx.model;
     let mut table = Table::new(vec![
@@ -264,18 +282,22 @@ pub fn nics(ctx: Ctx<'_>, host: &Ref<Host>) -> Table {
         t.col_sriov_capable,
     ]);
     let Some(host) = m.hosts.get(host) else {
-        return table;
+        return (table, Vec::new());
     };
-    let mut pifs: Vec<&PifRecord> = host
+    let mut pifs: Vec<(&Ref<Pif>, &PifRecord)> = host
         .pifs
         .iter()
-        .filter_map(|p| m.get(p))
-        .map(|p| &**p)
-        .filter(|p| objects::pif_is_physical(p))
+        .filter_map(|p| m.pifs.get_key_value(p))
+        .map(|(r, p)| (r, &**p))
+        .filter(|(_, p)| objects::pif_is_physical(p))
         .collect();
     // A cache has no server order; NIC names sort the same way.
-    pifs.sort_by(|a, b| objects::natural_cmp(&objects::pif_name(m, a), &objects::pif_name(m, b)));
-    for pif in pifs {
+    pifs.sort_by(|(_, a), (_, b)| {
+        objects::natural_cmp(&objects::pif_name(m, a), &objects::pif_name(m, b))
+    });
+    let mut refs = Vec::new();
+    for (pif_ref, pif) in pifs {
+        refs.push(pif_ref.clone());
         let metrics = m.get(&pif.metrics);
         let carrier = metrics.is_some_and(|x| x.carrier);
         let metric = |f: fn(&xapi::PifMetricsRecord) -> String| {
@@ -310,7 +332,7 @@ pub fn nics(ctx: Ctx<'_>, host: &Ref<Host>) -> Table {
             sriov_text(ctx, pif),
         ]);
     }
-    table
+    (table, refs)
 }
 
 #[cfg(test)]
