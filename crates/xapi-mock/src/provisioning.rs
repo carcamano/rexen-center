@@ -72,6 +72,9 @@ const CALLS: &[(&str, &[&str])] = &[
 /// Whether `class.call` is handled here (setters and map calls included,
 /// for every class but the ones the mock handles elsewhere).
 pub(crate) fn handles(class: &str, call: &str) -> bool {
+    if crate::storage::handles(class, call) {
+        return true;
+    }
     if CALLS
         .iter()
         .any(|(c, calls)| *c == class && calls.contains(&call))
@@ -222,18 +225,18 @@ const VDI_TYPES: &[&str] = &[
 ];
 
 impl Db {
-    fn record(&self, class: &str, r: &str) -> Option<&Map<String, Value>> {
+    pub(crate) fn record(&self, class: &str, r: &str) -> Option<&Map<String, Value>> {
         self.objects
             .get(&(class.to_owned(), r.to_owned()))
             .and_then(Value::as_object)
     }
 
-    fn exists(&self, class: &str, r: &str) -> bool {
+    pub(crate) fn exists(&self, class: &str, r: &str) -> bool {
         self.record(class, r).is_some()
     }
 
     /// A new reference and uuid for an object of `class`.
-    fn new_ref(&mut self, class: &str) -> (String, String) {
+    pub(crate) fn new_ref(&mut self, class: &str) -> (String, String) {
         let n = self.next_object;
         self.next_object += 1;
         (
@@ -242,13 +245,13 @@ impl Db {
         )
     }
 
-    fn insert(&mut self, class: &str, r: &str, record: Value) {
+    pub(crate) fn insert(&mut self, class: &str, r: &str, record: Value) {
         self.objects
             .insert((class.to_owned(), r.to_owned()), record.clone());
         self.push_event(class, "add", r, Some(record));
     }
 
-    fn remove(&mut self, class: &str, r: &str) {
+    pub(crate) fn remove(&mut self, class: &str, r: &str) {
         if self
             .objects
             .remove(&(class.to_owned(), r.to_owned()))
@@ -258,7 +261,7 @@ impl Db {
         }
     }
 
-    fn push_ref(&mut self, class: &str, r: &str, field: &str, item: &str) {
+    pub(crate) fn push_ref(&mut self, class: &str, r: &str, field: &str, item: &str) {
         self.modify(class, r, |rec| {
             let list = rec.entry(field).or_insert_with(|| json!([]));
             if let Value::Array(l) = list
@@ -269,7 +272,7 @@ impl Db {
         });
     }
 
-    fn drop_ref(&mut self, class: &str, r: &str, field: &str, item: &str) {
+    pub(crate) fn drop_ref(&mut self, class: &str, r: &str, field: &str, item: &str) {
         if !self.exists(class, r) {
             return;
         }
@@ -299,7 +302,7 @@ impl Db {
             .map(str::to_owned)
     }
 
-    fn vm_power(&self, vm: &str) -> String {
+    pub(crate) fn vm_power(&self, vm: &str) -> String {
         self.get_str("vm", vm, "power_state").unwrap_or_default()
     }
 
@@ -383,6 +386,9 @@ impl Db {
     ) -> Option<Reply> {
         if !handles(class, call) {
             return None;
+        }
+        if let Some(reply) = self.storage_call(class, call, params) {
+            return Some(reply);
         }
         let lower = class.to_lowercase();
         Some(match (class, call) {

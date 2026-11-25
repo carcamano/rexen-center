@@ -35,7 +35,7 @@ pub(super) fn select_vm(h: &mut Harness<'_, XenAdminApp>, r: &str) {
 
 /// Shows a tab of the selection by its title.
 pub(super) fn tab(h: &mut Harness<'_, XenAdminApp>, title: &str) {
-    click_first(h, title);
+    click_tab(h, title);
     settle(h);
 }
 

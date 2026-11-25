@@ -36,13 +36,16 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use xapi::error::codes;
-use xapi::{Host, Ref, Session, Task, TaskStatusType, Vm, VmOperations};
+use xapi::{Host, Ref, Session, Sr, Task, TaskStatusType, Vm, VmOperations};
 
 use crate::actions::{self, ActionRequest, HostAction, PerfmonObjectRef, VmAction};
 use crate::backend::{ConnectionError, ConnectionId, Notification, OperationId, Shared};
 use crate::model::ConnectionModel;
 use crate::objects;
 use crate::provisioning::CopyMode;
+use crate::storage::{
+    DeviceConfig, IqnInfo, IscsiScan, LunInfo, NewSrMode, ProbeResult, Secret, SrAction,
+};
 
 /// `other_config` key marking a host put in maintenance mode by a console.
 pub const MAINTENANCE_MODE: &str = "MAINTENANCE_MODE";
@@ -77,6 +80,30 @@ pub enum OperationKind {
     SavePerfmon { object_name: String },
     /// A VM creation, template, snapshot or disk operation.
     Provision(ProvisionKind),
+    /// A storage repository operation.
+    Storage(StorageKind),
+}
+
+/// The SR operations, with the names their titles show (the original's
+/// action titles). `pool` is the pool's name (`Helpers.GetName`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageKind {
+    /// "Creating {type} SR '{name}' on '{pool}'".
+    CreateSr {
+        sr_type: String,
+        name: String,
+        pool: String,
+    },
+    /// "Attaching SR '{name}' to '{pool}'" (introduce or reattach).
+    AttachSr { name: String, pool: String },
+    /// An operation of the Storage menu on SR `name`.
+    Sr {
+        action: SrAction,
+        name: String,
+        pool: String,
+    },
+    /// Saving the SR Properties dialog.
+    SrProperties { name: String },
 }
 
 /// The VM creation, template, snapshot and disk operations, with the names
@@ -180,6 +207,18 @@ pub enum OperationStep {
     RollingBack,
     /// Revert: "Reverting the power state of {vm}".
     RevertingPowerState { vm: String },
+    /// New SR: "Creating SR".
+    CreatingSr,
+    /// New SR: "Attaching SR".
+    AttachingSr,
+    /// Attach / repair: "Creating PBD for {host}".
+    CreatingPbd { host: String },
+    /// Attach / repair: "Plugging PBD for {host}".
+    PluggingPbd { host: String },
+    /// Trim: "Reclaiming freed space".
+    ReclaimingSpace,
+    /// New SR / reattach: undoing what was made after a failure.
+    UndoingSr,
 }
 
 /// How an operation ended (or that it has not).
@@ -207,6 +246,7 @@ pub enum OperationFailure {
 pub enum OperationObject {
     Vm(Ref<Vm>),
     Host(Ref<Host>),
+    Sr(Ref<Sr>),
 }
 
 /// One entry of the history.
@@ -303,7 +343,49 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
             }
             .unwrap_or_default(),
         },
+        ActionRequest::NewSr(_)
+        | ActionRequest::Sr { .. }
+        | ActionRequest::SetSrProperties { .. } => {
+            OperationKind::Storage(storage_kind(model, request))
+        }
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an F8 request.
+fn storage_kind(model: &ConnectionModel, request: &ActionRequest) -> StorageKind {
+    let pool = model
+        .pool()
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    let sr_name = |r: &Ref<Sr>| {
+        model
+            .srs
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_else(|| r.to_string())
+    };
+    match request {
+        ActionRequest::NewSr(spec) => match spec.mode() {
+            NewSrMode::Create => StorageKind::CreateSr {
+                sr_type: spec.kind.sr_type().to_owned(),
+                name: spec.name.clone(),
+                pool,
+            },
+            NewSrMode::Introduce | NewSrMode::Reattach => StorageKind::AttachSr {
+                name: spec.name.clone(),
+                pool,
+            },
+        },
+        ActionRequest::Sr { sr, action } => StorageKind::Sr {
+            action: *action,
+            name: sr_name(sr),
+            pool,
+        },
+        ActionRequest::SetSrProperties { sr, .. } => {
+            StorageKind::SrProperties { name: sr_name(sr) }
+        }
+        _ => unreachable!("not a storage request"),
     }
 }
 
@@ -404,7 +486,10 @@ fn provision_kind(model: &ConnectionModel, request: &ActionRequest) -> Provision
         ActionRequest::Vm { .. }
         | ActionRequest::Host { .. }
         | ActionRequest::DismissAlerts { .. }
-        | ActionRequest::SetPerfmon { .. } => unreachable!("not a provisioning request"),
+        | ActionRequest::SetPerfmon { .. }
+        | ActionRequest::NewSr(_)
+        | ActionRequest::Sr { .. }
+        | ActionRequest::SetSrProperties { .. } => unreachable!("not a provisioning request"),
     }
 }
 
@@ -423,6 +508,12 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
     let vm = match request {
         ActionRequest::Vm { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
         ActionRequest::Host { host, .. } => return Some(OperationObject::Host(host.clone())),
+        ActionRequest::Sr { sr, .. } | ActionRequest::SetSrProperties { sr, .. } => {
+            return Some(OperationObject::Sr(sr.clone()));
+        }
+        ActionRequest::NewSr(spec) => {
+            return spec.reattach.clone().map(OperationObject::Sr);
+        }
         ActionRequest::DismissAlerts { .. }
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewVm(_)
@@ -508,6 +599,11 @@ pub(crate) fn start_action(
             }
             ActionRequest::SetPerfmon { object, config } => {
                 set_perfmon(&shared, connection, &session, object, config.as_deref()).await
+            }
+            request @ (ActionRequest::NewSr(_)
+            | ActionRequest::Sr { .. }
+            | ActionRequest::SetSrProperties { .. }) => {
+                crate::storage_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
@@ -939,6 +1035,7 @@ fn set_busy(shared: &Shared, connection: ConnectionId, object: &OperationObject,
     shared.update_connection(connection, |v| match object {
         OperationObject::Vm(vm) => toggle(&mut v.busy_vms, vm, busy),
         OperationObject::Host(host) => toggle(&mut v.busy_hosts, host, busy),
+        OperationObject::Sr(sr) => toggle(&mut v.busy_srs, sr, busy),
     });
 }
 
@@ -1066,7 +1163,7 @@ fn is_task_gone(e: &xapi::Error) -> bool {
 }
 
 /// A failed task's `error_info` as an API error.
-fn task_error(error_info: Vec<String>) -> xapi::Error {
+pub(crate) fn task_error(error_info: Vec<String>) -> xapi::Error {
     let mut info = error_info.into_iter();
     xapi::Error::Api {
         code: info.next().unwrap_or_else(|| "UNKNOWN_ERROR".to_owned()),
@@ -1083,6 +1180,25 @@ pub enum Precheck {
     BootHosts { vm: Ref<Vm>, hosts: Vec<Ref<Host>> },
     /// `host.get_vms_which_prevent_evacuation` (Enter Maintenance Mode).
     Evacuation { host: Ref<Host> },
+    /// `SR.probe` on the coordinator (`SrProbeAction`: the NFS and SMB
+    /// Scan buttons, the iSCSI page's check of the chosen LUN).
+    SrProbe {
+        sr_type: String,
+        device_config: DeviceConfig,
+    },
+    /// The IQNs of an iSCSI target (`ISCSIPopulateIQNsAction`).
+    IscsiIqns {
+        target: String,
+        port: u16,
+        chap: Option<(String, Secret)>,
+    },
+    /// The LUNs of a target IQN (`ISCSIPopulateLunsAction`).
+    IscsiLuns {
+        target: String,
+        port: u16,
+        iqn: String,
+        chap: Option<(String, Secret)>,
+    },
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -1097,6 +1213,10 @@ pub enum PrecheckResult {
     /// The VMs that cannot be migrated away, with the server's reason
     /// (an error code and its parameters).
     Evacuation(Result<Vec<EvacuationBlocker>, Arc<xapi::Error>>),
+    /// What `SR.probe` found.
+    SrProbe(Result<ProbeResult, Arc<xapi::Error>>),
+    IscsiIqns(IscsiScan<IqnInfo>),
+    IscsiLuns(IscsiScan<LunInfo>),
 }
 
 pub(crate) fn run_precheck(
@@ -1129,6 +1249,31 @@ pub(crate) fn run_precheck(
                         v
                     })
                     .map_err(Arc::new),
+            ),
+            Precheck::SrProbe {
+                sr_type,
+                device_config,
+            } => PrecheckResult::SrProbe(
+                crate::storage_run::probe(&shared, &session, connection, &sr_type, &device_config)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::IscsiIqns { target, port, chap } => PrecheckResult::IscsiIqns(
+                crate::storage_run::scan_iqns(&shared, &session, connection, &target, port, chap)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::IscsiLuns {
+                target,
+                port,
+                iqn,
+                chap,
+            } => PrecheckResult::IscsiLuns(
+                crate::storage_run::scan_luns(
+                    &shared, &session, connection, &target, port, &iqn, chap,
+                )
+                .await
+                .map_err(Arc::new),
             ),
         };
         shared.notify(Notification::Precheck {

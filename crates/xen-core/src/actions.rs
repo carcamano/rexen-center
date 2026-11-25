@@ -15,6 +15,7 @@ use xapi::{
 use crate::model::{ConnectionModel, is_guest};
 use crate::objects;
 use crate::provisioning::{CopyMode, DiskSpec, NewVmSpec};
+use crate::storage::{NewSrMode, NewSrSpec, SrAction, SrChanges};
 
 /// VM operations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -213,6 +214,19 @@ pub enum ActionRequest {
     InstallTools {
         vm: Ref<Vm>,
     },
+    /// The New SR wizard: create, introduce or reattach an SR
+    /// (`SrCreateAction`, `SrIntroduceAction`, `SrReattachAction`).
+    NewSr(Box<NewSrSpec>),
+    /// An SR operation of the Storage menu.
+    Sr {
+        sr: Ref<Sr>,
+        action: SrAction,
+    },
+    /// The SR Properties dialog: the fields that changed.
+    SetSrProperties {
+        sr: Ref<Sr>,
+        changes: SrChanges,
+    },
 }
 
 /// `task.destroy`, called once a task has been followed to its end.
@@ -335,6 +349,78 @@ impl ActionRequest {
                 "vbd.destroy",
                 "vbd.unplug",
             ],
+            Self::NewSr(spec) => {
+                let mut m = match spec.mode() {
+                    NewSrMode::Create => vec![
+                        "sr.create",
+                        "sr.set_other_config",
+                        "sr.forget",
+                        "pbd.plug",
+                        "pbd.unplug",
+                    ],
+                    NewSrMode::Introduce => {
+                        vec!["sr.forget", "sr.introduce", "pbd.create", "pbd.plug"]
+                    }
+                    NewSrMode::Reattach => vec![
+                        "sr.set_name_label",
+                        "sr.set_name_description",
+                        "pbd.create",
+                        "pbd.plug",
+                        "pbd.unplug",
+                        "pbd.destroy",
+                    ],
+                };
+                if spec.mode() == NewSrMode::Create
+                    && spec
+                        .device_config
+                        .iter()
+                        .any(|(k, _)| crate::storage::is_secret_key(k))
+                {
+                    m.extend(["secret.create", "secret.destroy"]);
+                }
+                if spec.mode() != NewSrMode::Reattach && spec.kind.shared() && !spec.kind.is_iso() {
+                    // The pool's first shared SR becomes its default.
+                    m.extend([
+                        "pool.set_default_sr",
+                        "pool.set_suspend_image_sr",
+                        "pool.set_crash_dump_sr",
+                    ]);
+                }
+                m.push("task.destroy");
+                return m;
+            }
+            Self::Sr { action, .. } => match action {
+                SrAction::Repair => &["pbd.create", "pbd.plug"],
+                SrAction::Detach => &["pbd.unplug"],
+                SrAction::Forget => &["sr.forget"],
+                SrAction::Destroy => &["sr.destroy"],
+                SrAction::SetDefault => &[
+                    "pool.set_default_sr",
+                    "pool.set_suspend_image_sr",
+                    "pool.set_crash_dump_sr",
+                ],
+                SrAction::Rescan => &["sr.scan"],
+                SrAction::Trim => &["host.call_plugin"],
+            },
+            Self::SetSrProperties { changes, .. } => {
+                let mut m = Vec::new();
+                if changes.name.is_some() {
+                    m.push("sr.set_name_label");
+                }
+                if changes.description.is_some() {
+                    m.push("sr.set_name_description");
+                }
+                if changes.tags.is_some() {
+                    m.push("sr.set_tags");
+                }
+                if changes.read_caching.is_some() {
+                    m.extend([
+                        "sr.remove_from_other_config/key:o_direct",
+                        "sr.add_to_other_config/key:o_direct",
+                    ]);
+                }
+                return m;
+            }
             Self::ChangeCd { .. } | Self::InstallTools { .. } => &["vbd.eject", "vbd.insert"],
             Self::NewCdDrive { .. } => &["vbd.create", "vbd.plug"],
             Self::Vm { action, .. } => match action {

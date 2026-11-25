@@ -134,7 +134,10 @@ pub(crate) async fn run(
         ActionRequest::Vm { .. }
         | ActionRequest::Host { .. }
         | ActionRequest::DismissAlerts { .. }
-        | ActionRequest::SetPerfmon { .. } => {
+        | ActionRequest::SetPerfmon { .. }
+        | ActionRequest::NewSr(_)
+        | ActionRequest::Sr { .. }
+        | ActionRequest::SetSrProperties { .. } => {
             unreachable!("run by crate::operations")
         }
     }

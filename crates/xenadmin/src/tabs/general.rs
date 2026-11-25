@@ -836,7 +836,13 @@ pub fn pool_sections(ctx: Ctx<'_>, pool: &PoolRecord) -> Vec<Section> {
 
 /// `SR.FriendlyTypeName()`.
 pub fn sr_type_name(ctx: Ctx<'_>, sr: &SrRecord) -> String {
-    let name = match sr.r#type.as_str() {
+    sr_type_label(ctx.model, &sr.r#type)
+}
+
+/// The friendly name of SR type `sr_type` (`Label-SR.SRTypes-*`, else the
+/// SM plugin's name).
+pub fn sr_type_label(model: &xen_core::ConnectionModel, sr_type: &str) -> String {
+    let name = match sr_type {
         "ext" => "Ext3",
         "ext4" => "Ext4",
         "file" => "File",
@@ -866,8 +872,7 @@ pub fn sr_type_name(ctx: Ctx<'_>, sr: &SrRecord) -> String {
         other => {
             // A storage driver of its own (XCP-ng's zfs, linstor, …): its
             // SM name, else the raw type.
-            return ctx
-                .model
+            return model
                 .sms
                 .values()
                 .find(|sm| sm.r#type == other)

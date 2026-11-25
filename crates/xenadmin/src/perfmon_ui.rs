@@ -242,6 +242,7 @@ mod tests {
             model: std::sync::Arc::new(model),
             busy_vms: Default::default(),
             busy_hosts: Default::default(),
+            busy_srs: Default::default(),
             rbac: None,
             pool_uuid: None,
             authority: "s:443".into(),

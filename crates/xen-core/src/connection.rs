@@ -134,6 +134,7 @@ pub(crate) async fn run(
                 v.status = ConnectionStatus::Failed { error };
                 v.busy_vms = Arc::default();
                 v.busy_hosts = Arc::default();
+                v.busy_srs = Arc::default();
             });
             return;
         }
@@ -158,6 +159,7 @@ pub(crate) async fn run(
             };
             v.busy_vms = Arc::default();
             v.busy_hosts = Arc::default();
+            v.busy_srs = Arc::default();
         });
         tokio::select! {
             () = tokio::time::sleep(delay) => {}

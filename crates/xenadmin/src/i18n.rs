@@ -452,6 +452,11 @@ pub fn session_roles_text(conn: &ConnectionView) -> String {
 /// which roles could do it (`Failure.ParseRBACFailure`).
 pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error) -> String {
     let s = strings();
+    if let xapi::Error::Api { code, params } = error
+        && let Some(text) = crate::sr_strings::storage_error(code, params)
+    {
+        return text;
+    }
     match error {
         xapi::Error::Api { code, params } => match code.as_str() {
             codes::SESSION_AUTHENTICATION_FAILED => s.err_auth_failed.to_owned(),
@@ -611,6 +616,44 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
             &[("object", object_name)],
         ),
         OperationKind::Provision(kind) => provision_title(kind),
+        OperationKind::Storage(kind) => storage_title(kind),
+    }
+}
+
+/// The title of a storage repository operation.
+fn storage_title(kind: &xen_core::operations::StorageKind) -> String {
+    use xen_core::operations::StorageKind;
+    use xen_core::storage::SrAction;
+    let s = crate::sr_strings::sr_strings();
+    match kind {
+        StorageKind::CreateSr {
+            sr_type,
+            name,
+            pool,
+        } => {
+            let type_name =
+                crate::tabs::general::sr_type_label(&xen_core::ConnectionModel::default(), sr_type);
+            fill(
+                s.op_create,
+                &[("type", &type_name), ("name", name), ("pool", pool)],
+            )
+        }
+        StorageKind::AttachSr { name, pool } => {
+            fill(s.op_attach, &[("name", name), ("pool", pool)])
+        }
+        StorageKind::Sr { action, name, pool } => {
+            let template = match action {
+                SrAction::Repair => s.op_repair,
+                SrAction::Detach => s.op_detach,
+                SrAction::Forget => s.op_forget,
+                SrAction::Destroy => s.op_destroy,
+                SrAction::SetDefault => s.op_set_default,
+                SrAction::Rescan => s.op_rescan,
+                SrAction::Trim => s.op_trim,
+            };
+            fill(template, &[("name", name), ("pool", pool)])
+        }
+        StorageKind::SrProperties { name } => fill(s.op_properties, &[("name", name)]),
     }
 }
 
@@ -705,6 +748,19 @@ fn provision_step(step: &OperationStep) -> String {
         OperationStep::StartingVm => p.step_starting.to_owned(),
         OperationStep::RollingBack => p.step_rolling_back.to_owned(),
         OperationStep::RevertingPowerState { vm } => fill(p.step_revert_power, &[("vm", vm)]),
+        step => storage_step(step),
+    }
+}
+
+fn storage_step(step: &OperationStep) -> String {
+    let s = crate::sr_strings::sr_strings();
+    match step {
+        OperationStep::CreatingSr => s.step_creating.to_owned(),
+        OperationStep::AttachingSr => s.step_attaching.to_owned(),
+        OperationStep::CreatingPbd { host } => fill(s.step_create_pbd, &[("host", host)]),
+        OperationStep::PluggingPbd { host } => fill(s.step_plug_pbd, &[("host", host)]),
+        OperationStep::ReclaimingSpace => s.step_trim.to_owned(),
+        OperationStep::UndoingSr => s.step_undo.to_owned(),
         _ => String::new(),
     }
 }

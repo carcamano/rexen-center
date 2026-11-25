@@ -54,6 +54,25 @@ pub enum DialogRequest {
     MoveDisk(Ref<Vdi>),
     NewCdDrive(Ref<Vm>),
     InstallTools(Ref<Vm>),
+    /// The New SR wizard, or with `reattach` its Attach form for a
+    /// detached SR (opened by [`crate::storage_ui::StorageUi`]).
+    NewSr {
+        reattach: Option<Ref<Sr>>,
+    },
+    /// The Repair Storage Repository dialog.
+    RepairSr(Ref<Sr>),
+    /// The SR Properties dialog.
+    SrProperties(Ref<Sr>),
+}
+
+impl DialogRequest {
+    /// A storage dialog ([`crate::storage_ui`]).
+    pub fn is_storage(&self) -> bool {
+        matches!(
+            self,
+            Self::NewSr { .. } | Self::RepairSr(_) | Self::SrProperties(_)
+        )
+    }
 }
 
 /// The F7 entries of a guest VM's menu (after the power operations).
@@ -521,6 +540,11 @@ impl ProvisionUi {
                     p.new_dvd_yes,
                     request,
                 )
+            }
+            DialogRequest::NewSr { .. }
+            | DialogRequest::RepairSr(_)
+            | DialogRequest::SrProperties(_) => {
+                return;
             }
             DialogRequest::InstallTools(vm) => confirm(
                 &fill(p.install_tools_title, &[("tools", p.tools_name)]),

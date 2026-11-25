@@ -54,6 +54,7 @@
 pub mod ops;
 pub mod provisioning;
 pub mod rrd;
+pub mod storage;
 
 pub use ops::RBAC_USERS;
 
@@ -278,6 +279,22 @@ impl MockServer {
     /// cancelled. Returns its reference.
     pub fn start_task(&self, name: &str) -> String {
         spawn_task(&self.state, name, ops::Work::Nothing)
+    }
+
+    /// Makes the PBDs of `host` fail to plug (`SR_BACKEND_FAILURE_47`), also
+    /// the ones `SR.create` makes, or plug again.
+    pub fn fail_pbd_plug(&self, host: &str, fail: bool) {
+        let mut db = self.state.db();
+        db.storage.plug_failures.retain(|h| h != host);
+        if fail {
+            db.storage.plug_failures.push(host.to_owned());
+        }
+    }
+
+    /// Puts an ISO file on an ISO share of the simulated storage
+    /// (`"nfs.lab:/exports/iso"`, `"//smb.lab/iso"`); a scan finds it.
+    pub fn add_iso_file(&self, share: &str, name: &str) {
+        self.state.db().storage.add_iso(share, name);
     }
 
     /// Makes `method` (e.g. `"VM.clean_reboot"`; its `Async.*` form too)
@@ -636,7 +653,9 @@ impl State {
             next_message: 1,
             plugin_calls: Vec::new(),
             next_object: 1,
+            storage: storage::World::default(),
         };
+        db.init_sr_ops();
         // Drives without `allowed_operations` get them from their VM.
         let bare: Vec<String> = db
             .objects
@@ -737,6 +756,8 @@ struct Db {
     plugin_calls: Vec<(String, String)>,
     /// Counter for the references of objects the mock creates.
     next_object: u64,
+    /// The simulated storage behind the SRs.
+    storage: storage::World,
 }
 
 impl Db {
@@ -1234,7 +1255,7 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
             && ops::required_permission(method).is_some()
             && !matches!(
                 sync_call,
-                "assert_can_boot_here" | "get_vms_which_prevent_evacuation"
+                "assert_can_boot_here" | "get_vms_which_prevent_evacuation" | "call_plugin"
             ) =>
         {
             let checked = if sync_class == "VM" {
@@ -1311,6 +1332,7 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 .push((plugin.to_owned(), function.to_owned()));
             match (plugin, function) {
                 ("perfmon", "refresh" | "start" | "stop") => Ok(json!("")),
+                ("trim", "do_trim") => db.trim(params),
                 _ => api_error("XENAPI_MISSING_PLUGIN", &[plugin]),
             }
         }
@@ -1416,7 +1438,12 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
                     } => match db.provisioning_call(class, call, params) {
                         Some(Ok(value)) => {
                             let result = match value.as_str() {
-                                Some(r) if !r.is_empty() => format!("<value>{r}</value>"),
+                                Some(r) if !r.is_empty() => format!(
+                                    "<value>{}</value>",
+                                    r.replace('&', "&amp;")
+                                        .replace('<', "&lt;")
+                                        .replace('>', "&gt;")
+                                ),
                                 _ => String::new(),
                             };
                             db.finish_task(&task_ref, "success", &result, &[]);

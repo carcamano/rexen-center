@@ -281,6 +281,45 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
+        ActionRequest::Sr { sr, action } => {
+            use xen_core::storage::SrAction;
+            let s = crate::sr_strings::sr_strings();
+            let name = model
+                .srs
+                .get(sr)
+                .map(|r| r.name_label.clone())
+                .unwrap_or_default();
+            let question = |title, text: String, yes, no_default| Confirmation {
+                title,
+                text,
+                yes,
+                no_default,
+            };
+            match action {
+                SrAction::Detach => Some(question(
+                    s.detach_title,
+                    s.detach_text.to_owned(),
+                    s.yes,
+                    false,
+                )),
+                SrAction::Forget => Some(question(
+                    s.forget_title,
+                    fill(s.forget_text, &[("name", &name)]),
+                    s.forget_yes,
+                    true,
+                )),
+                SrAction::Destroy => Some(question(
+                    s.destroy_title,
+                    fill(s.destroy_text, &[("name", &name)]),
+                    s.destroy_yes,
+                    true,
+                )),
+                SrAction::Trim => {
+                    Some(question(s.trim_title, s.trim_text.to_owned(), s.yes, false))
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -587,8 +626,20 @@ impl OpsUi {
                 }
                 None
             }
-            Notification::Precheck { id, result, .. } => {
-                match (self.pending.remove(&id), result) {
+            Notification::Precheck {
+                connection,
+                id,
+                result,
+            } => {
+                // Another part of the window asked (the New SR wizard).
+                let Some(pending) = self.pending.remove(&id) else {
+                    return Some(Notification::Precheck {
+                        connection,
+                        id,
+                        result,
+                    });
+                };
+                match (Some(pending), result) {
                     (Some(PendingCheck::Submenu(key)), PrecheckResult::BootHosts(hosts)) => {
                         let conn = state.connection(key.0).map(|c| &**c);
                         let map = hosts
@@ -1152,6 +1203,7 @@ mod tests {
             model: Arc::new(model),
             busy_vms: Arc::default(),
             busy_hosts: Arc::default(),
+            busy_srs: Arc::default(),
             rbac: Some(Arc::new(SessionRbac::superuser())),
             pool_uuid: None,
             authority: "s".into(),

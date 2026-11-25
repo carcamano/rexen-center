@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime};
 use arc_swap::ArcSwap;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use xapi::{ClientOptions, Endpoint, Fingerprint, Host, JsonRpcClient, Ref, Session, Task, Vm};
+use xapi::{ClientOptions, Endpoint, Fingerprint, Host, JsonRpcClient, Ref, Session, Sr, Task, Vm};
 
 use crate::actions::{ActionRequest, HostAction, VmAction};
 use crate::connection::{self, ConnectionSpec, Secret};
@@ -266,6 +266,8 @@ pub struct ConnectionView {
     pub busy_vms: Arc<HashSet<Ref<Vm>>>,
     /// Hosts with an operation started by this client still in flight.
     pub busy_hosts: Arc<HashSet<Ref<Host>>>,
+    /// SRs with an operation started by this client still in flight.
+    pub busy_srs: Arc<HashSet<Ref<Sr>>>,
     /// What the session may do (read after login; `None` until then or
     /// when the server could not tell).
     pub rbac: Option<Arc<SessionRbac>>,
@@ -958,6 +960,7 @@ fn connect(
             model: Arc::default(),
             busy_vms: Arc::default(),
             busy_hosts: Arc::default(),
+            busy_srs: Arc::default(),
             rbac: None,
             pool_uuid: None,
             authority,

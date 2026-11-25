@@ -26,6 +26,9 @@
 //!   New VM wizard's request, when each operation is offered, the ISO and
 //!   disk lists); [`provision_run`]: how each runs, call for call as the
 //!   original's actions.
+//! * [`storage`]: storage repositories (the New SR wizard's request, when
+//!   each SR operation is offered, the probe answers); [`storage_run`]: how
+//!   each runs, call for call as the original's actions.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -48,6 +51,8 @@ pub mod provisioning;
 pub mod rbac;
 pub mod secrets;
 pub mod settings;
+pub mod storage;
+pub mod storage_run;
 pub mod store;
 
 pub use actions::{ActionRequest, HostAction, HostMenu, PerfmonObjectRef, VmAction};

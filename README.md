@@ -8,9 +8,10 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F7 (VM creation, templates, snapshots and disks) on top
-of F1–F6 (base, connection and model, detail tabs, VM and host
-operations, VNC console, performance graphs and alerts).** What works:
+**Status: phase F8 (storage repositories) on top of F1–F7 (base,
+connection and model, detail tabs, VM and host operations, VNC console,
+performance graphs and alerts, VM creation, templates, snapshots and
+disks).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -152,6 +153,28 @@ operations, VNC console, performance graphs and alerts).** What works:
 - **Install XCP-ng VM Tools**: the guest tools ISO into the VM's DVD
   drive (the original's leftover `InstallPVToolsAction`; XCP-ng Center
   25.04 offers no such menu on XCP-ng 8.x);
+- the **New SR wizard**, as the original's: Type, Name (with the
+  original's automatic description) and Location for **NFS** (Scan for
+  existing SRs, NFS version, create or reattach one), **iSCSI** (CHAP,
+  Scan Target Host, the target IQN and LUN lists, then the original's
+  choice to reattach the SR found on the LUN or format it), **SMB**
+  (credentials, Scan, create or reattach), **local storage** (ext, LVM or
+  XFS on a device of the coordinator), and the **NFS** and **SMB/CIFS ISO
+  libraries** (an already attached library is refused). It runs like
+  `SrCreateAction` (passwords through a `secret` destroyed afterwards; a
+  PBD that will not plug forgets the SR again; the pool's first shared
+  SR becomes its default), `SrIntroduceAction` (an SR the scan found) or
+  `SrReattachAction` (a detached SR: the wizard opens as "Attach Storage
+  Repository"; a failed reattach removes the PBDs it made). Hardware HBA,
+  software FCoE, GFS2 and the SR types only XCP-ng ships are not offered;
+- the **Storage menu** and an SR's context menu, offered as the
+  original's commands offer them: **Repair** (a dialog with each host's
+  connection; missing PBDs made, unplugged ones plugged), **Set as
+  Default**, **Reclaim freed space** (the `trim` plugin), **Detach**,
+  **Reattach**, **Forget**, **Destroy** (with the original's
+  confirmations) and **Properties** (name, description, tags, the SR's
+  performance alerts and read caching); **New SR** on the toolbar and the
+  pool and host menus; **Rescan** on an SR's Storage tab;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -251,8 +274,8 @@ The tests need no XCP-ng host and never touch the OS keyring (they use an
 in-memory store). `crates/xapi-mock` is a JSON-RPC server loaded
 with fixtures from `tests/fixtures/`: `records.json`, a small hand-written lab
 pool (two hosts, one in maintenance mode, VMs in several power states,
-templates, a snapshot, local, NFS and ISO storage with a broken SR, networks
-with a VLAN, NICs and metrics), and `xcp-ng-8.3-capture.json`, a sanitized read-only capture of a real
+templates, a snapshot, local, NFS and ISO storage with a broken SR, the
+storage types' SM plugins, networks with a VLAN, NICs and metrics), and `xcp-ng-8.3-capture.json`, a sanitized read-only capture of a real
 XCP-ng 8.3 host covering every class it delivers. The tests use it to check,
 end to end:
 
@@ -341,6 +364,18 @@ end to end:
   the Snapshots tab and its dialogs, Copy / Convert / Delete from the
   menus, the Storage tab's disk buttons and DVD drives, Install Tools,
   and role elevation;
+- storage repositories against the mock's simulated storage (NFS, SMB
+  and iSCSI targets with SRs on them, CHAP, local devices, ISO shares):
+  the probes and the iSCSI IQN and LUN scans (and the answers the client
+  cannot use), creating every SR type (passwords as secrets, the first
+  shared SR as default), introducing SRs the scan found, reattaching a
+  detached SR, the rollbacks of a create whose PBD does not plug and of a
+  failed reattach, repair (plugging and re-creating PBDs), detach,
+  forget, destroy, set as default, rescan, trim (supported, unsupported,
+  detached), properties and RBAC; in the window: the wizard for every
+  type with its scans, LUN choice, warnings and errors, the Storage menu
+  and context menu with their confirmations, the Repair and Properties
+  dialogs, Rescan, and role elevation;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -404,6 +439,14 @@ and `XENADMIN_REAL_SHOTS`):
   (`XENADMIN_REAL_DRIVER`); `real_f7_test_vm_operations` runs the disk,
   DVD, tools, snapshot, copy and template operations on it and then
   deletes everything named after it.
+
+Storage repositories on a real host, read only
+(`app/tests/storage_real.rs`, same variables plus `XENADMIN_REAL_LOG`):
+`real_f8_srs_read_only` draws every SR's General and Storage tabs, its
+Storage menu (only to read what it offers) and its Properties dialog
+(cancelled), checks them against the cache, opens the New SR wizard's
+type page and cancels; it never presses an operation's button, and the
+history must hold the connection only at the end.
 
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…

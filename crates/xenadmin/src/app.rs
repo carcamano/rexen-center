@@ -30,6 +30,8 @@ use crate::perf_view::{PerfAction, PerfKey, Performance};
 use crate::perfmon_ui::{self, PerfmonDialog};
 use crate::prov_strings::prov_strings;
 use crate::provision_ui::{self, DialogRequest, ProvisionUi};
+use crate::sr_strings::sr_strings;
+use crate::storage_ui::{self, StorageUi};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
 
@@ -123,6 +125,8 @@ pub struct XenAdminApp {
     /// VM creation, templates, snapshots and disks: the wizard, dialogs
     /// and tab selections.
     provision: ProvisionUi,
+    /// Storage repositories: the New SR wizard and the SR dialogs.
+    storage: StorageUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -162,6 +166,7 @@ impl XenAdminApp {
             notifications: Notifications::Events,
             perfmon: None,
             provision: ProvisionUi::default(),
+            storage: StorageUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -186,10 +191,12 @@ impl XenAdminApp {
                         ],
                     ));
                 }
+                // The New SR wizard's probes.
+                Notification::Precheck { id, result, .. } => {
+                    self.storage.on_precheck(&state, id, result);
+                }
                 // Taken by `OpsUi`.
-                Notification::ActionFailed { .. }
-                | Notification::Elevation { .. }
-                | Notification::Precheck { .. } => {}
+                Notification::ActionFailed { .. } | Notification::Elevation { .. } => {}
             }
         }
         self.errors.append(&mut self.ops.errors);
@@ -414,6 +421,15 @@ impl XenAdminApp {
                 let request = self.new_vm_request(state);
                 self.provision.open(conn, request);
             }
+            let entry = storage_ui::new_sr_entry(conn);
+            let enabled = matches!(entry, Entry::Dialog { enabled: true, .. });
+            if ui
+                .add_enabled(enabled, Button::new(sr_strings().new_storage_toolbar))
+                .clicked()
+            {
+                self.storage
+                    .open(conn, DialogRequest::NewSr { reattach: None });
+            }
             ui.separator();
         }
         if let Some((conn, r, vm)) = self.selected_vm(state)
@@ -525,6 +541,20 @@ impl XenAdminApp {
                         ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
                     }
                 }
+            });
+            ui.menu_button(sr_strings().menu_storage, |ui| {
+                let Some(conn) = self.selected_connection(state) else {
+                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                    return;
+                };
+                let mut entries = vec![storage_ui::new_sr_entry(conn)];
+                if let Some(Selection::Sr(_, r)) = &self.selection
+                    && let Some(sr) = conn.model.srs.get(r)
+                {
+                    entries.push(Entry::Separator);
+                    entries.extend(storage_ui::sr_entries(conn, r, sr));
+                }
+                self.ops.menu(ui, conn, None, entries, false, &self.backend);
             });
             ui.menu_button(s.menu_tools, |ui| {
                 if ui.button(s.menu_options).clicked() {
@@ -686,7 +716,10 @@ impl XenAdminApp {
             }
             response.context_menu(|ui| {
                 if conn.status.is_connected() {
-                    let entries = vec![provision_ui::new_vm_entry(conn, None)];
+                    let entries = vec![
+                        provision_ui::new_vm_entry(conn, None),
+                        storage_ui::new_sr_entry(conn),
+                    ];
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                     ui.separator();
                 }
@@ -758,7 +791,13 @@ impl XenAdminApp {
         ui.horizontal(|ui| {
             ui.add_space(ui.spacing().indent);
             icons::sr(ui, sr.icon);
-            self.tree_label(ui, Selection::Sr(conn.id, sr.sr_ref.clone()), &sr.name);
+            let response = self.tree_label(ui, Selection::Sr(conn.id, sr.sr_ref.clone()), &sr.name);
+            if let Some(record) = conn.model.srs.get(&sr.sr_ref) {
+                response.context_menu(|ui| {
+                    let entries = storage_ui::sr_entries(conn, &sr.sr_ref, record);
+                    self.ops.menu(ui, conn, None, entries, true, &self.backend);
+                });
+            }
         });
     }
 
@@ -973,6 +1012,7 @@ impl XenAdminApp {
             response.context_menu(|ui| {
                 let mut entries = vec![
                     provision_ui::new_vm_entry(conn, Some(host.clone())),
+                    storage_ui::new_sr_entry(conn),
                     Entry::Separator,
                 ];
                 entries.extend(ops_ui::host_entries(conn, host, record));
@@ -1131,9 +1171,19 @@ impl XenAdminApp {
                 Subject::Pool(..) => {
                     self.connection_buttons(ui, conn);
                 }
-                Subject::Sr(r, _) if ui.button(perf_strings().alert_settings).clicked() => {
-                    self.perfmon =
-                        PerfmonDialog::open(conn, xen_core::PerfmonObjectRef::Sr(r.clone()));
+                Subject::Sr(r, _) => {
+                    if ui.button(perf_strings().alert_settings).clicked() {
+                        self.perfmon =
+                            PerfmonDialog::open(conn, xen_core::PerfmonObjectRef::Sr(r.clone()));
+                    }
+                    if ui.button(sr_strings().properties).clicked() {
+                        self.storage
+                            .open(conn, DialogRequest::SrProperties(r.clone()));
+                    }
+                    if conn.busy_srs.contains(r) {
+                        ui.spinner();
+                        ui.label(s.details_busy);
+                    }
                 }
                 _ => {}
             }
@@ -1262,7 +1312,12 @@ impl XenAdminApp {
                 (Tab::Memory, _) => {
                     tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject));
                 }
-                (Tab::SrStorage, Subject::Sr(_, sr)) => {
+                (Tab::SrStorage, Subject::Sr(r, sr)) => {
+                    ui.horizontal(|ui| {
+                        self.storage
+                            .rescan_button(ui, conn, r, sr, &mut self.ops, &self.backend);
+                    });
+                    ui.add_space(4.0);
                     tabs::render::table(ui, "sr-disks", &tabs::storage::sr_disks(ctx, sr));
                 }
                 (Tab::PhysicalStorage, Subject::Host(r, _)) => {
@@ -1656,12 +1711,19 @@ impl eframe::App for XenAdminApp {
         self.ops.windows(&ctx, &state, &self.backend);
         for (c, request) in std::mem::take(&mut self.ops.dialog_requests) {
             if let Some(conn) = state.connection(c) {
-                self.provision.open(conn, request);
+                if request.is_storage() {
+                    self.storage.open(conn, request);
+                } else {
+                    self.provision.open(conn, request);
+                }
             }
         }
         self.provision
             .windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.provision.errors);
+        self.storage
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.storage.errors);
         if let Some((c, vm)) = self.provision.take_created(&state) {
             self.selection = Some(Selection::Vm(c, vm));
         }
@@ -1829,6 +1891,10 @@ mod tests {
     // (`app/tests/provisioning_real.rs`).
     mod provisioning;
     mod provisioning_real;
+    // F8: storage repositories (`app/tests/storage.rs`), and the real
+    // host's SRs read only (`app/tests/storage_real.rs`).
+    mod storage;
+    mod storage_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -2565,7 +2631,7 @@ mod tests {
         harness.get_by_label(t.hdr_vm_general);
         harness.get_by_label("Optimized (version 8.3 installed)");
         harness.get_by_label("production, web");
-        click_first(&mut harness, t.tab_storage);
+        click_tab(&mut harness, t.tab_storage);
         step_until(&mut harness, "VM disks", |h| {
             h.query_by_label("/dev/xvdb").is_some()
         });
@@ -2648,14 +2714,14 @@ mod tests {
         step_until(&mut harness, "repaired SR", |h| {
             h.query_by_label(t.sr_ok).is_some()
         });
-        click_first(&mut harness, t.tab_storage);
+        click_tab(&mut harness, t.tab_storage);
         step_until(&mut harness, "SR disks", |h| {
             h.query_by_label("debian-12.iso").is_some()
         });
 
         // Pool: physical storage and networks.
         click_first(&mut harness, "Lab Pool");
-        click_first(&mut harness, t.tab_storage);
+        click_tab(&mut harness, t.tab_storage);
         step_until(&mut harness, "pool storage", |h| {
             h.query_by_label("29% (600 GB used)").is_some()
         });
@@ -2746,6 +2812,22 @@ mod tests {
         for _ in 0..4 {
             harness.step();
         }
+    }
+
+    /// Clicks the detail tab titled `title` (the Storage menu of the menu
+    /// bar has the Storage tab's label too).
+    fn click_tab(harness: &mut Harness<'_, XenAdminApp>, title: &str) {
+        settle(harness);
+        harness
+            .get_all_by_label(title)
+            .find(|n| {
+                n.accesskit_node()
+                    .bounding_box()
+                    .is_some_and(|b| b.y0 > 60.0)
+            })
+            .unwrap_or_else(|| panic!("no tab {title:?}"))
+            .click();
+        harness.step();
     }
 
     /// Right-clicks the first node labelled `label` and draws its menu.

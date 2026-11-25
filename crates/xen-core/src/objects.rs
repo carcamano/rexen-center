@@ -14,7 +14,8 @@ use xapi::{
 
 use crate::model::ConnectionModel;
 
-const HIDE_FROM_XENCENTER: &str = "HideFromXenCenter";
+/// `other_config` key hiding an object from the console.
+pub const HIDE_FROM_XENCENTER: &str = "HideFromXenCenter";
 
 /// `other_config["HideFromXenCenter"] == "true"`.
 fn hidden_flag(other_config: &std::collections::HashMap<String, String>) -> bool {

@@ -1,5 +1,5 @@
 {
-  "_comment": "Mock XAPI database for tests: one pool with two hosts (the second in maintenance mode), their control domains, guest VMs in different power states, a default and a user template, a snapshot, local, shared NFS and ISO storage (the ISO SR is broken: unplugged on the second host), the guest tools SR, networks with a VLAN and the hidden host-internal network, NICs and metrics. Records are partial; the client ignores missing fields.",
+  "_comment": "Mock XAPI database for tests: one pool with two hosts (the second in maintenance mode), their control domains, guest VMs in different power states, a default and a user template, a snapshot, local, shared NFS and ISO storage (the ISO SR is broken: unplugged on the second host), the guest tools SR, networks with a VLAN and the hidden host-internal network, NICs and metrics. Records are partial; the client ignores missing fields; SM plugins for the storage types; PBD device_config pointing at the mock storage (nfs.lab).",
   "pool": {
     "OpaqueRef:pool-0001": {
       "uuid": "5a0e3b3c-0000-4000-8000-000000000001",
@@ -825,7 +825,9 @@
       "physical_utilisation": 42949672960,
       "virtual_allocation": 681574400,
       "other_config": {},
-      "sm_config": {},
+      "sm_config": {
+        "iso_type": "nfs_iso"
+      },
       "tags": [],
       "introduced_by": "OpaqueRef:NULL",
       "is_tools_sr": false
@@ -861,7 +863,9 @@
       "uuid": "8e000000-0000-4000-8000-000000000001",
       "host": "OpaqueRef:host-0001",
       "SR": "OpaqueRef:sr-local-01",
-      "device_config": {},
+      "device_config": {
+        "device": "/dev/sda3"
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -869,7 +873,9 @@
       "uuid": "8e000000-0000-4000-8000-000000000002",
       "host": "OpaqueRef:host-0002",
       "SR": "OpaqueRef:sr-local-02",
-      "device_config": {},
+      "device_config": {
+        "device": "/dev/sda3"
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -877,7 +883,11 @@
       "uuid": "8e000000-0000-4000-8000-000000000003",
       "host": "OpaqueRef:host-0001",
       "SR": "OpaqueRef:sr-nfs",
-      "device_config": {},
+      "device_config": {
+        "server": "nfs.lab",
+        "serverpath": "/exports/vm",
+        "options": ""
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -885,7 +895,11 @@
       "uuid": "8e000000-0000-4000-8000-000000000004",
       "host": "OpaqueRef:host-0002",
       "SR": "OpaqueRef:sr-nfs",
-      "device_config": {},
+      "device_config": {
+        "server": "nfs.lab",
+        "serverpath": "/exports/vm",
+        "options": ""
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -893,7 +907,10 @@
       "uuid": "8e000000-0000-4000-8000-000000000005",
       "host": "OpaqueRef:host-0001",
       "SR": "OpaqueRef:sr-iso",
-      "device_config": {},
+      "device_config": {
+        "location": "nfs.lab:/exports/iso",
+        "type": "nfs_iso"
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -901,7 +918,10 @@
       "uuid": "8e000000-0000-4000-8000-000000000006",
       "host": "OpaqueRef:host-0002",
       "SR": "OpaqueRef:sr-iso",
-      "device_config": {},
+      "device_config": {
+        "location": "nfs.lab:/exports/iso",
+        "type": "nfs_iso"
+      },
       "currently_attached": false,
       "other_config": {}
     },
@@ -909,7 +929,10 @@
       "uuid": "8e000000-0000-4000-8000-000000000021",
       "host": "OpaqueRef:host-0001",
       "SR": "OpaqueRef:sr-tools",
-      "device_config": {},
+      "device_config": {
+        "location": "/opt/xensource/packages/iso",
+        "legacy_mode": "true"
+      },
       "currently_attached": true,
       "other_config": {}
     },
@@ -917,7 +940,10 @@
       "uuid": "8e000000-0000-4000-8000-000000000022",
       "host": "OpaqueRef:host-0002",
       "SR": "OpaqueRef:sr-tools",
-      "device_config": {},
+      "device_config": {
+        "location": "/opt/xensource/packages/iso",
+        "legacy_mode": "true"
+      },
       "currently_attached": true,
       "other_config": {}
     }
@@ -1518,6 +1544,385 @@
       "qos_algorithm_type": "",
       "qos_algorithm_params": {},
       "other_config": {}
+    }
+  },
+  "sm": {
+    "OpaqueRef:sm-nfs": {
+      "uuid": "5f000000-0000-4000-8000-000000000001",
+      "name_label": "NFS VHD",
+      "name_description": "NFS VHD SR plugin",
+      "type": "nfs",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "server": "server",
+        "serverpath": "serverpath",
+        "nfsversion": "nfsversion"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "VDI_READ_CACHING",
+        "THIN_PROVISIONING"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "VDI_READ_CACHING": 1,
+        "THIN_PROVISIONING": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/nfsSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-lvmoiscsi": {
+      "uuid": "5f000000-0000-4000-8000-000000000002",
+      "name_label": "LVHD over iSCSI",
+      "name_description": "LVHD over iSCSI SR plugin",
+      "type": "lvmoiscsi",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "target": "target",
+        "port": "port",
+        "targetIQN": "targetIQN",
+        "SCSIid": "SCSIid",
+        "chapuser": "chapuser",
+        "chappassword": "chappassword"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "SR_TRIM",
+        "SR_METADATA"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "SR_TRIM": 1,
+        "SR_METADATA": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/lvmoiscsiSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-smb": {
+      "uuid": "5f000000-0000-4000-8000-000000000003",
+      "name_label": "SMB VHD",
+      "name_description": "SMB VHD SR plugin",
+      "type": "smb",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "server": "server",
+        "username": "username",
+        "password": "password"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "VDI_READ_CACHING",
+        "THIN_PROVISIONING"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "VDI_READ_CACHING": 1,
+        "THIN_PROVISIONING": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/smbSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-iso": {
+      "uuid": "5f000000-0000-4000-8000-000000000004",
+      "name_label": "ISO",
+      "name_description": "ISO SR plugin",
+      "type": "iso",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "location": "location",
+        "type": "type",
+        "username": "username",
+        "cifspassword": "cifspassword",
+        "nfsversion": "nfsversion"
+      },
+      "capabilities": [
+        "SR_ATTACH",
+        "SR_DETACH",
+        "SR_SCAN",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH"
+      ],
+      "features": {
+        "SR_ATTACH": 1,
+        "SR_DETACH": 1,
+        "SR_SCAN": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/isoSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-ext": {
+      "uuid": "5f000000-0000-4000-8000-000000000005",
+      "name_label": "Local EXT3 VHD",
+      "name_description": "Local EXT3 VHD SR plugin",
+      "type": "ext",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "device": "device"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "VDI_READ_CACHING",
+        "THIN_PROVISIONING"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "VDI_READ_CACHING": 1,
+        "THIN_PROVISIONING": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/extSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-lvm": {
+      "uuid": "5f000000-0000-4000-8000-000000000006",
+      "name_label": "Local VHD on LVM",
+      "name_description": "Local VHD on LVM SR plugin",
+      "type": "lvm",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "device": "device"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "SR_TRIM"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "SR_TRIM": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/lvmSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-xfs": {
+      "uuid": "5f000000-0000-4000-8000-000000000007",
+      "name_label": "Local XFS VHD",
+      "name_description": "Local XFS VHD SR plugin",
+      "type": "xfs",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "device": "device"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "VDI_READ_CACHING"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "VDI_READ_CACHING": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/xfsSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-lvmohba": {
+      "uuid": "5f000000-0000-4000-8000-000000000008",
+      "name_label": "LVHD over FC",
+      "name_description": "LVHD over FC SR plugin",
+      "type": "lvmohba",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "SCSIid": "SCSIid"
+      },
+      "capabilities": [
+        "SR_PROBE",
+        "SR_UPDATE",
+        "VDI_CREATE",
+        "VDI_DELETE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_CLONE",
+        "VDI_SNAPSHOT",
+        "VDI_RESIZE",
+        "VDI_MIRROR",
+        "SR_TRIM"
+      ],
+      "features": {
+        "SR_PROBE": 1,
+        "SR_UPDATE": 1,
+        "VDI_CREATE": 1,
+        "VDI_DELETE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_CLONE": 1,
+        "VDI_SNAPSHOT": 1,
+        "VDI_RESIZE": 1,
+        "VDI_MIRROR": 1,
+        "SR_TRIM": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/lvmohbaSR",
+      "required_cluster_stack": []
+    },
+    "OpaqueRef:sm-udev": {
+      "uuid": "5f000000-0000-4000-8000-000000000009",
+      "name_label": "udev",
+      "name_description": "udev SR plugin",
+      "type": "udev",
+      "vendor": "Mock",
+      "copyright": "(C) Mock",
+      "version": "1.0",
+      "required_api_version": "1.0",
+      "configuration": {
+        "location": "location"
+      },
+      "capabilities": [
+        "SR_UPDATE",
+        "VDI_ATTACH",
+        "VDI_DETACH",
+        "VDI_INTRODUCE"
+      ],
+      "features": {
+        "SR_UPDATE": 1,
+        "VDI_ATTACH": 1,
+        "VDI_DETACH": 1,
+        "VDI_INTRODUCE": 1
+      },
+      "other_config": {},
+      "driver_filename": "/opt/xensource/sm/udevSR",
+      "required_cluster_stack": []
     }
   }
 }
