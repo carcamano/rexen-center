@@ -117,10 +117,26 @@ impl TrustStore {
     }
 }
 
-/// rustls verifier that accepts exactly the certificate pinned for one host.
+/// Builds a rustls client configuration that accepts only certificates whose
+/// SHA-256 fingerprint is in `accepted` (an empty list accepts nothing).
+///
+/// For TLS connections made outside the JSON-RPC client, such as the console
+/// tunnel (`CONNECT /console`), which may go to a pool member rather than the
+/// server the user connected to.
+pub fn pinned_client_config(accepted: Vec<Fingerprint>) -> crate::Result<rustls::ClientConfig> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = Arc::new(PinnedVerifier::accepting(accepted, &provider));
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth())
+}
+
+/// rustls verifier that accepts exactly the certificates pinned for one host.
 #[derive(Debug)]
 pub(crate) struct PinnedVerifier {
-    pinned: Option<Fingerprint>,
+    pinned: Vec<Fingerprint>,
     /// Fingerprint of the last certificate this verifier rejected.
     rejected: Mutex<Option<Fingerprint>>,
     algorithms: WebPkiSupportedAlgorithms,
@@ -128,6 +144,10 @@ pub(crate) struct PinnedVerifier {
 
 impl PinnedVerifier {
     pub(crate) fn new(pinned: Option<Fingerprint>, provider: &CryptoProvider) -> Self {
+        Self::accepting(pinned.into_iter().collect(), provider)
+    }
+
+    pub(crate) fn accepting(pinned: Vec<Fingerprint>, provider: &CryptoProvider) -> Self {
         Self {
             pinned,
             rejected: Mutex::new(None),
@@ -154,7 +174,7 @@ impl ServerCertVerifier for PinnedVerifier {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let seen = Fingerprint::of_der(end_entity.as_ref());
-        if self.pinned == Some(seen) {
+        if self.pinned.contains(&seen) {
             Ok(ServerCertVerified::assertion())
         } else {
             *self.rejected.lock().unwrap_or_else(PoisonError::into_inner) = Some(seen);

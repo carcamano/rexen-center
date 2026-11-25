@@ -40,7 +40,7 @@ pub use event_batch::{Event, EventBatch};
 pub use generated::*;
 pub use refs::Ref;
 pub use session_handle::Session;
-pub use tls::{Fingerprint, TrustStore};
+pub use tls::{Fingerprint, TrustStore, pinned_client_config};
 pub use transport::{ClientOptions, JsonRpcClient};
 
 /// XenAPI version this client speaks (sent on login). 2.21 = XCP-ng 8.3.

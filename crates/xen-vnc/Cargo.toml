@@ -1,0 +1,28 @@
+[package]
+name = "xen-vnc"
+description = "VNC (RFB) client for XAPI consoles: the CONNECT tunnel, the protocol, a framebuffer and XT scancodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# The ZRLE decoder and zlib reader derive from vnc-rs (MIT); see LICENSE-vnc-rs.
+license = "BSD-2-Clause AND MIT"
+publish.workspace = true
+
+[features]
+# A fake RFB server (a guest console) for tests of this and other crates.
+testing = []
+
+[dependencies]
+flate2 = { workspace = true }
+rustls = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util"] }
+tokio-rustls = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
+# The integration tests use the fake console.
+xen-vnc = { path = ".", features = ["testing"] }
+
+[lints]
+workspace = true

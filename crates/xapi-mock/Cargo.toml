@@ -15,6 +15,7 @@ rustls = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+xen-vnc = { workspace = true, features = ["testing"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["signal"] }

@@ -20,7 +20,13 @@
 //!   cancelled (`task.cancel`) and destroyed (`task.destroy`);
 //! * `session.get_is_local_superuser` and `session.get_rbac_permissions`;
 //! * `host.get_servertime` (the client heartbeat);
-//! * `event.inject` and `event.from` (tokens, `"*"`, long-polling).
+//! * `event.inject` and `event.from` (tokens, `"*"`, long-polling);
+//! * the console tunnel: `CONNECT /console?uuid=…` (or `?ref=`) with the
+//!   session cookie opens a fake VNC console of the VM
+//!   ([`MockServer::console`], an [`xen_vnc::testing::MockConsole`]); the
+//!   console records' `location` points at the mock, and a VM's console
+//!   sessions drop when it reboots, stops, suspends or migrates, as QEMU's
+//!   do.
 //!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
@@ -60,6 +66,7 @@ use serde_json::{Map, Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, watch};
 use tokio::task::{AbortHandle, JoinHandle};
+use xen_vnc::testing::MockConsole;
 
 /// Login user accepted by the mock.
 pub const USERNAME: &str = "root";
@@ -168,6 +175,8 @@ impl MockServer {
             .expect("bind mock server");
         let addr = listener.local_addr().expect("local addr");
         let state = Arc::new(State::new(records));
+        let scheme = if tls { "https" } else { "http" };
+        state.db().point_consoles_at(&format!("{scheme}://{addr}"));
         let running = serve(listener, tls, state.clone());
         Self {
             addr,
@@ -183,6 +192,9 @@ impl MockServer {
         if let Some(running) = lock(&self.running).take() {
             running.stop();
         }
+        for console in lock(&self.state.consoles).values() {
+            console.disconnect_all();
+        }
     }
 
     /// Starts again on the same port after [`MockServer::stop`] (or stops
@@ -192,6 +204,9 @@ impl MockServer {
         let running = lock(&self.running).take();
         if let Some(running) = running {
             let _ = running.stop().await;
+        }
+        for console in lock(&self.state.consoles).values() {
+            console.disconnect_all();
         }
         self.state.db().sessions.clear();
         let mut tries = 0;
@@ -208,6 +223,13 @@ impl MockServer {
         };
         *lock(&self.running) = Some(serve(listener, self.tls, self.state.clone()));
         self.state.changed.notify_waiters();
+    }
+
+    /// The fake VNC console of `vm` (made on first use: 640×480, RFB 3.3
+    /// with the QEMU Extended Key Event, or 640×384 without it for a control
+    /// domain, like dom0's text console).
+    pub fn console(&self, vm: &str) -> MockConsole {
+        self.state.console(vm)
     }
 
     /// Whether the server is listening.
@@ -386,8 +408,10 @@ impl MockServer {
     /// Changes a VM's power state as if someone else did it (emits events).
     pub fn set_vm_power_state(&self, vm: &str, power_state: &str) {
         let mut db = self.state.db();
+        let before = db.get_str("vm", vm, "power_state").unwrap_or_default();
         db.move_vm(vm, power_state, None);
         drop(db);
+        self.state.qemu_restarted(vm, &before, power_state);
         self.state.changed.notify_waiters();
     }
 
@@ -436,12 +460,14 @@ fn serve(listener: TcpListener, tls: bool, state: Arc<State>) -> Running {
                         if let Ok(tls) = acceptor.accept(stream).await {
                             let _ = http1::Builder::new()
                                 .serve_connection(TokioIo::new(tls), service)
+                                .with_upgrades()
                                 .await;
                         }
                     }
                     None => {
                         let _ = http1::Builder::new()
                             .serve_connection(TokioIo::new(stream), service)
+                            .with_upgrades()
                             .await;
                     }
                 }
@@ -475,6 +501,8 @@ fn tls_acceptor(certificate: MockCertificate) -> tokio_rustls::TlsAcceptor {
 
 struct State {
     db: Mutex<Db>,
+    /// Fake VNC consoles by VM reference.
+    consoles: Mutex<HashMap<String, MockConsole>>,
     changed: Notify,
     certificate: Mutex<MockCertificate>,
     unresponsive: watch::Sender<bool>,
@@ -519,7 +547,10 @@ impl State {
                 task_step: Duration::from_millis(100),
                 next_task: 1,
                 failures: HashMap::new(),
+                console_base: String::new(),
+                next_console: 1,
             }),
+            consoles: Mutex::new(HashMap::new()),
             changed: Notify::new(),
             certificate: Mutex::new(MockCertificate::Original),
             unresponsive: watch::Sender::new(false),
@@ -529,6 +560,41 @@ impl State {
 
     fn db(&self) -> MutexGuard<'_, Db> {
         self.db.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn console(&self, vm: &str) -> MockConsole {
+        let dom0 = self
+            .db()
+            .objects
+            .get(&("vm".to_owned(), vm.to_owned()))
+            .and_then(|r| r.get("is_control_domain"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        lock(&self.consoles)
+            .entry(vm.to_owned())
+            .or_insert_with(|| {
+                if dom0 {
+                    let c = MockConsole::new(640, 384);
+                    c.set_ext_key(false);
+                    c
+                } else {
+                    MockConsole::new(640, 480)
+                }
+            })
+            .clone()
+    }
+
+    /// A VM went from `before` to `after`: its QEMU (and so its console
+    /// sessions) went away unless it was paused or unpaused, or started.
+    fn qemu_restarted(&self, vm: &str, before: &str, after: &str) {
+        let running = |s: &str| s == "Running" || s == "Paused";
+        let kept = running(before) && running(after) && before != after;
+        if running(before)
+            && !kept
+            && let Some(console) = lock(&self.consoles).get(vm)
+        {
+            console.disconnect_all();
+        }
     }
 }
 
@@ -557,9 +623,30 @@ struct Db {
     next_task: u64,
     /// Calls made to fail ([`MockServer::fail_method`]).
     failures: HashMap<String, (String, Vec<String>)>,
+    /// `scheme://host:port` of this server, for new console records.
+    console_base: String,
+    next_console: u64,
 }
 
 impl Db {
+    /// Makes every console's `location` point at this server.
+    fn point_consoles_at(&mut self, base: &str) {
+        self.console_base = base.to_owned();
+        for ((class, _), record) in self.objects.iter_mut() {
+            if class != "console" {
+                continue;
+            }
+            let Some(location) = record.get("location").and_then(Value::as_str) else {
+                continue;
+            };
+            let path = location
+                .split_once("://")
+                .and_then(|(_, rest)| rest.find('/').map(|i| rest[i..].to_owned()))
+                .unwrap_or_else(|| "/console".to_owned());
+            record["location"] = json!(format!("{base}{path}"));
+        }
+    }
+
     fn push_event(
         &mut self,
         class: &str,
@@ -633,6 +720,7 @@ impl Db {
             rec.insert("allowed_operations".into(), json!(allowed));
             rec.insert("current_operations".into(), json!({}));
         });
+        self.sync_consoles(vm, power_state);
         if old_host != new_host {
             if old_host != NULL_REF {
                 self.modify("host", &old_host, |rec| {
@@ -648,6 +736,54 @@ impl Db {
                     }
                 });
             }
+        }
+    }
+
+    /// Like XAPI: a VM that starts gets a VNC console record, and a VM that
+    /// stops (halted or suspended) loses its console records.
+    fn sync_consoles(&mut self, vm: &str, power_state: &str) {
+        let running = power_state == "Running" || power_state == "Paused";
+        let current: Vec<String> = self
+            .objects
+            .get(&("vm".to_owned(), vm.to_owned()))
+            .and_then(|r| r.get("consoles"))
+            .and_then(Value::as_array)
+            .map(|l| {
+                l.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if running && current.is_empty() && !self.console_base.is_empty() {
+            let n = self.next_console;
+            self.next_console += 1;
+            let r = format!("OpaqueRef:mock-console-{n}");
+            let uuid = format!("c0c0c0c0-0000-4000-8000-{n:012}");
+            let record = json!({
+                "uuid": uuid, "protocol": "rfb",
+                "location": format!("{}/console?uuid={uuid}", self.console_base),
+                "VM": vm, "other_config": {}
+            });
+            self.objects
+                .insert(("console".to_owned(), r.clone()), record.clone());
+            self.push_event("console", "add", &r, Some(record));
+            self.modify("vm", vm, |rec| {
+                rec.insert("consoles".into(), json!([r]));
+            });
+        } else if !running && !current.is_empty() {
+            for r in &current {
+                if self
+                    .objects
+                    .remove(&("console".to_owned(), r.clone()))
+                    .is_some()
+                {
+                    self.push_event("console", "del", r, None);
+                }
+            }
+            self.modify("vm", vm, |rec| {
+                rec.insert("consoles".into(), json!([]));
+            });
         }
     }
 
@@ -736,6 +872,9 @@ async fn handle(
     state: Arc<State>,
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    if req.method() == Method::CONNECT {
+        return Ok(console_connect(&state, req));
+    }
     if req.method() != Method::POST || req.uri().path() != "/jsonrpc" {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -772,6 +911,71 @@ async fn handle(
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(response.to_string())))
         .expect("response"))
+}
+
+fn plain(status: StatusCode, text: &'static str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .body(Full::new(Bytes::from_static(text.as_bytes())))
+        .expect("response")
+}
+
+/// `CONNECT /console?uuid=…|ref=…` with `Cookie: session_id=…`: the
+/// console tunnel. On success the connection becomes the VM's fake VNC
+/// console.
+fn console_connect(state: &Arc<State>, mut req: Request<Incoming>) -> Response<Full<Bytes>> {
+    state.db().calls.push("http/connect_console".to_owned());
+    if req.uri().path() != "/console" {
+        return plain(StatusCode::NOT_FOUND, "not found");
+    }
+    let session = req
+        .headers()
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| c.trim().strip_prefix("session_id=").map(str::to_owned));
+    let query = req.uri().query().unwrap_or_default().to_owned();
+    let wanted = |key: &str| {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+            .map(str::to_owned)
+    };
+    let vm = {
+        let db = state.db();
+        if !session.is_some_and(|s| db.sessions.contains_key(&s)) {
+            return plain(StatusCode::UNAUTHORIZED, "session invalid");
+        }
+        let console = match (wanted("ref"), wanted("uuid")) {
+            (Some(r), _) => db.objects.get(&("console".to_owned(), r)),
+            (None, Some(uuid)) => db.objects.iter().find_map(|((c, _), rec)| {
+                (c == "console" && rec.get("uuid").and_then(Value::as_str) == Some(&uuid))
+                    .then_some(rec)
+            }),
+            _ => None,
+        };
+        let Some(vm) = console
+            .and_then(|c| c.get("VM"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            return plain(StatusCode::NOT_FOUND, "no such console");
+        };
+        let power = db.get_str("vm", &vm, "power_state").unwrap_or_default();
+        if power != "Running" && power != "Paused" {
+            return plain(StatusCode::NOT_FOUND, "the VM is not running");
+        }
+        vm
+    };
+    let console = state.console(&vm);
+    let upgrade = hyper::upgrade::on(&mut req);
+    tokio::spawn(async move {
+        if let Ok(upgraded) = upgrade.await {
+            let _ = console.serve(TokioIo::new(upgraded)).await;
+        }
+    });
+    Response::new(Full::new(Bytes::new()))
 }
 
 fn str_param(params: &[Value], i: usize) -> &str {
@@ -891,8 +1095,12 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 return Ok(json!(task));
             }
             checked.map(|work| {
+                let before = vm_state_before(&db, &work);
                 if db.apply(&work) {
                     db.sessions.clear();
+                }
+                if let (Some((vm, before)), ops::Work::Vm { power_state, .. }) = (before, &work) {
+                    state.qemu_restarted(&vm, &before, power_state);
                 }
                 json!("")
             })
@@ -1006,8 +1214,14 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
                         }
                     }
                     work => {
+                        let before = vm_state_before(&db, work);
                         let restart = db.apply(work);
                         db.finish_task(&task_ref, "success", "", &[]);
+                        if let (Some((vm, before)), ops::Work::Vm { power_state, .. }) =
+                            (before, work)
+                        {
+                            state.qemu_restarted(&vm, &before, power_state);
+                        }
                         if restart {
                             // The toolstack restarted: every session is gone.
                             db.sessions.clear();
@@ -1020,6 +1234,17 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
         }
     });
     task
+}
+
+/// For VM work: the VM and its power state before the work is applied.
+fn vm_state_before(db: &Db, work: &ops::Work) -> Option<(String, String)> {
+    match work {
+        ops::Work::Vm { vm, .. } => Some((
+            vm.clone(),
+            db.get_str("vm", vm, "power_state").unwrap_or_default(),
+        )),
+        _ => None,
+    }
 }
 
 /// The VM whose `current_operations` names `task`.

@@ -8,8 +8,8 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F2 (F2a + F2b: connection and model foundation) on top of
-F1 (base).** What works:
+**Status: phase F5 (VNC console) on top of F1–F4 (base, connection and
+model, detail tabs, VM and host operations).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -70,6 +70,24 @@ F1 (base).** What works:
   checked against them before it runs, and a user whose role is not enough
   is offered the role elevation dialog (another user's credentials, checked
   and used for that operation only);
+- the **Console tab** of a VM and of a server (its control domain's text
+  console), as the original's: the guest's screen over VNC through XAPI's
+  console tunnel (`CONNECT` to `console.location` with the session cookie,
+  over TLS pinned to the host's certificate; a pool member's certificate is
+  accepted when the pool lists it), **Scale** (fit, keeping the aspect
+  ratio) or one screen pixel per guest pixel, **Undock** to its own window
+  (Alt+Shift+U), **Fullscreen** (Ctrl+Alt+F), **Send Ctrl+Alt+Del** (also
+  Ctrl+Alt+Insert), clipboard text both ways (RFB carries Latin-1), the
+  guest's cursor shape, the mouse mapped to the guest pixel under it at
+  any scale (wheel included), and Right Ctrl to release the keyboard.
+  Keys go as **XT scancodes** of their physical position (QEMU Extended Key
+  Event), so the guest's own layout (US, ABNT2…) decides the characters;
+  consoles without it (PV guests, dom0) get keysyms. The console
+  **reconnects by itself** after a reboot, a toolstack restart or a dropped
+  link while the VM runs, shows the original's messages when it is shut
+  down, suspended or paused (with "Click here to start it" / "resume it"),
+  and the window **switches to the Console tab** when a VM started or
+  resumed from it begins to run;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -77,8 +95,17 @@ F1 (base).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs, the console, performance graphs, VM creation and
-cross-pool migration come in later phases. See the port plan for the full roadmap.
+Editing from the tabs, performance graphs, VM creation and cross-pool
+migration come in later phases (RDP is not embedded). See the port plan for
+the full roadmap.
+
+Console limitations: shortcuts the operating system keeps (Alt+Tab, the
+Windows key, Ctrl+Alt+Del) never reach the console, as in the original
+without its Windows keyboard hook; use the buttons and Ctrl+Alt+Insert.
+egui reports numpad keys as their main-keyboard twins (same characters,
+other scancodes), and gives no key event for numpad `*` and `.` on some
+platforms. A VNC password (a guest's own VNC server) is not supported: XAPI
+consoles never ask for one.
 
 ## Build and run
 
@@ -204,6 +231,21 @@ end to end:
   the role elevation dialog and friendly error messages,
   the reconnection shown after a server restart, servers restored on start,
   and Options;
+- the console: the RFB handshake (3.3 and 3.8), every decoder (Raw,
+  CopyRect, RRE, CoRRE, Hextile, ZRLE over one zlib stream, the Cursor,
+  DesktopSize and QEMU Extended Key pseudo-encodings), key events as
+  scancodes and as keysyms, Ctrl+Alt+Del, pointer, clipboard, bell, desktop
+  resize and a dropped session, against a fake guest console
+  (`xen_vnc::testing::MockConsole`, served by the mock XAPI behind
+  `CONNECT /console` with the session cookie checked); the scancode of every
+  key position the US and ABNT2 layouts use, checked against the Linux
+  keymaps of those layouts; the backend console reconnecting after a reboot
+  and a toolstack restart, waiting while the VM is halted, and the dom0
+  console in keysym mode; and in the window: the Console tab, keys (US and
+  ABNT2 positions, Tab and arrows kept from egui), the mouse landing on the
+  guest pixel under it while scaled, Ctrl+Alt+Del, paste, undock, full
+  screen, reconnection after a reboot, the switch to the Console tab on
+  Start, and the server console sending nothing;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -220,6 +262,28 @@ the pool, its coordinator, one VM (`XENADMIN_REAL_VM=<uuid>`, else the first
 running guest) and one SR (`XENADMIN_REAL_SR=<uuid>`, else the default SR),
 and writes what they show to `XENADMIN_REAL_DUMP` (a JSON file) for
 comparison with `xe vm-param-list` and friends. It only reads.
+
+The console on a real host, through the real window (same variables, plus
+`XENADMIN_REAL_LOG=<file>` and `XENADMIN_REAL_SHOTS=<folder>` for the log and
+framebuffer snapshots, both outside the repository):
+
+- `real_console_dom0` opens the server's console view-only (it sends no key,
+  mouse, Ctrl+Alt+Del or clipboard input, and checks so);
+- `real_console_fluxer` acts on the VM named exactly "09 - Ubuntu Fluxer"
+  only (refused unless exactly one VM has that name and it is halted): it
+  starts it from the toolbar, checks the switch to the Console tab, watches
+  the boot, types a test text at the login prompt without Enter and erases
+  it, moves the mouse, reboots it (the console must reconnect) and shuts it
+  down, leaving it halted.
+
+```sh
+cargo test -p xenadmin real_console_dom0 -- --ignored --nocapture
+```
+
+A view-only snapshot of a console from the command line (no input is ever
+sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
+CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
+console_snapshot` (or `CONSOLE_VM=<exact name>` for a VM).
 
 A round trip through the real OS keyring, under a test service name, with
 the entry removed again: `cargo test -p xen-core os_keyring -- --ignored`.
@@ -251,11 +315,12 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the consoles (finding a VM's console, opening it, reconnecting), the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
-`xapi` and `xen-core` do not depend on egui. The app runs a tokio runtime on
+`xapi`, `xen-vnc` and `xen-core` do not depend on egui. The app runs a tokio runtime on
 background threads and keeps eframe on the main thread. It sends `Command`s to
 the backend over an mpsc channel and reads an immutable `Arc<AppState>`
 snapshot each frame (every connection, the operation history and the
@@ -265,4 +330,6 @@ publishing at most about 10 snapshots per second per connection.
 ## License
 
 BSD-2-Clause; see [LICENSE](LICENSE). Credits go to the XenAdmin (Citrix
-XenCenter) and XCP-ng Center projects this work derives from.
+XenCenter) and XCP-ng Center projects this work derives from. The ZRLE
+decoder and zlib reader in `crates/xen-vnc` derive from vnc-rs 0.6.1 and are
+used under its MIT license (`crates/xen-vnc/LICENSE-vnc-rs`).

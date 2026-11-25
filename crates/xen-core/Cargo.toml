@@ -11,16 +11,19 @@ publish.workspace = true
 arc-swap = { workspace = true }
 directories = { workspace = true }
 keyring = { workspace = true }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 xapi = { workspace = true }
+xen-vnc = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 xapi-mock = { workspace = true }
+xen-vnc = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

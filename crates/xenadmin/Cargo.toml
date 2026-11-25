@@ -20,11 +20,13 @@ tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 xapi = { workspace = true }
 xen-core = { workspace = true }
+xen-vnc = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["eframe"] }
 serde_json = { workspace = true }
 xapi-mock = { workspace = true }
+xen-vnc = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

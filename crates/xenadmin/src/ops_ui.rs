@@ -345,6 +345,9 @@ pub struct OpsUi {
     next_id: u64,
     /// Error messages for the window's error list.
     pub errors: Vec<String>,
+    /// VMs this window just asked to start or resume (the window shows
+    /// their Console tab once they run).
+    pub started: Vec<(xen_core::ConnectionId, Ref<Vm>)>,
 }
 
 impl OpsUi {
@@ -390,6 +393,14 @@ impl OpsUi {
         request: ActionRequest,
         backend: &BackendHandle,
     ) {
+        if let ActionRequest::Vm { vm, action } = &request
+            && matches!(
+                action,
+                VmAction::Start | VmAction::StartOn(_) | VmAction::Resume | VmAction::ResumeOn(_)
+            )
+        {
+            self.started.push((conn.id, vm.clone()));
+        }
         match rbac::check(&conn.model, conn.rbac.as_deref(), &request.rbac_methods()) {
             RbacCheck::Allowed => backend.send(match request {
                 ActionRequest::Vm { vm, action } => Command::Vm {

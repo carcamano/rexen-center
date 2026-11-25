@@ -9,6 +9,7 @@ use egui::{
     Align2, Button, CentralPanel, Context, Grid, Key, Panel, RichText, ScrollArea, TextEdit, Ui,
 };
 use xapi::{Host, HostRecord, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
+use xen_core::console::ConsoleTarget;
 use xen_core::model::{self, ConnectionModel, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm};
 use xen_core::objects::{self, VmKind};
 use xen_core::{
@@ -17,6 +18,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::console_view::{ConsoleKey, Consoles, TabAction};
 use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
@@ -99,6 +101,11 @@ pub struct XenAdminApp {
     actions: Vec<Action>,
     /// VM and host operations: menus, confirmations, role elevation.
     ops: OpsUi,
+    /// Open consoles (docked, undocked, full screen) and their options.
+    consoles: Consoles,
+    /// VMs started or resumed from this window: the Console tab is shown
+    /// once they run, if still selected.
+    console_on_start: Vec<(ConnectionId, Ref<Vm>)>,
 }
 
 type TreeCacheEntry = (Arc<ConnectionModel>, TreeOptions, Arc<Vec<TreePool>>);
@@ -124,6 +131,8 @@ impl XenAdminApp {
             tab: Tab::General,
             actions: Vec::new(),
             ops: OpsUi::default(),
+            consoles: Consoles::new(),
+            console_on_start: Vec::new(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -175,6 +184,45 @@ impl XenAdminApp {
                     self.open_connect_dialog(state, Some((server, username)));
                 }
             }
+        }
+    }
+
+    /// The console of the selected VM or host, if it has one.
+    fn selected_console(&self, state: &AppState) -> Option<ConsoleKey> {
+        match self.selection.as_ref()? {
+            Selection::Vm(c, r) => {
+                let vm = state.connection(*c)?.model.get(r)?;
+                (objects::vm_kind(vm) == VmKind::Guest).then(|| (*c, ConsoleTarget::Vm(r.clone())))
+            }
+            Selection::Host(c, r) => Some((*c, ConsoleTarget::Host(r.clone()))),
+            _ => None,
+        }
+    }
+
+    /// Closes consoles no longer shown, and shows the Console tab of a VM
+    /// started from this window once it runs (if it is still selected).
+    fn update_consoles(&mut self, state: &AppState) {
+        let selected = self.selected_console(state);
+        self.consoles
+            .retain(selected.as_ref(), |c| state.connection(c).is_some());
+        self.console_on_start.append(&mut self.ops.started);
+        let running = |c: ConnectionId, r: &Ref<Vm>| {
+            state
+                .connection(c)
+                .and_then(|v| v.model.get(r))
+                .map(|vm| vm.power_state == VmPowerState::Running)
+        };
+        let mut switch = false;
+        self.console_on_start.retain(|(c, r)| match running(*c, r) {
+            Some(true) => {
+                switch |= self.selection == Some(Selection::Vm(*c, r.clone()));
+                false
+            }
+            Some(false) => true,
+            None => false,
+        });
+        if switch {
+            self.tab = Tab::Console;
         }
     }
 
@@ -958,6 +1006,30 @@ impl XenAdminApp {
             }
         });
         ui.separator();
+        if self.tab == Tab::Console {
+            let (key, title) = match subject {
+                Subject::Vm(r, vm) => (
+                    (conn.id, ConsoleTarget::Vm(r.clone())),
+                    tabs::vm_display_name(vm),
+                ),
+                Subject::Host(r, host) => (
+                    (conn.id, ConsoleTarget::Host(r.clone())),
+                    host.name_label.clone(),
+                ),
+                _ => return,
+            };
+            if let Some(TabAction::Vm(action)) =
+                self.consoles.tab(ui, &self.backend, conn, &key, &title)
+                && let ConsoleTarget::Vm(vm) = &key.1
+            {
+                let request = xen_core::ActionRequest::Vm {
+                    vm: vm.clone(),
+                    action,
+                };
+                self.ops.request(conn, request, &self.backend);
+            }
+            return;
+        }
         ui.label(
             RichText::new(tabs::page_title(self.tab, subject))
                 .strong()
@@ -1350,6 +1422,14 @@ impl eframe::App for XenAdminApp {
         self.tree_cache
             .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
+        self.update_consoles(&state);
+        let titles = |key: &ConsoleKey| console_title(&state, key);
+        self.consoles.windows(&ctx, titles);
+        if self.consoles.fullscreen_ui(ui) {
+            self.ops.windows(&ctx, &state, &self.backend);
+            self.apply_actions(&state);
+            return;
+        }
         Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &state));
         Panel::bottom("status").show(ui, |ui| self.status_bar(ui, &state));
         let mut moving = false;
@@ -1387,10 +1467,31 @@ impl eframe::App for XenAdminApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Consoles close with their handles.
+        self.consoles = Consoles::new();
         for prompt in self.cert_prompts.drain(..) {
             prompt.reject();
         }
         self.backend.shutdown_blocking(Duration::from_secs(3));
+    }
+}
+
+/// The name shown on an undocked console's window.
+fn console_title(state: &AppState, key: &ConsoleKey) -> String {
+    let Some(conn) = state.connection(key.0) else {
+        return String::new();
+    };
+    match &key.1 {
+        ConsoleTarget::Vm(r) => conn
+            .model
+            .get(r)
+            .map(|vm| tabs::vm_display_name(vm))
+            .unwrap_or_default(),
+        ConsoleTarget::Host(r) => conn
+            .model
+            .get(r)
+            .map(|h| h.name_label.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -1505,6 +1606,9 @@ mod tests {
     use xen_core::{BackendOptions, MemorySecretStore, SecretStore, Settings, Store};
 
     use super::*;
+
+    // F5: the Console tab (`app/tests/console.rs`).
+    mod console;
 
     const WAIT: Duration = Duration::from_secs(10);
 

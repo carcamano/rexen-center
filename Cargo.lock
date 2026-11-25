@@ -4899,6 +4899,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "xen-vnc",
 ]
 
 [[package]]
@@ -4924,6 +4925,7 @@ dependencies = [
  "arc-swap",
  "directories",
  "keyring",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
@@ -4932,6 +4934,19 @@ dependencies = [
  "tracing-subscriber",
  "xapi",
  "xapi-mock",
+ "xen-vnc",
+]
+
+[[package]]
+name = "xen-vnc"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "rustls",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "xen-vnc",
 ]
 
 [[package]]
@@ -4949,6 +4964,7 @@ dependencies = [
  "xapi",
  "xapi-mock",
  "xen-core",
+ "xen-vnc",
 ]
 
 [[package]]

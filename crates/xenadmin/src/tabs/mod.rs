@@ -1,5 +1,6 @@
-//! The detail tabs of the selected object (read-only): General, Memory,
-//! Storage, Networking and NICs, as the original console lays them out.
+//! The detail tabs of the selected object: General, Memory, Storage,
+//! Networking and NICs (read-only), and Console, as the original console
+//! lays them out. The Console tab is drawn by [`crate::console_view`].
 //!
 //! Builders turn the connection's cached model into plain data ([`Section`]
 //! lists, [`Table`]s, memory rows) so they can be tested without a window;
@@ -32,6 +33,8 @@ pub enum Tab {
     PhysicalStorage,
     Networking,
     Nics,
+    /// The VM's or host's console (`TabPageConsole`).
+    Console,
 }
 
 impl Tab {
@@ -43,6 +46,7 @@ impl Tab {
             Self::VmStorage | Self::SrStorage | Self::PhysicalStorage => t.tab_storage,
             Self::Networking => t.tab_networking,
             Self::Nics => t.tab_nics,
+            Self::Console => t.tab_console,
         }
     }
 }
@@ -81,6 +85,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             Tab::PhysicalStorage,
             Tab::Networking,
             Tab::Nics,
+            Tab::Console,
         ],
         Subject::Host(..) => vec![Tab::General],
         Subject::Vm(_, vm) => {
@@ -91,6 +96,10 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
                 tabs.push(Tab::VmStorage);
             }
             tabs.push(Tab::Networking);
+            // A real VM has a console (not templates or snapshots).
+            if objects::vm_kind(vm) == VmKind::Guest {
+                tabs.push(Tab::Console);
+            }
             tabs
         }
         Subject::Sr(..) => vec![Tab::General, Tab::SrStorage],
@@ -117,6 +126,7 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Networking, Subject::Host(..)) => t.hdr_host_networks,
         (Tab::Networking, _) => t.hdr_pool_networks,
         (Tab::Nics, _) => t.hdr_nics,
+        (Tab::Console, _) => t.tab_console,
     }
 }
 
@@ -292,15 +302,26 @@ mod tests {
             ]
         );
         let hr = Ref::new("OpaqueRef:host-0001");
-        assert_eq!(tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr])).len(), 5);
+        let host_tabs = tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr]));
+        assert_eq!(host_tabs.len(), 6);
+        assert_eq!(host_tabs.last(), Some(&Tab::Console));
         let vr = Ref::new("OpaqueRef:vm-web");
         assert_eq!(
             tabs_for(&m, Subject::Vm(&vr, &m.vms[&vr])),
-            [Tab::General, Tab::Memory, Tab::VmStorage, Tab::Networking]
+            [
+                Tab::General,
+                Tab::Memory,
+                Tab::VmStorage,
+                Tab::Networking,
+                Tab::Console
+            ]
         );
-        // A built-in template still to be provisioned has no Storage tab.
+        // A built-in template still to be provisioned has no Storage tab,
+        // and templates have no console.
         let tr = Ref::new("OpaqueRef:vm-template-debian");
-        assert!(!tabs_for(&m, Subject::Vm(&tr, &m.vms[&tr])).contains(&Tab::VmStorage));
+        let template_tabs = tabs_for(&m, Subject::Vm(&tr, &m.vms[&tr]));
+        assert!(!template_tabs.contains(&Tab::VmStorage));
+        assert!(!template_tabs.contains(&Tab::Console));
         let sr = Ref::new("OpaqueRef:sr-nfs");
         assert_eq!(
             tabs_for(&m, Subject::Sr(&sr, &m.srs[&sr])),

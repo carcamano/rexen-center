@@ -139,6 +139,14 @@ pub enum Command {
         connection: ConnectionId,
         task: Ref<Task>,
     },
+    /// Open a VM's or host's console. It runs (reconnecting as needed)
+    /// until the [`ConsoleHandle`](crate::console::ConsoleHandle) paired
+    /// with `link` is dropped or the connection is removed.
+    OpenConsole {
+        connection: ConnectionId,
+        target: crate::console::ConsoleTarget,
+        link: crate::console::ConsoleLink,
+    },
     /// Drop finished entries from the operation history.
     ClearFinishedOperations,
     /// Change and save the preferences.
@@ -513,6 +521,10 @@ impl Shared {
         self.state.load_full()
     }
 
+    pub(crate) fn repaint_fn(&self) -> RepaintFn {
+        self.repaint.clone()
+    }
+
     pub(crate) fn next_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -809,6 +821,21 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                     None => tracing::debug!("task cancel ignored: not connected"),
                 }
             }
+            Command::OpenConsole {
+                connection,
+                target,
+                link,
+            } => match active.get(&connection) {
+                Some(c) => {
+                    let env = crate::console::ConsoleEnv {
+                        shared: shared.clone(),
+                        connection,
+                        session: c.session.clone(),
+                    };
+                    tokio::spawn(crate::console::run(env, target, link));
+                }
+                None => tracing::debug!("console ignored: no such connection"),
+            },
             Command::ClearFinishedOperations => shared.update(|s| {
                 Arc::make_mut(&mut s.operations).retain(|o| o.is_running());
             }),

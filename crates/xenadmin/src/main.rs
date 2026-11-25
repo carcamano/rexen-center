@@ -14,6 +14,8 @@
 mod app;
 mod branding;
 mod cli;
+mod console_keys;
+mod console_view;
 mod events;
 mod friendly_errors;
 mod i18n;

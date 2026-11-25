@@ -50,6 +50,24 @@ async fn logs_never_contain_passwords_or_session_refs() {
         action: VmAction::Start,
     });
     wait_until("task done", || server.call_count("task.destroy") == 1).await;
+    // A console session: its tunnel carries the session reference in a
+    // cookie, which must not reach the log either.
+    let (console, link) = xen_core::console::pair();
+    h.backend.send(Command::OpenConsole {
+        connection: conn,
+        target: xen_core::ConsoleTarget::Vm(Ref::new("OpaqueRef:vm-db")),
+        link,
+    });
+    wait_until("console session in scancode mode", || {
+        console.status() == xen_core::ConsoleStatus::Connected { scancodes: true }
+    })
+    .await;
+    console.send_ctrl_alt_del();
+    wait_until("keys", || {
+        server.console("OpaqueRef:vm-db").scancodes().len() == 6
+    })
+    .await;
+    drop(console);
     // An operation run as another user (role elevation).
     h.backend.send(Command::RunElevated {
         connection: conn,
@@ -95,6 +113,7 @@ async fn logs_never_contain_passwords_or_session_refs() {
     let log = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
     assert!(log.contains("connected"), "nothing captured");
     assert!(log.contains("xapi call"), "call tracing not captured");
+    assert!(log.contains("console"), "console tracing not captured");
     assert!(log.len() > 10_000, "too little captured: {}", log.len());
     assert!(!log.contains(xapi_mock::PASSWORD), "password in the log");
     assert!(

@@ -14,6 +14,8 @@
 //!   reconnection, heartbeat and coordinator redirect.
 //! * [`actions`]: the VM and host operations and when each is offered;
 //!   [`rbac`]: what the logged-in user may do.
+//! * [`console`]: the VM and host consoles (VNC through the XAPI tunnel,
+//!   reconnecting while the VM runs).
 //! * [`operations`]: the operation history behind the Events panel, and the
 //!   operations themselves (run as XAPI tasks).
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
@@ -25,6 +27,7 @@
 pub mod actions;
 pub mod backend;
 pub mod connection;
+pub mod console;
 pub mod format;
 pub mod model;
 pub mod objects;
@@ -40,6 +43,7 @@ pub use backend::{
     ConnectionId, ConnectionStatus, ConnectionView, ElevationOutcome, Notification, OperationId,
     Password, RepaintFn,
 };
+pub use console::{ConsoleEvent, ConsoleHandle, ConsoleLink, ConsoleStatus, ConsoleTarget};
 pub use model::{
     ClassMap, ConnectionModel, ModelClass, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm,
 };
