@@ -79,9 +79,10 @@ async fn connect_operate_and_follow_live_updates() {
             power_state(s, "OpaqueRef:vm-db") == Some(VmPowerState::Running)
         })
         .await;
-    let host2 = &first(&state).model.tree(&xen_core::TreeOptions::default())[0].hosts[1];
+    // Its home server (host 2) is in maintenance mode: it runs on host 1.
+    let host1 = &first(&state).model.tree(&xen_core::TreeOptions::default())[0].hosts[0];
     assert!(
-        host2
+        host1
             .vms
             .iter()
             .any(|v| v.name == "db-01" && v.power_state == VmPowerState::Running)
@@ -130,9 +131,11 @@ async fn connect_operate_and_follow_live_updates() {
         action: VmAction::Start,
     });
     match h.next_notification().await {
-        Notification::VmActionFailed {
-            vm_name,
-            action,
+        Notification::ActionFailed {
+            kind:
+                xen_core::OperationKind::VmAction {
+                    vm_name, action, ..
+                },
             error,
             ..
         } => {

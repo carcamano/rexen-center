@@ -9,6 +9,7 @@ use xapi::{Ref, Task, TaskAllowedOperations, TaskRecord, TaskStatusType};
 use xen_core::{AppState, BackendHandle, Command, ConnectionView, Operation, OperationStatus};
 
 use crate::i18n::{self, fill, strings};
+use crate::ops_strings::ops_strings;
 
 const GREEN: Color32 = Color32::from_rgb(0x2e, 0xa0, 0x43);
 
@@ -80,7 +81,11 @@ pub fn show(ui: &mut Ui, state: &AppState, backend: &BackendHandle) -> bool {
                     }
                     ui.end_row();
                     for op in state.operations.iter().rev() {
-                        moving |= operation_row(ui, op, backend);
+                        let conn = op
+                            .connection
+                            .and_then(|c| state.connection(c))
+                            .map(|c| &**c);
+                        moving |= operation_row(ui, conn, op, backend);
                     }
                     if !tasks.is_empty() {
                         ui.label("");
@@ -99,7 +104,12 @@ fn ago(t: SystemTime) -> Duration {
     SystemTime::now().duration_since(t).unwrap_or_default()
 }
 
-fn operation_row(ui: &mut Ui, op: &Operation, backend: &BackendHandle) -> bool {
+fn operation_row(
+    ui: &mut Ui,
+    conn: Option<&ConnectionView>,
+    op: &Operation,
+    backend: &BackendHandle,
+) -> bool {
     let s = strings();
     let label = i18n::operation_status_label(&op.status);
     match &op.status {
@@ -119,16 +129,30 @@ fn operation_row(ui: &mut Ui, op: &Operation, backend: &BackendHandle) -> bool {
             ui.colored_label(ui.visuals().error_fg_color, label);
         }
     }
-    let title = i18n::operation_title(&op.kind, &op.server);
+    let mut title = i18n::operation_title(&op.kind, &op.server);
+    if let Some(user) = &op.elevated_as {
+        title = format!(
+            "{title} ({})",
+            fill(ops_strings().op_elevated, &[("user", user)])
+        );
+    }
     match &op.status {
         OperationStatus::Failed(failure) => {
             ui.vertical(|ui| {
                 ui.label(title);
                 ui.label(
-                    RichText::new(i18n::describe_operation_failure(failure))
+                    RichText::new(i18n::describe_operation_failure(conn, failure))
                         .small()
                         .color(ui.visuals().error_fg_color),
                 );
+            });
+        }
+        OperationStatus::Running if op.step.is_some() => {
+            ui.vertical(|ui| {
+                ui.label(title);
+                if let Some(step) = &op.step {
+                    ui.label(RichText::new(i18n::operation_step(step)).small().weak());
+                }
             });
         }
         _ => {
@@ -201,8 +225,13 @@ fn task_row(
     } else {
         ui.vertical(|ui| {
             ui.label(&task.name_label);
+            let mut info = task.error_info.iter().cloned();
+            let error = xapi::Error::Api {
+                code: info.next().unwrap_or_default(),
+                params: info.collect(),
+            };
             ui.label(
-                RichText::new(task.error_info.join(" "))
+                RichText::new(i18n::describe_xapi_error_in(Some(conn), &error))
                     .small()
                     .color(ui.visuals().error_fg_color),
             );

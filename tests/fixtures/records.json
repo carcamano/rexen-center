@@ -24,6 +24,8 @@
       "hostname": "xcp-host-01",
       "address": "192.0.2.11",
       "enabled": true,
+      "allowed_operations": ["provision", "evacuate", "shutdown", "reboot", "vm_start", "vm_resume", "vm_migrate"],
+      "power_on_mode": "",
       "API_version_major": 2,
       "API_version_minor": 21,
       "software_version": {
@@ -80,6 +82,8 @@
       "hostname": "xcp-host-02",
       "address": "192.0.2.12",
       "enabled": false,
+      "allowed_operations": ["provision", "evacuate", "shutdown", "reboot", "vm_start", "vm_resume", "vm_migrate"],
+      "power_on_mode": "wake-on-lan",
       "API_version_major": 2,
       "API_version_minor": 21,
       "software_version": {

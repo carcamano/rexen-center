@@ -8,19 +8,20 @@ use egui::collapsing_header::CollapsingState;
 use egui::{
     Align2, Button, CentralPanel, Context, Grid, Key, Panel, RichText, ScrollArea, TextEdit, Ui,
 };
-use xapi::{Host, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
+use xapi::{Host, HostRecord, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
 use xen_core::model::{self, ConnectionModel, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm};
 use xen_core::objects::{self, VmKind};
 use xen_core::{
     AppState, BackendHandle, CertificatePrompt, Command, ConfigLocation, ConnectionError,
     ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
-    VmAction,
 };
 
 use crate::branding;
 use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
+use crate::ops_strings::ops_strings;
+use crate::ops_ui::{self, Entry, OpsUi};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
 
@@ -96,6 +97,8 @@ pub struct XenAdminApp {
     /// have it, like the original.
     tab: Tab,
     actions: Vec<Action>,
+    /// VM and host operations: menus, confirmations, role elevation.
+    ops: OpsUi,
 }
 
 type TreeCacheEntry = (Arc<ConnectionModel>, TreeOptions, Arc<Vec<TreePool>>);
@@ -120,6 +123,7 @@ impl XenAdminApp {
             tree_filter: String::new(),
             tab: Tab::General,
             actions: Vec::new(),
+            ops: OpsUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -128,24 +132,13 @@ impl XenAdminApp {
     }
 
     fn drain_notifications(&mut self) {
+        let state = self.backend.state();
         while let Some(notification) = self.backend.try_recv() {
+            let Some(notification) = self.ops.on_notification(notification, &state) else {
+                continue;
+            };
             match notification {
                 Notification::CertificatePrompt(prompt) => self.cert_prompts.push_back(prompt),
-                Notification::VmActionFailed {
-                    vm_name,
-                    action,
-                    error,
-                    ..
-                } => {
-                    self.errors.push(fill(
-                        strings().vm_action_failed,
-                        &[
-                            ("action", i18n::action_label(action)),
-                            ("vm", &vm_name),
-                            ("error", &i18n::describe_xapi_error(&error)),
-                        ],
-                    ));
-                }
                 Notification::ConnectionRefused { server, error } => {
                     self.errors.push(fill(
                         strings().err_connection_refused,
@@ -155,8 +148,13 @@ impl XenAdminApp {
                         ],
                     ));
                 }
+                // Taken by `OpsUi`.
+                Notification::ActionFailed { .. }
+                | Notification::Elevation { .. }
+                | Notification::Precheck { .. } => {}
             }
         }
+        self.errors.append(&mut self.ops.errors);
         // Prompts of connections that went away need no answer.
         self.cert_prompts.retain(|p| !p.is_stale());
     }
@@ -221,6 +219,53 @@ impl XenAdminApp {
         }
     }
 
+    fn selected_host<'a>(
+        &self,
+        state: &'a AppState,
+    ) -> Option<(&'a ConnectionView, Ref<Host>, &'a Arc<HostRecord>)> {
+        match &self.selection {
+            Some(Selection::Host(c, r)) => {
+                let conn = state.connection(*c)?;
+                conn.model.hosts.get(r).map(|rec| (&**conn, r.clone(), rec))
+            }
+            _ => None,
+        }
+    }
+
+    /// Buttons for operation entries (toolbar and details header).
+    fn op_buttons(&mut self, ui: &mut Ui, conn: &ConnectionView, entries: Vec<Entry>) {
+        for entry in entries {
+            if let Entry::Item {
+                label,
+                enabled,
+                request,
+            } = entry
+                && ui.add_enabled(enabled, Button::new(label)).clicked()
+            {
+                self.ops.request(conn, request, &self.backend);
+            }
+        }
+    }
+
+    /// The toolbar buttons of the selected VM or host.
+    fn selection_buttons(&mut self, ui: &mut Ui, state: &AppState) {
+        if let Some((conn, r, vm)) = self.selected_vm(state)
+            && model::is_guest(vm)
+        {
+            let entries = ops_ui::vm_toolbar(conn, &r, vm);
+            self.op_buttons(ui, conn, entries);
+        } else if let Some((conn, r, host)) = self.selected_host(state) {
+            let entries = ops_ui::host_toolbar(conn, &r, host);
+            self.op_buttons(ui, conn, entries);
+        } else {
+            // Nothing to act on: the VM buttons, disabled.
+            let s = strings();
+            for label in [s.action_start, s.action_clean_shutdown] {
+                ui.add_enabled(false, Button::new(label));
+            }
+        }
+    }
+
     // ---- panels -----------------------------------------------------------
 
     fn menu_bar(&mut self, ui: &mut Ui, state: &AppState) {
@@ -282,11 +327,25 @@ impl XenAdminApp {
                         .push(Action::Send(Command::SetPreferences(prefs)));
                 }
             });
-            ui.menu_button(s.menu_vm, |ui| {
-                let vm = self.selected_vm(state);
-                if self.vm_action_buttons(ui, vm.as_ref().map(|(c, r, rec)| (*c, r, rec.as_ref())))
-                {
-                    ui.close();
+            ui.menu_button(s.menu_vm, |ui| match self.selected_vm(state) {
+                Some((conn, r, vm)) if model::is_guest(vm) => {
+                    let entries = ops_ui::vm_entries(conn, &r, vm);
+                    self.ops
+                        .menu(ui, conn, Some((&r, vm)), entries, false, &self.backend);
+                }
+                _ => {
+                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                }
+            });
+            ui.menu_button(ops_strings().menu_server, |ui| {
+                match self.selected_host(state) {
+                    Some((conn, r, host)) => {
+                        let entries = ops_ui::host_entries(conn, &r, host);
+                        self.ops.menu(ui, conn, None, entries, false, &self.backend);
+                    }
+                    None => {
+                        ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                    }
                 }
             });
             ui.menu_button(s.menu_tools, |ui| {
@@ -313,39 +372,9 @@ impl XenAdminApp {
                 });
             }
             ui.separator();
-            let vm = self.selected_vm(state);
-            self.vm_action_buttons(ui, vm.as_ref().map(|(c, r, rec)| (*c, r, rec.as_ref())));
+            self.selection_buttons(ui, state);
         });
         ui.add_space(2.0);
-    }
-
-    /// Start / Shut Down buttons for `vm`; returns whether one was clicked.
-    fn vm_action_buttons(
-        &mut self,
-        ui: &mut Ui,
-        vm: Option<(&ConnectionView, &Ref<Vm>, &VmRecord)>,
-    ) -> bool {
-        let s = strings();
-        let usable = vm.filter(|(c, r, _)| c.status.is_connected() && !c.busy_vms.contains(*r));
-        let can_start = usable.is_some_and(|(_, _, rec)| model::can_start(rec));
-        let can_stop = usable.is_some_and(|(_, _, rec)| model::can_clean_shutdown(rec));
-        let mut clicked = false;
-        for (enabled, label, action) in [
-            (can_start, s.action_start, VmAction::Start),
-            (can_stop, s.action_clean_shutdown, VmAction::CleanShutdown),
-        ] {
-            if ui.add_enabled(enabled, Button::new(label)).clicked()
-                && let Some((c, r, _)) = vm
-            {
-                self.actions.push(Action::Send(Command::Vm {
-                    connection: c.id,
-                    vm: r.clone(),
-                    action,
-                }));
-                clicked = true;
-            }
-        }
-        clicked
     }
 
     fn status_bar(&self, ui: &mut Ui, state: &AppState) {
@@ -515,7 +544,8 @@ impl XenAdminApp {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
                 icons::host_state(ui, icon);
-                self.tree_label(ui, selection, &host.name);
+                let response = self.tree_label(ui, selection, &host.name);
+                self.host_context_menu(&response, conn, &host.host_ref);
             });
             return;
         }
@@ -526,7 +556,8 @@ impl XenAdminApp {
         }
         node.show_header(ui, |ui| {
             icons::host_state(ui, icon);
-            self.tree_label(ui, selection, &host.name);
+            let response = self.tree_label(ui, selection, &host.name);
+            self.host_context_menu(&response, conn, &host.host_ref);
         })
         .body(|ui| {
             for vm in &host.vms {
@@ -723,7 +754,7 @@ impl XenAdminApp {
         });
     }
 
-    /// Start / Shut Down on a guest's tree row.
+    /// The operations a guest offers now, on its tree row.
     fn vm_context_menu(&mut self, response: &egui::Response, conn: &ConnectionView, vm: &TreeVm) {
         if let Some(record) = conn
             .model
@@ -732,9 +763,30 @@ impl XenAdminApp {
             .filter(|r| model::is_guest(r))
         {
             response.context_menu(|ui| {
-                if self.vm_action_buttons(ui, Some((conn, &vm.vm_ref, record))) {
-                    ui.close();
-                }
+                let entries = ops_ui::vm_entries(conn, &vm.vm_ref, record);
+                self.ops.menu(
+                    ui,
+                    conn,
+                    Some((&vm.vm_ref, record)),
+                    entries,
+                    true,
+                    &self.backend,
+                );
+            });
+        }
+    }
+
+    /// The operations a host offers now, on its tree row.
+    fn host_context_menu(
+        &mut self,
+        response: &egui::Response,
+        conn: &ConnectionView,
+        host: &Ref<Host>,
+    ) {
+        if let Some(record) = conn.model.hosts.get(host) {
+            response.context_menu(|ui| {
+                let entries = ops_ui::host_entries(conn, host, record);
+                self.ops.menu(ui, conn, None, entries, true, &self.backend);
             });
         }
     }
@@ -871,8 +923,17 @@ impl XenAdminApp {
             ui.add_space(16.0);
             match subject {
                 Subject::Vm(r, vm) if model::is_guest(vm) => {
-                    self.vm_action_buttons(ui, Some((conn, r, vm)));
+                    let entries = ops_ui::vm_toolbar(conn, r, vm);
+                    self.op_buttons(ui, conn, entries);
                     if conn.busy_vms.contains(r) {
+                        ui.spinner();
+                        ui.label(s.details_busy);
+                    }
+                }
+                Subject::Host(r, host) => {
+                    let entries = ops_ui::host_toolbar(conn, r, host);
+                    self.op_buttons(ui, conn, entries);
+                    if conn.busy_hosts.contains(r) {
                         ui.spinner();
                         ui.label(s.details_busy);
                     }
@@ -1311,6 +1372,7 @@ impl eframe::App for XenAdminApp {
         self.certificate_window(&ctx);
         self.options_window(&ctx, &state);
         self.about_window(&ctx);
+        self.ops.windows(&ctx, &state, &self.backend);
         self.errors_window(&ctx);
         self.apply_actions(&state);
 
@@ -1608,6 +1670,12 @@ mod tests {
             .next()
             .unwrap()
             .click();
+        // The original asks first.
+        let o = ops_strings();
+        step_until(&mut harness, "confirmation", |h| {
+            h.query_by_label(o.confirm_shutdown_vm).is_some()
+        });
+        harness.get_by_label(o.yes).click();
         step_until(&mut harness, "db-01 halted", |h| {
             h.query_by_label(s.power_halted).is_some()
         });
@@ -2000,10 +2068,7 @@ mod tests {
             .next()
             .unwrap()
             .click();
-        let title = fill(
-            s.op_vm_action,
-            &[("action", s.action_start), ("vm", "db-01")],
-        );
+        let title = fill(ops_strings().op_starting, &[("vm", "db-01")]);
         step_until(&mut harness, "operation with cancel", |h| {
             h.query_by_label(&title).is_some() && h.query_by_label(s.events_cancel).is_some()
         });
@@ -2338,5 +2403,966 @@ mod tests {
         });
         harness.get_by_label("x").click();
         step_until(&mut harness, "cleared", |h| count(h, "web-01") == 1);
+    }
+
+    // ---- F4: operations ------------------------------------------------------
+
+    /// Lets windows that changed size settle (an anchored window re-centers
+    /// over a few frames; a click aims at the last frame's position).
+    fn settle(harness: &mut Harness<'_, XenAdminApp>) {
+        for _ in 0..4 {
+            harness.step();
+        }
+    }
+
+    /// Right-clicks the first node labelled `label` and draws its menu.
+    fn right_click(harness: &mut Harness<'_, XenAdminApp>, label: &str) {
+        settle(harness);
+        harness
+            .get_all_by_label(label)
+            .next()
+            .unwrap_or_else(|| panic!("no {label:?}"))
+            .click_secondary();
+        harness.step();
+        harness.step();
+    }
+
+    /// Clicks the last node labelled `label` (menus are drawn above the
+    /// panels, so their items come last).
+    fn click_last(harness: &mut Harness<'_, XenAdminApp>, label: &str) {
+        settle(harness);
+        harness
+            .get_all_by_label(label)
+            .last()
+            .unwrap_or_else(|| panic!("no {label:?}"))
+            .click();
+        harness.step();
+    }
+
+    /// Clicks the right-most node labelled `label` (a submenu item, beside
+    /// the tree row of the same name).
+    fn click_rightmost(harness: &mut Harness<'_, XenAdminApp>, label: &str) {
+        settle(harness);
+        harness
+            .get_all_by_label(label)
+            .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+            .unwrap_or_else(|| panic!("no {label:?}"))
+            .click();
+        harness.step();
+    }
+
+    /// Whether the right-most node labelled `label` is enabled.
+    fn rightmost_enabled(h: &Harness<'_, XenAdminApp>, label: &str) -> bool {
+        h.query_all_by_label(label).count() >= 2
+            && h.query_all_by_label(label)
+                .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+                .is_some_and(|n| !n.accesskit_node().is_disabled())
+    }
+
+    fn vm_rec(h: &Harness<'_, XenAdminApp>, r: &str) -> Arc<VmRecord> {
+        first_conn(h).unwrap().model.vms[&Ref::new(r)].clone()
+    }
+
+    fn op_done(h: &Harness<'_, XenAdminApp>, title: &str) -> bool {
+        h.state()
+            .backend
+            .state()
+            .operations
+            .iter()
+            .any(|o| !o.is_running() && i18n::operation_title(&o.kind, &o.server) == title)
+    }
+
+    /// Guest context menu (only what is offered now), the original's
+    /// confirmations, a host context menu, and the Migrate to Server submenu
+    /// with each server checked by the server.
+    #[test]
+    fn context_menus_confirmations_and_the_migrate_submenu() {
+        let runtime = runtime();
+        let (server, mut harness) = connect_to_mock(&runtime);
+        let o = ops_strings();
+
+        // A running guest offers what it allows, and nothing else.
+        right_click(&mut harness, "web-01");
+        for label in [
+            o.reboot,
+            o.suspend,
+            o.pause,
+            o.force_shut_down,
+            o.migrate_to_server,
+        ] {
+            assert!(harness.query_by_label(label).is_some(), "{label}");
+        }
+        for label in [o.resume, o.unpause, o.start_on_server] {
+            assert!(harness.query_by_label(label).is_none(), "{label}");
+        }
+        click_last(&mut harness, o.reboot);
+        step_until(&mut harness, "confirmation", |h| {
+            h.query_by_label(o.confirm_reboot_vm).is_some()
+        });
+        harness.get_by_label(o.confirm_reboot_vm_title);
+        click_last(&mut harness, o.yes);
+        let title = "Rebooting VM 'web-01' on 'xcp-host-01'";
+        step_until(&mut harness, "reboot done", |h| op_done(h, title));
+        assert!(server.calls().iter().any(|c| c == "Async.VM.clean_reboot"));
+        harness.get_by_label(title);
+
+        // Pause asks nothing; the tree shows the new state.
+        step_until(&mut harness, "pause offered again", |h| {
+            vm_rec(h, "OpaqueRef:vm-web")
+                .allowed_operations
+                .contains(&xapi::VmOperations::Pause)
+        });
+        right_click(&mut harness, "web-01");
+        click_last(&mut harness, o.pause);
+        step_until(&mut harness, "paused", |h| {
+            vm_rec(h, "OpaqueRef:vm-web").power_state == VmPowerState::Paused
+        });
+        right_click(&mut harness, "web-01");
+        assert!(harness.query_by_label(o.reboot).is_none());
+        click_last(&mut harness, o.unpause);
+        step_until(&mut harness, "running", |h| {
+            vm_rec(h, "OpaqueRef:vm-web").power_state == VmPowerState::Running
+        });
+
+        // Host 2 leaves maintenance mode from its context menu.
+        right_click(&mut harness, "xcp-host-02");
+        assert!(harness.query_by_label(o.enter_maintenance).is_none());
+        click_last(&mut harness, o.exit_maintenance);
+        step_until(&mut harness, "host 2 enabled", |h| {
+            first_conn(h).unwrap().model.hosts[&Ref::new("OpaqueRef:host-0002")].enabled
+        });
+
+        // Migrate to Server: the current server is not offered, host 2 is
+        // once the server agrees.
+        right_click(&mut harness, "web-01");
+        click_last(&mut harness, o.migrate_to_server);
+        let current = fill(
+            o.host_with_reason,
+            &[("host", "xcp-host-01"), ("reason", o.reason_current_server)],
+        );
+        step_until(&mut harness, "servers listed", |h| {
+            h.query_by_label(&current).is_some() && rightmost_enabled(h, "xcp-host-02")
+        });
+        assert!(
+            server
+                .calls()
+                .iter()
+                .any(|c| c == "VM.assert_can_boot_here")
+        );
+        click_rightmost(&mut harness, "xcp-host-02");
+        step_until(&mut harness, "migrate confirmation", |h| {
+            h.query_by_label("Do you want to migrate the VM web-01 to the server xcp-host-02?")
+                .is_some()
+        });
+        click_last(&mut harness, o.yes);
+        step_until(&mut harness, "migrated", |h| {
+            vm_rec(h, "OpaqueRef:vm-web").resident_on.as_str() == "OpaqueRef:host-0002"
+        });
+        step_until(&mut harness, "migration listed", |h| {
+            op_done(
+                h,
+                "Migrating VM 'web-01' from 'xcp-host-01' to 'xcp-host-02'",
+            )
+        });
+    }
+
+    /// Server menu, toolbar and host context menu: maintenance mode with
+    /// its dialog, reboot and shut down with their confirmations, power on,
+    /// toolstack restart.
+    #[test]
+    fn host_operations_through_the_window() {
+        let runtime = runtime();
+        let (server, mut harness) = connect_to_mock(&runtime);
+        let o = ops_strings();
+        let h1 = Ref::<Host>::new("OpaqueRef:host-0001");
+        let h2 = Ref::<Host>::new("OpaqueRef:host-0002");
+
+        // The coordinator runs web-01 and host 2 is in maintenance: the
+        // dialog says web-01 cannot be moved, and will not go on.
+        right_click(&mut harness, "xcp-host-01");
+        click_last(&mut harness, o.enter_maintenance);
+        let title = fill(o.evacuate_title, &[("host", "xcp-host-01")]);
+        let blocked = "There were no servers available to complete the specified operation.";
+        step_until(&mut harness, "evacuation check", |h| {
+            h.query_by_label(&title).is_some() && h.query_by_label(blocked).is_some()
+        });
+        assert!(!is_enabled(&harness, o.evacuate_button));
+        click_last(&mut harness, strings().cancel);
+        step_until(&mut harness, "dialog closed", |h| {
+            h.query_by_label(&title).is_none()
+        });
+
+        // Host 2 out of maintenance through the Server menu.
+        click_first(&mut harness, "xcp-host-02");
+        harness
+            .get_all_by_label(o.menu_server)
+            .next()
+            .unwrap()
+            .click();
+        harness.step();
+        click_last(&mut harness, o.exit_maintenance);
+        step_until(&mut harness, "host 2 enabled", |h| {
+            first_conn(h).unwrap().model.hosts[&h2].enabled
+        });
+
+        // Now web-01 can move: Check Again, then enter maintenance mode.
+        right_click(&mut harness, "xcp-host-01");
+        click_last(&mut harness, o.enter_maintenance);
+        step_until(&mut harness, "web-01 movable", |h| {
+            h.query_by_label(o.evacuate_ok).is_some() && is_enabled(h, o.evacuate_button)
+        });
+        click_last(&mut harness, o.evacuate_button);
+        step_until(&mut harness, "host 1 in maintenance", |h| {
+            let c = first_conn(h).unwrap();
+            !c.model.hosts[&h1].enabled
+                && c.model.vms[&Ref::new("OpaqueRef:vm-web")].resident_on == h2
+        });
+        assert!(server.calls().iter().any(|c| c == "Async.host.evacuate"));
+        right_click(&mut harness, "xcp-host-01");
+        click_last(&mut harness, o.exit_maintenance);
+        step_until(&mut harness, "host 1 enabled", |h| {
+            first_conn(h).unwrap().model.hosts[&h1].enabled
+        });
+
+        // Reboot host 2 from the toolbar: "No" is the default; its guest is
+        // shut down first.
+        click_first(&mut harness, "xcp-host-02");
+        click_first(&mut harness, o.reboot);
+        step_until(&mut harness, "reboot confirmation", |h| {
+            h.query_by_label(o.confirm_reboot_host_yes).is_some()
+        });
+        harness.get_by_label("Are you sure you want to reboot 'xcp-host-02'?");
+        assert!(harness.get_all_by_label(o.no).last().unwrap().is_focused());
+        click_last(&mut harness, o.confirm_reboot_host_yes);
+        step_until(&mut harness, "rebooted", |h| {
+            op_done(h, "Rebooting server 'xcp-host-02'")
+                && vm_rec(h, "OpaqueRef:vm-web").power_state == VmPowerState::Halted
+        });
+
+        // Shut host 2 down, then power it on from its context menu.
+        click_first(&mut harness, o.shut_down);
+        step_until(&mut harness, "shutdown confirmation", |h| {
+            h.query_by_label(o.confirm_shutdown_host_yes).is_some()
+        });
+        click_last(&mut harness, o.confirm_shutdown_host_yes);
+        step_until(&mut harness, "host 2 off", |h| {
+            let c = first_conn(h).unwrap();
+            !xen_core::objects::host_is_live(&c.model, &c.model.hosts[&h2])
+        });
+        right_click(&mut harness, "xcp-host-02");
+        // A host that is off offers Power On only (the toolbar's Reboot is
+        // there, disabled).
+        assert!(
+            harness
+                .query_all_by_label(o.reboot)
+                .all(|n| n.accesskit_node().is_disabled())
+        );
+        click_last(&mut harness, o.power_on);
+        step_until(&mut harness, "host 2 on", |h| {
+            let c = first_conn(h).unwrap();
+            xen_core::objects::host_is_live(&c.model, &c.model.hosts[&h2])
+        });
+
+        // Restart the coordinator's toolstack: the window reconnects.
+        let logins = server.call_count("session.login_with_password");
+        right_click(&mut harness, "xcp-host-01");
+        click_last(&mut harness, o.restart_toolstack);
+        let question = fill(
+            o.confirm_restart_toolstack,
+            &[("host", "xcp-host-01"), ("product", branding::PRODUCT_NAME)],
+        );
+        step_until(&mut harness, "toolstack confirmation", |h| {
+            h.query_by_label(&question).is_some()
+        });
+        click_last(&mut harness, o.yes);
+        step_until(&mut harness, "logged in again", |h| {
+            server.call_count("session.login_with_password") > logins
+                && first_conn(h).is_some_and(|c| c.status.is_connected())
+        });
+    }
+
+    /// A VM Operator migrating a VM gets the role elevation dialog; a wrong
+    /// password is refused there; a VM Power Admin's credentials run it.
+    /// A failing operation shows the original's friendly error.
+    #[test]
+    fn role_elevation_and_friendly_errors() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start(false));
+        server.set_field(
+            "host",
+            "OpaqueRef:host-0002",
+            "enabled",
+            serde_json::json!(true),
+        );
+        let mut harness = app_harness(&runtime);
+        harness.state_mut().connect.username = "vm-operator-user".into();
+        connect_through_dialog_as(&mut harness, &server.address(), "vm-operator-password");
+        step_until(&mut harness, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+                && first_conn(h).is_some_and(|c| c.rbac.is_some())
+        });
+        let o = ops_strings();
+
+        right_click(&mut harness, "web-01");
+        click_last(&mut harness, o.migrate_to_server);
+        step_until(&mut harness, "host 2 offered", |h| {
+            rightmost_enabled(h, "xcp-host-02")
+        });
+        click_rightmost(&mut harness, "xcp-host-02");
+        step_until(&mut harness, "confirmation", |h| {
+            h.query_by_label("Do you want to migrate the VM web-01 to the server xcp-host-02?")
+                .is_some()
+        });
+        click_last(&mut harness, o.yes);
+        step_until(&mut harness, "elevation dialog", |h| {
+            h.query_by_label(o.elevation_blurb).is_some()
+        });
+        harness.get_by_label("VM Operator");
+        harness.get_by_label("Pool Admin, Pool Operator, VM Power Admin");
+        harness.get_by_label("Migrating VM 'web-01' from 'xcp-host-01' to 'xcp-host-02'");
+        assert!(!server.calls().iter().any(|c| c == "Async.VM.pool_migrate"));
+
+        // A wrong password: the dialog stays, with the reason.
+        harness
+            .get_by_label(o.elevation_username)
+            .type_text("vm-power-admin-user");
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, o.elevation_password)
+            .focus();
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, o.elevation_password)
+            .type_text("wrong");
+        harness.step();
+        harness.get_by_label(o.elevation_authorize).click();
+        let refused = fill(
+            o.user_authorization_failed,
+            &[
+                ("product", branding::PRODUCT_NAME),
+                ("user", "vm-power-admin-user"),
+                ("error", strings().err_auth_failed),
+            ],
+        );
+        step_until(&mut harness, "refused", |h| {
+            h.query_by_label(&refused).is_some()
+        });
+
+        // The right one runs it as that user.
+        harness
+            .get_by_role_and_label(Role::PasswordInput, o.elevation_password)
+            .focus();
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, o.elevation_password)
+            .type_text("vm-power-admin-password");
+        harness.step();
+        harness.get_by_label(o.elevation_authorize).click();
+        step_until(&mut harness, "migrated as the power admin", |h| {
+            h.query_by_label(o.elevation_blurb).is_none()
+                && vm_rec(h, "OpaqueRef:vm-web").resident_on.as_str() == "OpaqueRef:host-0002"
+        });
+        step_until(&mut harness, "listed with the user", |h| {
+            h.query_by_label(
+                "Migrating VM 'web-01' from 'xcp-host-01' to 'xcp-host-02' (as vm-power-admin-user)",
+            )
+            .is_some()
+        });
+
+        // A failure shows the original's wording, with names, not refs.
+        server.fail_method("VM.clean_reboot", Some(("VM_MISSING_PV_DRIVERS", &[])));
+        right_click(&mut harness, "web-01");
+        click_last(&mut harness, o.reboot);
+        step_until(&mut harness, "confirmation", |h| {
+            h.query_by_label(o.confirm_reboot_vm).is_some()
+        });
+        click_last(&mut harness, o.yes);
+        let error = "Rebooting VM 'web-01' on 'xcp-host-02': You attempted an operation on a VM which requires PV drivers to be installed but the drivers were not detected.";
+        step_until(&mut harness, "friendly error", |h| {
+            h.query_by_label(error).is_some()
+        });
+    }
+
+    /// Like [`connect_through_dialog`] with the user name already set in
+    /// the form.
+    fn connect_through_dialog_as(
+        harness: &mut Harness<'_, XenAdminApp>,
+        server: &str,
+        password: &str,
+    ) {
+        let s = strings();
+        harness.step();
+        harness.get_by_label(s.connect_server).type_text(server);
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, s.connect_password)
+            .focus();
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, s.connect_password)
+            .type_text(password);
+        harness.step();
+        harness.get_by_label(s.connect_button).click();
+    }
+
+    // ---- F4: real host, one named VM ------------------------------------------
+
+    /// The only VM the real-host test may operate on.
+    const FLUXER: &str = "09 - Ubuntu Fluxer";
+
+    /// Steps until `done` or `limit`; `false` on timeout (no panic: the
+    /// real-host run must always reach its cleanup).
+    fn step_for(
+        harness: &mut Harness<'_, XenAdminApp>,
+        limit: Duration,
+        done: impl Fn(&Harness<'_, XenAdminApp>) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            harness.step();
+            if done(harness) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// Every operation this client ran targets `vm` (never a host).
+    fn only_on(h: &Harness<'_, XenAdminApp>, vm: &Ref<Vm>) {
+        for op in h.state().backend.state().operations.iter() {
+            match &op.object {
+                None | Some(xen_core::OperationObject::Vm(_)) => {}
+                Some(other) => panic!("an operation on another object: {other:?}"),
+            }
+            if let Some(xen_core::OperationObject::Vm(r)) = &op.object {
+                assert_eq!(r, vm, "an operation on another VM");
+            }
+        }
+    }
+
+    /// Operations of one name on the named VM, through the real window, with
+    /// the state shown in the window after each. Ignored unless asked for:
+    ///
+    /// ```text
+    /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
+    /// XENADMIN_REAL_FINGERPRINT=AA:BB:… XENADMIN_REAL_LOG=/path/outside/repo.txt \
+    ///   cargo test -p xenadmin real_host_fluxer -- --ignored --nocapture
+    /// ```
+    ///
+    /// It refuses to act unless exactly one VM is named [`FLUXER`] and it is
+    /// halted; it never touches another VM or a host; it leaves the VM
+    /// halted (forcing a shut down if a step failed). The log gets each
+    /// step's outcome (operation titles, statuses, durations, and whether
+    /// the VM's guest agent offered the clean operations).
+    #[test]
+    #[ignore = "operates the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
+    fn real_host_fluxer_lifecycle() {
+        let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
+        let runtime = runtime();
+        let mut harness = real_host_harness(&runtime);
+        fluxer_lifecycle(&mut harness, Duration::from_secs(240), Some(&log_path));
+    }
+
+    /// The same sequence against the mock (the sanitized capture of the real
+    /// host, one halted guest renamed [`FLUXER`]), so the real run cannot
+    /// fail on a test mistake.
+    #[test]
+    fn fluxer_lifecycle_on_the_mock() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start_with_records(
+            true,
+            xapi_mock::capture_records(),
+        ));
+        server.set_name_label("vm", "OpaqueRef:vm-0010", FLUXER);
+        let mut harness = app_harness(&runtime);
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut harness, "certificate prompt", |h| {
+            h.query_by_label(strings().cert_trust).is_some()
+        });
+        harness.get_by_label(strings().cert_trust).click();
+        step_until(&mut harness, "connected", |h| {
+            first_conn(h).is_some_and(|c| c.status.is_connected() && c.rbac.is_some())
+        });
+        let log = fluxer_lifecycle(&mut harness, Duration::from_secs(20), None);
+        for step in [
+            "Start:",
+            "Pause:",
+            "Unpause:",
+            "Suspend:",
+            "Resume:",
+            "Reboot:",
+            "Force Reboot:",
+            "Shut Down:",
+            "Start on Server:",
+            "Force Shut Down:",
+        ] {
+            assert!(log.contains(step), "{step} missing from\n{log}");
+        }
+        assert!(log.contains("end state: Halted"), "{log}");
+        for call in [
+            "Async.VM.start",
+            "Async.VM.pause",
+            "Async.VM.unpause",
+            "Async.VM.suspend",
+            "Async.VM.resume",
+            "Async.VM.clean_reboot",
+            "Async.VM.hard_reboot",
+            "Async.VM.clean_shutdown",
+            "Async.VM.start_on",
+            "Async.VM.hard_shutdown",
+        ] {
+            assert!(server.calls().iter().any(|c| c == call), "{call}");
+        }
+        // Nothing but the named VM was touched.
+        assert!(
+            !server
+                .calls()
+                .iter()
+                .any(|c| c.starts_with("Async.host.") || c.starts_with("host.disable"))
+        );
+    }
+
+    /// Runs every VM operation on [`FLUXER`] through the window; returns the
+    /// log. Panics (after leaving the VM halted) if a step fails.
+    fn fluxer_lifecycle(
+        harness: &mut Harness<'static, XenAdminApp>,
+        long: Duration,
+        log_path: Option<&str>,
+    ) -> String {
+        use std::fmt::Write as _;
+        use xapi::VmOperations;
+        let state = harness.state().backend.state();
+        let conn = state.connections[0].clone();
+        let named: Vec<(Ref<Vm>, Arc<VmRecord>)> = conn
+            .model
+            .vms
+            .iter()
+            .filter(|(_, v)| v.name_label == FLUXER)
+            .map(|(r, v)| (r.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            named.len(),
+            1,
+            "refusing: {} VMs are named {FLUXER:?}",
+            named.len()
+        );
+        let (vm_ref, record) = named.into_iter().next().unwrap();
+        assert!(
+            model::is_guest(&record),
+            "refusing: {FLUXER:?} is not a guest VM"
+        );
+        assert_eq!(
+            record.power_state,
+            VmPowerState::Halted,
+            "refusing: {FLUXER:?} is not halted as expected"
+        );
+        let host_names: Vec<String> = conn
+            .model
+            .hosts
+            .values()
+            .map(|h| h.name_label.clone())
+            .collect();
+        assert_eq!(host_names.len(), 1, "expected the single-host lab pool");
+        let host_name = host_names[0].clone();
+        let mut log = String::new();
+        let _ = writeln!(log, "VM {FLUXER:?} found once, halted; host count 1");
+        let _ = writeln!(
+            log,
+            "connected as root; RBAC: {:?}",
+            conn.rbac.as_ref().map(|r| r.is_local_superuser)
+        );
+
+        let s = strings();
+        let o = ops_strings();
+        let power = |h: &Harness<'_, XenAdminApp>| vm_rec(h, vm_ref.as_str()).power_state.clone();
+        let allows = |h: &Harness<'_, XenAdminApp>, op: VmOperations| {
+            vm_rec(h, vm_ref.as_str()).allowed_operations.contains(&op)
+        };
+        let shown = |h: &Harness<'_, XenAdminApp>, label: &str| {
+            h.query_all_by_label(label).next().is_some()
+        };
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Select the VM in the tree.
+            harness.state_mut().selection = Some(Selection::Vm(conn.id, vm_ref.clone()));
+            settle(harness);
+            assert!(shown(harness, s.power_halted), "Halted not shown");
+
+            // One toolbar step: click `label`, answer a confirmation if one
+            // comes, wait for `expected`.
+            let step = |harness: &mut Harness<'_, XenAdminApp>,
+                        what: &str,
+                        click: &dyn Fn(&mut Harness<'_, XenAdminApp>),
+                        confirm: Option<&str>,
+                        expected: VmPowerState,
+                        expected_label: &str,
+                        log: &mut String| {
+                let started = Instant::now();
+                let before = harness.state().backend.state().operations.len();
+                click(harness);
+                if let Some(text) = confirm {
+                    assert!(
+                        step_for(harness, Duration::from_secs(30), |h| shown(h, text)),
+                        "{what}: no confirmation"
+                    );
+                    click_last(harness, o.yes);
+                }
+                let done = step_for(harness, long, |h| {
+                    let st = h.state().backend.state();
+                    st.operations.len() > before
+                        && st.operations[before..].iter().all(|op| !op.is_running())
+                });
+                let st = harness.state().backend.state();
+                let ops: Vec<String> = st.operations[before.min(st.operations.len())..]
+                    .iter()
+                    .map(|op| {
+                        let status = match &op.status {
+                            xen_core::OperationStatus::Failed(f) => format!(
+                                "Failed: {}",
+                                i18n::describe_operation_failure(Some(&st.connections[0]), f)
+                            ),
+                            other => i18n::operation_status_label(other).to_owned(),
+                        };
+                        format!("{} -> {status}", i18n::operation_title(&op.kind, "host"))
+                    })
+                    .collect();
+                let reached = step_for(harness, long, |h| {
+                    power(h) == expected && shown(h, expected_label)
+                });
+                let _ = writeln!(
+                    log,
+                    "{what}: ops [{}]; finished={done}; power {:?} shown as {expected_label:?}={reached}; {:.1} s",
+                    ops.join("; ").replace(&host_name, "<host>"),
+                    power(harness),
+                    started.elapsed().as_secs_f64()
+                );
+                only_on(harness, &vm_ref);
+                assert!(reached, "{what}: the VM did not reach {expected:?}");
+            };
+            // The server may list an operation a moment after the power
+            // state changed: wait until the button is offered.
+            let toolbar = |label: &'static str| {
+                move |h: &mut Harness<'_, XenAdminApp>| {
+                    let offered = step_for(h, Duration::from_secs(60), |h| {
+                        h.query_all_by_label(label)
+                            .next()
+                            .is_some_and(|n| !n.accesskit_node().is_disabled())
+                    });
+                    assert!(
+                        offered,
+                        "{label} is not offered; allowed {:?}",
+                        first_conn(h).map(|c| c
+                            .model
+                            .vms
+                            .values()
+                            .find(|v| v.name_label == FLUXER)
+                            .map(|v| v.allowed_operations.clone()))
+                    );
+                    settle(h);
+                    h.get_all_by_label(label).next().unwrap().click();
+                    h.step();
+                }
+            };
+            // A context menu lists only what is offered: reopen it until
+            // `label` is there. The VM is unselected meanwhile so the
+            // toolbar and details header (which may show the same button)
+            // are not in the way; it is selected again after the click.
+            let selected = Selection::Vm(conn.id, vm_ref.clone());
+            let context = move |label: &'static str| {
+                let selected = selected.clone();
+                move |h: &mut Harness<'_, XenAdminApp>| {
+                    h.state_mut().selection = None;
+                    let deadline = Instant::now() + Duration::from_secs(60);
+                    loop {
+                        right_click(h, FLUXER);
+                        if h.query_all_by_label(label).next().is_some() {
+                            break;
+                        }
+                        h.key_press(egui::Key::Escape);
+                        h.step();
+                        assert!(Instant::now() < deadline, "{label} is not offered");
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    click_last(h, label);
+                    h.state_mut().selection = Some(selected.clone());
+                    h.step();
+                }
+            };
+
+            step(
+                harness,
+                "Start",
+                &toolbar(s.action_start),
+                None,
+                VmPowerState::Running,
+                s.power_running,
+                &mut log,
+            );
+            // The guest agent, if any, reports after boot: wait for the clean
+            // operations for a while.
+            let tools = step_for(harness, Duration::from_secs(150), |h| {
+                allows(h, VmOperations::CleanShutdown) && allows(h, VmOperations::CleanReboot)
+            });
+            let _ = writeln!(
+                log,
+                "guest agent: clean shut down/reboot offered = {tools}; allowed now {:?}",
+                vm_rec(harness, vm_ref.as_str()).allowed_operations
+            );
+            step(
+                harness,
+                "Pause",
+                &toolbar(o.pause),
+                None,
+                VmPowerState::Paused,
+                s.power_paused,
+                &mut log,
+            );
+            step(
+                harness,
+                "Unpause",
+                &toolbar(o.unpause),
+                None,
+                VmPowerState::Running,
+                s.power_running,
+                &mut log,
+            );
+            if allows(harness, VmOperations::Suspend) {
+                step(
+                    harness,
+                    "Suspend",
+                    &toolbar(o.suspend),
+                    Some(o.confirm_suspend_vm),
+                    VmPowerState::Suspended,
+                    s.power_suspended,
+                    &mut log,
+                );
+                step(
+                    harness,
+                    "Resume",
+                    &toolbar(o.resume),
+                    None,
+                    VmPowerState::Running,
+                    s.power_running,
+                    &mut log,
+                );
+                if tools {
+                    let _ = step_for(harness, Duration::from_secs(150), |h| {
+                        allows(h, VmOperations::CleanReboot)
+                    });
+                }
+            } else {
+                let _ = writeln!(
+                    log,
+                    "Suspend: NOT OFFERED by the server (allowed_operations has no suspend)"
+                );
+            }
+            if allows(harness, VmOperations::CleanReboot) {
+                step(
+                    harness,
+                    "Reboot",
+                    &toolbar(o.reboot),
+                    Some(o.confirm_reboot_vm),
+                    VmPowerState::Running,
+                    s.power_running,
+                    &mut log,
+                );
+            } else {
+                let _ = writeln!(
+                    log,
+                    "Reboot (clean): NOT OFFERED by the server (no guest agent)"
+                );
+            }
+            step(
+                harness,
+                "Force Reboot",
+                &context(o.force_reboot),
+                Some(o.confirm_force_reboot_vm_no_tasks),
+                VmPowerState::Running,
+                s.power_running,
+                &mut log,
+            );
+            if tools {
+                let _ = step_for(harness, Duration::from_secs(150), |h| {
+                    allows(h, VmOperations::CleanShutdown)
+                });
+            }
+            if allows(harness, VmOperations::CleanShutdown) {
+                step(
+                    harness,
+                    "Shut Down",
+                    &toolbar(s.action_clean_shutdown),
+                    Some(o.confirm_shutdown_vm),
+                    VmPowerState::Halted,
+                    s.power_halted,
+                    &mut log,
+                );
+            } else {
+                let _ = writeln!(
+                    log,
+                    "Shut Down (clean): NOT OFFERED by the server (no guest agent)"
+                );
+                step(
+                    harness,
+                    "Force Shut Down",
+                    &context(o.force_shut_down),
+                    Some(o.confirm_force_shutdown_vm_no_tasks),
+                    VmPowerState::Halted,
+                    s.power_halted,
+                    &mut log,
+                );
+            }
+            // Start on Server: the submenu asks the server about the host.
+            let host = host_name.clone();
+            let open_submenu = context(o.start_on_server);
+            let start_on = move |h: &mut Harness<'_, XenAdminApp>| {
+                open_submenu(h);
+                assert!(
+                    step_for(h, Duration::from_secs(20), |h| rightmost_enabled(h, &host)),
+                    "the host is not offered in Start on Server"
+                );
+                click_rightmost(h, &host);
+            };
+            step(
+                harness,
+                "Start on Server",
+                &start_on,
+                None,
+                VmPowerState::Running,
+                s.power_running,
+                &mut log,
+            );
+            step(
+                harness,
+                "Force Shut Down",
+                &context(o.force_shut_down),
+                Some(o.confirm_force_shutdown_vm_no_tasks),
+                VmPowerState::Halted,
+                s.power_halted,
+                &mut log,
+            );
+        }));
+        match &outcome {
+            Ok(()) => {}
+            Err(e) => {
+                let why = e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    log,
+                    "STEP FAILED: {}",
+                    why.lines()
+                        .take(4)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .replace(&host_name, "<host>")
+                );
+            }
+        }
+
+        // Cleanup: leave the VM halted, as found.
+        if power(harness) != VmPowerState::Halted {
+            let _ = writeln!(log, "cleanup: forcing a shut down of {FLUXER:?}");
+            harness.state().backend.send(Command::Vm {
+                connection: conn.id,
+                vm: vm_ref.clone(),
+                action: xen_core::VmAction::HardShutdown,
+            });
+            let _ = step_for(harness, long, |h| power(h) == VmPowerState::Halted);
+        }
+        let end = power(harness);
+        let _ = writeln!(log, "end state: {end:?}");
+        only_on(harness, &vm_ref);
+        let total = harness
+            .state()
+            .backend
+            .state()
+            .operations
+            .iter()
+            .filter(|o| o.object.is_some())
+            .count();
+        let _ = writeln!(log, "operations run: {total}, all on {FLUXER:?}");
+        harness
+            .state()
+            .backend
+            .shutdown_blocking(Duration::from_secs(5));
+        let _ = writeln!(log, "logged out");
+        println!("{log}");
+        if let Some(path) = log_path {
+            std::fs::write(path, &log).unwrap();
+        }
+        assert_eq!(end, VmPowerState::Halted, "the VM was not left halted");
+        if let Err(e) = outcome {
+            std::panic::resume_unwind(e);
+        }
+        log
+    }
+
+    /// A real XAPI error in the window: Unpause sent to the halted VM named
+    /// [`FLUXER`] (the window would not offer it; the command goes straight
+    /// to the backend). The server refuses it without changing anything, and
+    /// the window shows the original's friendly message. Ignored unless
+    /// asked for (same variables as [`real_host_fluxer_lifecycle`]).
+    #[test]
+    #[ignore = "sends a refused call to the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
+    fn real_host_fluxer_friendly_error() {
+        let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
+        let runtime = runtime();
+        let mut harness = real_host_harness(&runtime);
+        let conn = first_conn(&harness).unwrap();
+        let named: Vec<Ref<Vm>> = conn
+            .model
+            .vms
+            .iter()
+            .filter(|(_, v)| v.name_label == FLUXER)
+            .map(|(r, _)| r.clone())
+            .collect();
+        assert_eq!(
+            named.len(),
+            1,
+            "refusing: {} VMs are named {FLUXER:?}",
+            named.len()
+        );
+        let vm = named[0].clone();
+        assert_eq!(
+            conn.model.vms[&vm].power_state,
+            VmPowerState::Halted,
+            "refusing: {FLUXER:?} is not halted"
+        );
+        harness.state().backend.send(Command::Vm {
+            connection: conn.id,
+            vm: vm.clone(),
+            action: xen_core::VmAction::Unpause,
+        });
+        let prefix = format!("Unpausing VM '{FLUXER}': ");
+        let shown = step_for(&mut harness, Duration::from_secs(60), |h| {
+            h.state().errors.iter().any(|e| e.starts_with(&prefix))
+        });
+        let error = harness
+            .state()
+            .errors
+            .iter()
+            .find(|e| e.starts_with(&prefix))
+            .cloned()
+            .unwrap_or_default();
+        settle(&mut harness);
+        let on_screen = harness.query_all_by_label(&error).next().is_some();
+        let still_halted = vm_rec(&harness, vm.as_str()).power_state == VmPowerState::Halted;
+        only_on(&harness, &vm);
+        harness
+            .state()
+            .backend
+            .shutdown_blocking(Duration::from_secs(5));
+        let log = format!(
+            "error shown={shown} on screen={on_screen}: {error}\nVM still halted: {still_halted}\nlogged out\n"
+        );
+        println!("{log}");
+        std::fs::write(&log_path, &log).unwrap();
+        assert!(shown && on_screen && still_halted, "{log}");
+        assert!(error.contains("needed it to be in state"), "{log}");
     }
 }

@@ -50,6 +50,28 @@ async fn logs_never_contain_passwords_or_session_refs() {
         action: VmAction::Start,
     });
     wait_until("task done", || server.call_count("task.destroy") == 1).await;
+    // An operation run as another user (role elevation).
+    h.backend.send(Command::RunElevated {
+        connection: conn,
+        request: xen_core::ActionRequest::Vm {
+            vm: Ref::new("OpaqueRef:vm-web"),
+            action: VmAction::Pause,
+        },
+        username: "vm-power-admin-user".into(),
+        password: "vm-power-admin-password".into(),
+        request_id: 1,
+    });
+    match h.next_notification().await {
+        Notification::Elevation {
+            outcome: xen_core::ElevationOutcome::Authorized { .. },
+            ..
+        } => {}
+        other => panic!("unexpected {other:?}"),
+    }
+    wait_until("elevated task done", || {
+        server.call_count("task.destroy") == 2
+    })
+    .await;
     // Re-login after a forgotten session and after a restart.
     server.invalidate_sessions();
     wait_until("re-login", || {
@@ -75,6 +97,10 @@ async fn logs_never_contain_passwords_or_session_refs() {
     assert!(log.contains("xapi call"), "call tracing not captured");
     assert!(log.len() > 10_000, "too little captured: {}", log.len());
     assert!(!log.contains(xapi_mock::PASSWORD), "password in the log");
+    assert!(
+        !log.contains("vm-power-admin-password"),
+        "elevated password in the log"
+    );
     let leaks: Vec<&str> = log
         .lines()
         .filter(|l| l.contains("mock-session-"))

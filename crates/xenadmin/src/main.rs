@@ -15,9 +15,12 @@ mod app;
 mod branding;
 mod cli;
 mod events;
+mod friendly_errors;
 mod i18n;
 mod icons;
 mod logging;
+mod ops_strings;
+mod ops_ui;
 mod tab_strings;
 mod tabs;
 

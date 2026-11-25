@@ -54,8 +54,22 @@ F1 (base).** What works:
   SR's virtual disks, the SRs of a host or pool), **Networking** (a VM's
   interfaces with guest IPs; the networks and IP configuration of a host or
   pool) and **NICs**. They follow `event.from` live;
-- Start and Shut Down (clean) for VMs, enabled from `power_state` and
-  `allowed_operations`, run as `Async.VM.*` tasks;
+- **VM and host operations** (as the original's commands): Start, Shut
+  Down, Reboot, Suspend, Resume, Pause, Unpause, Force Shut Down, Force
+  Reboot, Start on Server, Resume on Server and Migrate to Server (live,
+  within the pool) for VMs; Reboot, Shut Down, Power On, Enter/Exit
+  Maintenance Mode and Restart Toolstack for hosts. They are offered from
+  the server's `allowed_operations` (in the VM and Server menus, the
+  toolbar, the details header and the tree's context menus), ask the
+  original's confirmation questions, run as `Async.*` tasks with progress
+  in the Events panel, and report XAPI errors with the original's friendly
+  messages (`FriendlyErrorNames`). The server submenus check each server
+  with `VM.assert_can_boot_here`, and maintenance mode lists the VMs that
+  cannot be migrated (`host.get_vms_which_prevent_evacuation`);
+- **RBAC**: the session's rights are read after login, each operation is
+  checked against them before it runs, and a user whose role is not enough
+  is offered the role elevation dialog (another user's credentials, checked
+  and used for that operation only);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -63,8 +77,8 @@ F1 (base).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs, the console and performance graphs come in later
-phases. See the port plan for the full roadmap.
+Editing from the tabs, the console, performance graphs, VM creation and
+cross-pool migration come in later phases. See the port plan for the full roadmap.
 
 ## Build and run
 
@@ -80,7 +94,9 @@ example `libxkbcommon-dev`, `libgl1-mesa-dev` and `libwayland-dev`), and the
 keyring needs `libdbus-1-dev` (Secret Service).
 
 To try the app without a real host, start the mock server in another terminal
-and connect to the address it prints (user `root`, password `mock-password`):
+and connect to the address it prints (user `root`, password `mock-password`;
+users with one RBAC role each, such as `vm-operator-user` /
+`vm-operator-password`, are listed in `crates/xapi-mock/src/ops.rs`):
 
 ```sh
 cargo run -p xapi-mock --example serve             # HTTPS with a self-signed certificate
@@ -152,7 +168,10 @@ end to end:
   without losing a field;
 - the generated calls (`get_all_records`, `get_record`, `get_by_uuid`, field
   getters, `event.inject`, optional parameters) for any class;
-- `VM.start` and `VM.clean_shutdown`;
+- every VM and host operation of the console (power state, placement and
+  `allowed_operations` changes, host disable/evacuate/reboot/shutdown/power
+  on, toolstack restart), injected failures, and RBAC users whose calls are
+  checked against their role;
 - `event.from` long-polling and the live updates it drives, for any class;
 - the cache's full reload on `EVENTS_LOST` and its re-login on
   `SESSION_INVALID`, and classes an older server does not know;
@@ -167,14 +186,22 @@ end to end:
   restoring the connection with no password and no question; a password not
   remembered never reaching the keyring; the password being read from the
   keyring at each reconnection;
-- VM operations as tasks with progress, cancel and `task.destroy`, and other
-  clients' tasks followed and cancelled;
+- VM and host operations as tasks with progress, cancel and `task.destroy`
+  (forced operations cancelling what still runs on the VM, hosts enabled
+  again after a failed reboot or evacuation), and other clients' tasks
+  followed and cancelled;
+- RBAC: the session's rights, the roles that could run an operation, a
+  server-side `RBAC_PERMISSION_DENIED`, and role elevation (wrong password,
+  a user without the role, a user with it);
 - logs at `trace` level free of passwords and session references;
 - the tree (homes, storage, templates, snapshots, view options, filter) and
   every tab's data against the hand-written pool and the real-host capture;
 - the egui window itself, run headlessly with `egui_kittest`: connect dialog,
   certificate prompt, tree, View options and filter, the detail tabs and
   their live updates, Events panel (progress, cancel, other clients' tasks),
+  context menus offering only what can run, confirmations, the Migrate and
+  Start on Server submenus, the maintenance mode dialog, host operations,
+  the role elevation dialog and friendly error messages,
   the reconnection shown after a server restart, servers restored on start,
   and Options;
 - that the committed generated code matches the pinned datamodel.
@@ -224,7 +251,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xenadmin` | The egui/eframe desktop app. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 

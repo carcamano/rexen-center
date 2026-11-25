@@ -242,14 +242,7 @@ pub fn vm_display_name(vm: &VmRecord) -> String {
 
 /// Pool name, or the coordinator's name for an unnamed pool.
 pub fn pool_display_name(model: &ConnectionModel, pool: &PoolRecord) -> String {
-    if pool.name_label.is_empty() {
-        model
-            .coordinator()
-            .map(|h| h.name_label.clone())
-            .unwrap_or_default()
-    } else {
-        pool.name_label.clone()
-    }
+    xen_core::objects::pool_name(model, pool)
 }
 
 #[cfg(test)]

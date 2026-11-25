@@ -26,11 +26,15 @@ use std::time::{Duration, SystemTime};
 use arc_swap::ArcSwap;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use xapi::{Endpoint, Fingerprint, Ref, Session, Task, Vm};
+use xapi::{ClientOptions, Endpoint, Fingerprint, Host, JsonRpcClient, Ref, Session, Task, Vm};
 
+use crate::actions::{ActionRequest, HostAction, VmAction};
 use crate::connection::{self, ConnectionSpec, Secret};
 use crate::model::ConnectionModel;
-use crate::operations::{self, Operation, OperationFailure, OperationKind, OperationStatus};
+use crate::operations::{
+    self, Operation, OperationFailure, OperationKind, OperationStatus, Precheck, PrecheckResult,
+};
+use crate::rbac::{self, RbacCheck, SessionRbac};
 use crate::settings::{ConfigPaths, Preferences, Settings};
 use crate::store::Store;
 
@@ -98,11 +102,35 @@ pub enum Command {
     /// Remove a server from the saved list and delete its saved password
     /// (disconnecting it first).
     Forget { address: String },
-    /// Run a VM power operation.
+    /// Run a VM operation.
     Vm {
         connection: ConnectionId,
         vm: Ref<Vm>,
         action: VmAction,
+    },
+    /// Run a host operation.
+    Host {
+        connection: ConnectionId,
+        host: Ref<Host>,
+        action: HostAction,
+    },
+    /// Run an operation as another user (role elevation): log in with
+    /// `username`/`password`, check that this user may run it, and run it
+    /// with that session (logged out afterwards). The outcome of the check
+    /// comes back as [`Notification::Elevation`] with `request_id`.
+    RunElevated {
+        connection: ConnectionId,
+        request: ActionRequest,
+        username: String,
+        password: Password,
+        request_id: u64,
+    },
+    /// Ask the server a read-only question before an operation; the answer
+    /// comes back as [`Notification::Precheck`] with `id`.
+    Precheck {
+        connection: ConnectionId,
+        id: u64,
+        check: Precheck,
     },
     /// Cancel an operation of the history that runs as a XAPI task.
     CancelOperation { operation: OperationId },
@@ -117,13 +145,6 @@ pub enum Command {
     SetPreferences(Preferences),
     /// Log out of everything and stop; `done` is signalled when finished.
     Shutdown { done: std::sync::mpsc::Sender<()> },
-}
-
-/// VM operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum VmAction {
-    Start,
-    CleanShutdown,
 }
 
 /// Why a connection failed or ended.
@@ -221,6 +242,11 @@ pub struct ConnectionView {
     pub model: Arc<ConnectionModel>,
     /// VMs with an operation started by this client still in flight.
     pub busy_vms: Arc<HashSet<Ref<Vm>>>,
+    /// Hosts with an operation started by this client still in flight.
+    pub busy_hosts: Arc<HashSet<Ref<Host>>>,
+    /// What the session may do (read after login; `None` until then or
+    /// when the server could not tell).
+    pub rbac: Option<Arc<SessionRbac>>,
     /// UUID of the pool, once loaded (duplicate detection).
     pub pool_uuid: Option<String>,
     /// `host:port` in use (duplicate detection).
@@ -262,18 +288,42 @@ impl AppState {
 pub enum Notification {
     /// The server presented an untrusted certificate; the UI must ask the user.
     CertificatePrompt(CertificatePrompt),
-    /// A VM operation failed.
-    VmActionFailed {
+    /// A VM or host operation failed.
+    ActionFailed {
         connection: ConnectionId,
-        vm_name: String,
-        action: VmAction,
+        operation: OperationId,
+        kind: OperationKind,
         error: Arc<xapi::Error>,
+    },
+    /// The outcome of the credentials given for [`Command::RunElevated`].
+    Elevation {
+        request_id: u64,
+        outcome: ElevationOutcome,
+    },
+    /// The answer to [`Command::Precheck`].
+    Precheck {
+        connection: ConnectionId,
+        id: u64,
+        result: PrecheckResult,
     },
     /// A connection could not even start (bad address, already connected…).
     ConnectionRefused {
         server: String,
         error: Arc<ConnectionError>,
     },
+}
+
+/// What became of the credentials given to run an operation as another user.
+#[derive(Debug, Clone)]
+pub enum ElevationOutcome {
+    /// The user may run it; it has started (as `operation`).
+    Authorized { operation: OperationId },
+    /// The login worked but that user's roles do not allow the operation.
+    NotAuthorized,
+    /// The login failed (wrong password, unknown user…).
+    LoginFailed(Arc<xapi::Error>),
+    /// The server is not connected.
+    NotConnected,
 }
 
 /// A pending "trust this certificate?" question.
@@ -569,6 +619,9 @@ impl Shared {
             status: OperationStatus::Running,
             progress: None,
             task: None,
+            object: None,
+            step: None,
+            elevated_as: None,
             started: SystemTime::now(),
             finished: None,
         };
@@ -704,8 +757,38 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 action,
             } => {
                 let session = active.get(&connection).and_then(|c| slot_get(&c.session));
-                operations::start_vm_action(&shared, connection, session, vm, action);
+                let request = ActionRequest::Vm { vm, action };
+                operations::start_action(&shared, connection, session, request, None);
             }
+            Command::Host {
+                connection,
+                host,
+                action,
+            } => {
+                let session = active.get(&connection).and_then(|c| slot_get(&c.session));
+                let request = ActionRequest::Host { host, action };
+                operations::start_action(&shared, connection, session, request, None);
+            }
+            Command::RunElevated {
+                connection,
+                request,
+                username,
+                password,
+                request_id,
+            } => {
+                let session = active.get(&connection).and_then(|c| slot_get(&c.session));
+                run_elevated(
+                    &shared, connection, session, request, username, password, request_id,
+                );
+            }
+            Command::Precheck {
+                connection,
+                id,
+                check,
+            } => match active.get(&connection).and_then(|c| slot_get(&c.session)) {
+                Some(session) => operations::run_precheck(&shared, session, connection, id, check),
+                None => tracing::debug!("precheck ignored: not connected"),
+            },
             Command::CancelOperation { operation } => {
                 let state = shared.state();
                 let target = state
@@ -800,6 +883,8 @@ fn connect(
             status: ConnectionStatus::Connecting,
             model: Arc::default(),
             busy_vms: Arc::default(),
+            busy_hosts: Arc::default(),
+            rbac: None,
             pool_uuid: None,
             authority,
         }));
@@ -831,6 +916,75 @@ fn connect(
             wake,
         },
     );
+}
+
+/// Logs in as another user on the same server, checks that user may run
+/// `request`, then runs it with that session.
+fn run_elevated(
+    shared: &Arc<Shared>,
+    connection: ConnectionId,
+    session: Option<Session>,
+    request: ActionRequest,
+    username: String,
+    password: Password,
+    request_id: u64,
+) {
+    let reply = move |shared: &Shared, outcome| {
+        shared.notify(Notification::Elevation {
+            request_id,
+            outcome,
+        });
+    };
+    let Some(session) = session else {
+        return reply(shared, ElevationOutcome::NotConnected);
+    };
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        let client = session.client();
+        let options = ClientOptions {
+            timeout: shared.options.call_timeout,
+            ..ClientOptions::default()
+        };
+        let login = async {
+            let client = JsonRpcClient::new(client.endpoint(), shared.store().trust(), &options)?;
+            Session::login_with_password(
+                Arc::new(client),
+                &username,
+                password.expose(),
+                &shared.options.originator,
+            )
+            .await
+        };
+        let elevated = match login.await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::info!(error = %e, "role elevation: login failed");
+                return reply(&shared, ElevationOutcome::LoginFailed(Arc::new(e)));
+            }
+        };
+        let rights = match rbac::fetch(&elevated).await {
+            Ok(r) => r,
+            Err(e) => {
+                logout_later(elevated);
+                return reply(&shared, ElevationOutcome::LoginFailed(Arc::new(e)));
+            }
+        };
+        let model = shared
+            .state()
+            .connection(connection)
+            .map(|v| v.model.clone())
+            .unwrap_or_default();
+        if let RbacCheck::Denied { .. } =
+            rbac::check(&model, Some(&rights), &request.rbac_methods())
+        {
+            tracing::info!("role elevation: that user is not authorized either");
+            logout_later(elevated);
+            return reply(&shared, ElevationOutcome::NotAuthorized);
+        }
+        let operation =
+            operations::start_action(&shared, connection, Some(elevated), request, Some(username));
+        reply(&shared, ElevationOutcome::Authorized { operation });
+    });
 }
 
 fn disconnect(

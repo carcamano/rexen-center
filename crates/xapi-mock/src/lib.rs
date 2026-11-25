@@ -14,10 +14,11 @@
 //! * for every class: `get_all_records`, `get_all`, `get_record`,
 //!   `get_by_uuid` and the field getters `get_<field>` (a class absent from
 //!   the database simply has no objects);
-//! * `VM.start` / `VM.clean_shutdown` with power-state checks, and their
-//!   `Async.VM.*` forms, which return a `task` that advances its `progress`
-//!   in steps ([`MockServer::set_task_timing`]) and can be cancelled
-//!   (`task.cancel`) and destroyed (`task.destroy`);
+//! * the VM and host operations of the console and RBAC users (see
+//!   [`ops`]); their `Async.*` forms return a `task` that advances its
+//!   `progress` in steps ([`MockServer::set_task_timing`]) and can be
+//!   cancelled (`task.cancel`) and destroyed (`task.destroy`);
+//! * `session.get_is_local_superuser` and `session.get_rbac_permissions`;
 //! * `host.get_servertime` (the client heartbeat);
 //! * `event.inject` and `event.from` (tokens, `"*"`, long-polling).
 //!
@@ -33,10 +34,15 @@
 //! comes back on the same port with every session forgotten, like a toolstack
 //! restart), [`MockServer::set_certificate`] (a renewed certificate),
 //! [`MockServer::redirect_logins_to`] (a pool member answering
-//! `HOST_IS_SLAVE`) and [`MockServer::set_unresponsive`] (requests hang, as
-//! behind a dead network link).
+//! `HOST_IS_SLAVE`), [`MockServer::set_unresponsive`] (requests hang, as
+//! behind a dead network link) and [`MockServer::fail_method`] (a call or
+//! its task fails with a given XAPI error).
 
-use std::collections::{BTreeMap, HashSet};
+pub mod ops;
+
+pub use ops::RBAC_USERS;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -68,26 +74,6 @@ const RENEWED_CERT_PEM: &str = include_str!("../../../tests/fixtures/mock-server
 const RENEWED_KEY_PEM: &str = include_str!("../../../tests/fixtures/mock-server-renewed.key.pem");
 
 const NULL_REF: &str = "OpaqueRef:NULL";
-const ALLOWED_HALTED: &[&str] = &[
-    "start",
-    "start_on",
-    "clone",
-    "copy",
-    "export",
-    "destroy",
-    "snapshot",
-    "make_into_template",
-];
-const ALLOWED_RUNNING: &[&str] = &[
-    "clean_shutdown",
-    "clean_reboot",
-    "hard_shutdown",
-    "hard_reboot",
-    "suspend",
-    "pause",
-    "snapshot",
-    "pool_migrate",
-];
 
 /// The certificates the HTTPS mock can present.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +246,41 @@ impl MockServer {
     /// `name`). It advances like `Async.*` tasks and then succeeds, unless
     /// cancelled. Returns its reference.
     pub fn start_task(&self, name: &str) -> String {
-        spawn_task(&self.state, name, TaskWork::Nothing)
+        spawn_task(&self.state, name, ops::Work::Nothing)
+    }
+
+    /// Makes `method` (e.g. `"VM.clean_reboot"`; its `Async.*` form too)
+    /// fail with XAPI error `code` and `params` until cleared with `None`.
+    /// An `Async.*` call returns a task that fails with it.
+    pub fn fail_method(&self, method: &str, error: Option<(&str, &[&str])>) {
+        let mut db = self.state.db();
+        match error {
+            Some((code, params)) => {
+                db.failures.insert(
+                    method.to_owned(),
+                    (
+                        code.to_owned(),
+                        params.iter().map(|p| (*p).to_owned()).collect(),
+                    ),
+                );
+            }
+            None => {
+                db.failures.remove(method);
+            }
+        }
+    }
+
+    /// Current `power_state` of a VM.
+    pub fn vm_power_state(&self, vm: &str) -> String {
+        self.state
+            .db()
+            .get_str("vm", vm, "power_state")
+            .unwrap_or_default()
+    }
+
+    /// Whether a host is live (`host_metrics.live`).
+    pub fn host_live(&self, host: &str) -> bool {
+        self.state.db().host_live(host)
     }
 
     /// The references of every `task` object.
@@ -366,7 +386,7 @@ impl MockServer {
     /// Changes a VM's power state as if someone else did it (emits events).
     pub fn set_vm_power_state(&self, vm: &str, power_state: &str) {
         let mut db = self.state.db();
-        db.set_power_state(vm, power_state);
+        db.move_vm(vm, power_state, None);
         drop(db);
         self.state.changed.notify_waiters();
     }
@@ -465,6 +485,7 @@ struct State {
 impl State {
     fn new(records: Value) -> Self {
         let mut objects = BTreeMap::new();
+        let mut has_roles = false;
         if let Value::Object(classes) = records {
             for (class, objs) in classes {
                 // Keys starting with `_` are comments.
@@ -472,9 +493,15 @@ impl State {
                 if class.starts_with('_') {
                     continue;
                 }
+                has_roles |= class.eq_ignore_ascii_case("role") && !objs.is_empty();
                 for (opaque_ref, record) in objs {
                     objects.insert((class.to_lowercase(), opaque_ref), record);
                 }
+            }
+        }
+        if !has_roles {
+            for (r, record) in ops::role_objects() {
+                objects.insert(("role".to_owned(), r), record);
             }
         }
         Self {
@@ -482,7 +509,7 @@ impl State {
                 objects,
                 events: Vec::new(),
                 seq: 0,
-                sessions: HashSet::new(),
+                sessions: HashMap::new(),
                 calls: Vec::new(),
                 next_session: 1,
                 lose_events: false,
@@ -491,6 +518,7 @@ impl State {
                 task_steps: 4,
                 task_step: Duration::from_millis(100),
                 next_task: 1,
+                failures: HashMap::new(),
             }),
             changed: Notify::new(),
             certificate: Mutex::new(MockCertificate::Original),
@@ -516,7 +544,8 @@ struct Db {
     objects: BTreeMap<(String, String), Value>,
     events: Vec<StoredEvent>,
     seq: u64,
-    sessions: HashSet<String>,
+    /// Session → its role (`None`: a local superuser).
+    sessions: HashMap<String, Option<&'static str>>,
     calls: Vec<String>,
     next_session: u64,
     lose_events: bool,
@@ -526,6 +555,8 @@ struct Db {
     task_steps: u32,
     task_step: Duration,
     next_task: u64,
+    /// Calls made to fail ([`MockServer::fail_method`]).
+    failures: HashMap<String, (String, Vec<String>)>,
 }
 
 impl Db {
@@ -564,7 +595,10 @@ impl Db {
             .map(str::to_owned)
     }
 
-    fn set_power_state(&mut self, vm: &str, power_state: &str) {
+    /// Puts a VM in `power_state`, on `host` if given (a running VM stays
+    /// where it is; one that starts goes to its home server or the first
+    /// host).
+    fn move_vm(&mut self, vm: &str, power_state: &str, host: Option<String>) {
         let old_host = self
             .get_str("vm", vm, "resident_on")
             .unwrap_or_else(|| NULL_REF.into());
@@ -572,7 +606,11 @@ impl Db {
             let affinity = self
                 .get_str("vm", vm, "affinity")
                 .unwrap_or_else(|| NULL_REF.into());
-            if affinity != NULL_REF
+            if let Some(host) = host {
+                host
+            } else if old_host != NULL_REF {
+                old_host.clone()
+            } else if affinity != NULL_REF
                 && self
                     .objects
                     .contains_key(&("host".into(), affinity.clone()))
@@ -588,11 +626,7 @@ impl Db {
         } else {
             NULL_REF.to_owned()
         };
-        let allowed: &[&str] = match power_state {
-            "Running" => ALLOWED_RUNNING,
-            "Halted" => ALLOWED_HALTED,
-            _ => &["hard_shutdown"],
-        };
+        let allowed = ops::allowed_for(power_state);
         self.modify("vm", vm, |rec| {
             rec.insert("power_state".into(), json!(power_state));
             rec.insert("resident_on".into(), json!(new_host));
@@ -614,40 +648,6 @@ impl Db {
                     }
                 });
             }
-        }
-    }
-
-    /// Validates `VM.start` / `VM.clean_shutdown` on `vm`; returns the
-    /// power state it leads to.
-    fn check_power_op(
-        &self,
-        method: &str,
-        vm: &str,
-    ) -> Result<&'static str, (String, Vec<String>)> {
-        let (required, op, target) = if method == "VM.start" {
-            ("Halted", "start", "Running")
-        } else {
-            ("Running", "clean_shutdown", "Halted")
-        };
-        let Some(rec) = self.objects.get(&("vm".into(), vm.to_owned())) else {
-            return api_error("HANDLE_INVALID", &["VM", vm]).map(|_| target);
-        };
-        let current = rec
-            .get("power_state")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let flag = |name: &str| rec.get(name).and_then(Value::as_bool).unwrap_or(false);
-        if flag("is_a_template") || flag("is_control_domain") {
-            api_error("OPERATION_NOT_ALLOWED", &[op]).map(|_| target)
-        } else if current != required {
-            api_error(
-                "VM_BAD_POWER_STATE",
-                &[vm, &required.to_lowercase(), &current.to_lowercase()],
-            )
-            .map(|_| target)
-        } else {
-            Ok(target)
         }
     }
 
@@ -782,19 +782,19 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     state.db().calls.push(method.to_owned());
     match method {
         "session.login_with_password" => {
-            if str_param(params, 0) != USERNAME || str_param(params, 1) != PASSWORD {
+            let Some(role) = ops::login(str_param(params, 0), str_param(params, 1)) else {
                 return api_error(
                     "SESSION_AUTHENTICATION_FAILED",
                     &[str_param(params, 0), "Authentication failure"],
                 );
-            }
+            };
             let mut db = state.db();
             if let Some(coordinator) = db.coordinator.clone() {
                 return api_error("HOST_IS_SLAVE", &[&coordinator]);
             }
             let session = format!("OpaqueRef:mock-session-{}", db.next_session);
             db.next_session += 1;
-            db.sessions.insert(session.clone());
+            db.sessions.insert(session.clone(), role);
             return Ok(json!(session));
         }
         "event.from" => return event_from(state, params).await,
@@ -808,9 +808,26 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     if db.unknown_classes.contains(&class) {
         return api_error("MESSAGE_METHOD_UNKNOWN", &[method]);
     }
-    if !db.sessions.contains(&session) {
+    let Some(role) = db.sessions.get(&session).copied() else {
         return api_error("SESSION_INVALID", &[&session]);
+    };
+    if let Some(permission) = ops::required_permission(method)
+        && !ops::may(role, permission)
+    {
+        return api_error(
+            "RBAC_PERMISSION_DENIED",
+            &[permission, "No permission in user session"],
+        );
     }
+    let sync = method.trim_start_matches("Async.");
+    let failure = db.failures.get(sync).cloned();
+    if let Some((code, params)) = failure.clone()
+        && !method.starts_with("Async.")
+    {
+        let params: Vec<&str> = params.iter().map(String::as_str).collect();
+        return api_error(&code, &params);
+    }
+    let (sync_class, sync_call) = sync.split_once('.').unwrap_or((sync, ""));
     let reply = match method {
         "session.logout" => {
             db.sessions.remove(&session);
@@ -829,23 +846,56 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 None => api_error("HANDLE_INVALID", &[&class, r]),
             }
         }
-        "VM.start" | "VM.clean_shutdown" => {
-            let vm = str_param(params, 1).to_owned();
-            db.check_power_op(method, &vm).map(|target| {
-                db.set_power_state(&vm, target);
+        "session.get_is_local_superuser" => Ok(json!(role.is_none())),
+        "session.get_rbac_permissions" => Ok(json!(ops::permissions_of(role))),
+        "VM.assert_can_boot_here" => db.assert_can_boot_here(params),
+        "host.get_vms_which_prevent_evacuation" => {
+            let host = str_param(params, 1);
+            if db
+                .objects
+                .contains_key(&("host".to_owned(), host.to_owned()))
+            {
+                Ok(Value::Object(db.evacuation_blockers(host)))
+            } else {
+                api_error("HANDLE_INVALID", &["host", host])
+            }
+        }
+        _ if sync_call == "add_to_other_config" || sync_call == "remove_from_other_config" => {
+            db.other_config(&sync_class.to_lowercase(), sync_call, params)
+        }
+        _ if (sync_class == "VM" || sync_class == "host")
+            && ops::required_permission(method).is_some()
+            && !matches!(
+                sync_call,
+                "assert_can_boot_here" | "get_vms_which_prevent_evacuation"
+            ) =>
+        {
+            let checked = if sync_class == "VM" {
+                db.check_vm_op(sync_call, params)
+            } else {
+                db.check_host_op(sync_call, params)
+            };
+            if method.starts_with("Async.") {
+                let work = match (failure, checked) {
+                    (Some(error), _) | (None, Err(error)) => ops::Work::Fail(error),
+                    (None, Ok(work)) => work,
+                };
+                drop(db);
+                let task = spawn_task(state, method, work);
+                if sync_class == "VM" {
+                    state
+                        .db()
+                        .begin_vm_op(str_param(params, 1), sync_call, &task);
+                }
+                state.changed.notify_waiters();
+                return Ok(json!(task));
+            }
+            checked.map(|work| {
+                if db.apply(&work) {
+                    db.sessions.clear();
+                }
                 json!("")
             })
-        }
-        "Async.VM.start" | "Async.VM.clean_shutdown" => {
-            let vm = str_param(params, 1).to_owned();
-            let sync = method.trim_start_matches("Async.");
-            let work = match db.check_power_op(sync, &vm) {
-                Ok(target) => TaskWork::PowerState { vm, target },
-                Err(error) => TaskWork::Fail(error),
-            };
-            drop(db);
-            let task = spawn_task(state, method, work);
-            return Ok(json!(task));
         }
         "host.get_servertime" => {
             let host = str_param(params, 1);
@@ -891,16 +941,9 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     reply
 }
 
-/// What a task does when its progress reaches the end.
-enum TaskWork {
-    Nothing,
-    PowerState { vm: String, target: &'static str },
-    Fail((String, Vec<String>)),
-}
-
 /// Creates a pending `task` object named `name` and advances it in the
 /// background; returns its reference.
-fn spawn_task(state: &Arc<State>, name: &str, work: TaskWork) -> String {
+fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
     let (task, steps, step) = {
         let mut db = state.db();
         let task = format!("OpaqueRef:mock-task-{}", db.next_task);
@@ -934,7 +977,13 @@ fn spawn_task(state: &Arc<State>, name: &str, work: TaskWork) -> String {
             tokio::time::sleep(step).await;
             let mut db = state.db();
             if db.get_str("task", &task_ref, "status").as_deref() != Some("pending") {
-                return; // cancelled or destroyed
+                // Cancelled or destroyed: the VM is free again.
+                if let ops::Work::Vm { vm, .. } = &work {
+                    db.settle_vm(vm);
+                }
+                drop(db);
+                state.changed.notify_waiters();
+                return;
             }
             if i < steps {
                 let progress = f64::from(i) / f64::from(steps);
@@ -943,15 +992,26 @@ fn spawn_task(state: &Arc<State>, name: &str, work: TaskWork) -> String {
                 });
             } else {
                 match &work {
-                    TaskWork::Nothing => db.finish_task(&task_ref, "success", "", &[]),
-                    TaskWork::PowerState { vm, target } => {
-                        db.set_power_state(vm, target);
-                        db.finish_task(&task_ref, "success", "", &[]);
-                    }
-                    TaskWork::Fail((code, params)) => {
+                    ops::Work::Fail((code, params)) => {
                         let mut info = vec![code.as_str()];
                         info.extend(params.iter().map(String::as_str));
                         db.finish_task(&task_ref, "failure", "", &info);
+                        // A VM whose operation failed is free again.
+                        if let Some(vm) = db
+                            .get_str("task", &task_ref, "name_label")
+                            .filter(|n| n.starts_with("Async.VM."))
+                            .and_then(|_| vm_of_task(&db, &task_ref))
+                        {
+                            db.settle_vm(&vm);
+                        }
+                    }
+                    work => {
+                        let restart = db.apply(work);
+                        db.finish_task(&task_ref, "success", "", &[]);
+                        if restart {
+                            // The toolstack restarted: every session is gone.
+                            db.sessions.clear();
+                        }
                     }
                 }
             }
@@ -960,6 +1020,20 @@ fn spawn_task(state: &Arc<State>, name: &str, work: TaskWork) -> String {
         }
     });
     task
+}
+
+/// The VM whose `current_operations` names `task`.
+fn vm_of_task(db: &Db, task: &str) -> Option<String> {
+    db.objects
+        .iter()
+        .find(|((c, _), rec)| {
+            c == "vm"
+                && rec
+                    .get("current_operations")
+                    .and_then(Value::as_object)
+                    .is_some_and(|m| m.contains_key(task))
+        })
+        .map(|((_, r), _)| r.clone())
 }
 
 async fn event_from(state: &State, params: &[Value]) -> Reply {
@@ -982,7 +1056,7 @@ async fn event_from(state: &State, params: &[Value]) -> Reply {
 
     let since: u64 = if token.is_empty() {
         let db = state.db();
-        if !db.sessions.contains(&session) {
+        if !db.sessions.contains_key(&session) {
             return api_error("SESSION_INVALID", &[&session]);
         }
         let events: Vec<Value> = db
@@ -1004,7 +1078,7 @@ async fn event_from(state: &State, params: &[Value]) -> Reply {
         let notified = state.changed.notified();
         {
             let mut db = state.db();
-            if !db.sessions.contains(&session) {
+            if !db.sessions.contains_key(&session) {
                 return api_error("SESSION_INVALID", &[&session]);
             }
             if std::mem::take(&mut db.lose_events) {

@@ -500,7 +500,10 @@ async fn vm_operations_run_as_tasks_with_progress_and_cancel() {
         op.kind,
         OperationKind::VmAction {
             vm_name: "db-01".into(),
-            action: VmAction::Start
+            action: VmAction::Start,
+            location: "xcp-host-02".into(),
+            from: None,
+            target: None,
         }
     );
     assert!(server.calls().iter().any(|c| c == "Async.VM.start"));

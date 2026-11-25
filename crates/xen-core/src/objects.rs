@@ -8,8 +8,8 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use xapi::{
-    Host, HostAllowedOperations, HostRecord, Network, NetworkRecord, Pif, PifRecord, Ref, Sr,
-    SrRecord, VbdType, VdiRecord, Vm, VmOperations, VmPowerState, VmRecord,
+    Host, HostAllowedOperations, HostRecord, Network, NetworkRecord, Pif, PifRecord, PoolRecord,
+    Ref, Sr, SrRecord, VbdType, VdiRecord, Vm, VmOperations, VmPowerState, VmRecord,
 };
 
 use crate::model::ConnectionModel;
@@ -79,6 +79,19 @@ pub fn host_maintenance_flag(host: &HostRecord) -> bool {
         .get("MAINTENANCE_MODE")
         .map(String::as_str)
         == Some("true")
+}
+
+/// `Helpers.GetName(pool)`: the pool's name, or its coordinator's when the
+/// pool has none (a standalone host).
+pub fn pool_name(model: &ConnectionModel, pool: &PoolRecord) -> String {
+    if pool.name_label.is_empty() {
+        model
+            .coordinator()
+            .map(|h| h.name_label.clone())
+            .unwrap_or_default()
+    } else {
+        pool.name_label.clone()
+    }
 }
 
 /// Whether `host` is the pool coordinator.

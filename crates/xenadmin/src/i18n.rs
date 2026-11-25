@@ -8,9 +8,14 @@
 use std::time::Duration;
 
 use xapi::error::codes;
+use xen_core::rbac;
 use xen_core::{
-    ConnectionError, ConnectionStatus, OperationFailure, OperationKind, OperationStatus, VmAction,
+    ConnectionError, ConnectionModel, ConnectionStatus, ConnectionView, HostAction,
+    OperationFailure, OperationKind, OperationStatus, OperationStep, VmAction,
 };
+
+use crate::friendly_errors::FRIENDLY_ERRORS;
+use crate::ops_strings::ops_strings;
 
 /// One language's UI strings.
 pub struct Strings {
@@ -125,8 +130,6 @@ pub struct Strings {
     pub op_connect: &'static str,
     /// `{server}`
     pub op_reconnect: &'static str,
-    /// `{action}`, `{vm}`
-    pub op_vm_action: &'static str,
     /// `{task}`
     pub op_cancel_task: &'static str,
     pub op_not_connected: &'static str,
@@ -152,9 +155,6 @@ pub struct Strings {
     pub options_mode_memory: &'static str,
     pub close: &'static str,
 
-    /// `{action}`, `{vm}`, `{error}`
-    pub vm_action_failed: &'static str,
-
     pub err_cert_rejected: &'static str,
     pub err_password_required: &'static str,
     /// `{error}`
@@ -171,9 +171,7 @@ pub struct Strings {
     pub err_auth_failed: &'static str,
     /// `{coordinator}`
     pub err_host_is_member: &'static str,
-    pub err_permission_denied: &'static str,
     pub err_host_booting: &'static str,
-    pub err_bad_power_state: &'static str,
     pub err_session_invalid: &'static str,
     /// `{error}`
     pub err_network: &'static str,
@@ -286,7 +284,6 @@ pub static EN: Strings = Strings {
     op_failed: "Failed",
     op_connect: "Connect to {server}",
     op_reconnect: "Reconnect to {server}",
-    op_vm_action: "{action} VM '{vm}'",
     op_cancel_task: "Cancel task '{task}'",
     op_not_connected: "the server is not connected",
     op_disconnected: "disconnected while running",
@@ -309,8 +306,6 @@ pub static EN: Strings = Strings {
     options_mode_memory: "Settings are kept in memory only (no configuration folder).",
     close: "Close",
 
-    vm_action_failed: "{action} of {vm} failed: {error}",
-
     err_cert_rejected: "Connection cancelled: certificate not trusted.",
     err_password_required: "No saved password for this server. Enter the password to connect.",
     err_password_unavailable: "Could not read the saved password from the system keyring: {error}",
@@ -321,9 +316,7 @@ pub static EN: Strings = Strings {
     err_lost: "Connection lost: {error}",
     err_auth_failed: "Authentication failed. Check the user name and password.",
     err_host_is_member: "This host is a pool member. Connect to the pool coordinator ({coordinator}) instead.",
-    err_permission_denied: "You do not have permission to perform this operation.",
     err_host_booting: "The host is still booting. Try again shortly.",
-    err_bad_power_state: "The VM is not in the right power state for this operation.",
     err_session_invalid: "The session has expired or was closed on the server.",
     err_network: "network error ({error})",
 };
@@ -344,6 +337,119 @@ pub fn fill(template: &str, args: &[(&str, &str)]) -> String {
 
 /// Human-readable description of a XAPI error.
 pub fn describe_xapi_error(error: &xapi::Error) -> String {
+    describe_xapi_error_in(None, error)
+}
+
+/// The original console's description of error `code` (its
+/// `FriendlyErrorNames`), with `{0}`, `{1}`… replaced by `params`.
+pub fn friendly_error(code: &str, params: &[String]) -> Option<String> {
+    let i = FRIENDLY_ERRORS
+        .binary_search_by(|(k, _)| k.as_bytes().cmp(code.as_bytes()))
+        .ok()?;
+    let mut text = FRIENDLY_ERRORS[i].1.to_owned();
+    for n in 0..10 {
+        let placeholder = format!("{{{n}}}");
+        if text.contains(&placeholder) {
+            let value = params.get(n).map(String::as_str).unwrap_or_default();
+            text = text.replace(&placeholder, value);
+        }
+    }
+    Some(text.trim().to_owned())
+}
+
+/// The short form of a friendly error (menus), else its full form.
+pub fn short_error(error: &xapi::Error) -> String {
+    match error {
+        xapi::Error::Api { code, params } => friendly_error(&format!("{code}-SHORT"), params)
+            .or_else(|| friendly_error(code, params))
+            .unwrap_or_else(|| error.to_string()),
+        other => describe_xapi_error(other),
+    }
+}
+
+/// The name of the cached object `opaque_ref` refers to, if any.
+fn name_of_ref(model: &ConnectionModel, opaque_ref: &str) -> Option<String> {
+    if !opaque_ref.starts_with("OpaqueRef:") {
+        return None;
+    }
+    let name = |label: Option<&String>| label.cloned();
+    name(
+        model
+            .vms
+            .get(&xapi::Ref::new(opaque_ref))
+            .map(|v| &v.name_label),
+    )
+    .or_else(|| {
+        name(
+            model
+                .hosts
+                .get(&xapi::Ref::new(opaque_ref))
+                .map(|h| &h.name_label),
+        )
+    })
+    .or_else(|| {
+        name(
+            model
+                .srs
+                .get(&xapi::Ref::new(opaque_ref))
+                .map(|x| &x.name_label),
+        )
+    })
+    .or_else(|| {
+        name(
+            model
+                .networks
+                .get(&xapi::Ref::new(opaque_ref))
+                .map(|x| &x.name_label),
+        )
+    })
+    .or_else(|| {
+        name(
+            model
+                .vdis
+                .get(&xapi::Ref::new(opaque_ref))
+                .map(|x| &x.name_label),
+        )
+    })
+    .or_else(|| {
+        model
+            .pools
+            .get(&xapi::Ref::new(opaque_ref))
+            .map(|p| xen_core::objects::pool_name(model, p))
+    })
+}
+
+/// Friendly name of an RBAC role (`Role.FriendlyName`).
+pub fn role_name(name: &str) -> String {
+    match name.to_lowercase().as_str() {
+        "pool-admin" => "Pool Admin".to_owned(),
+        "pool-operator" => "Pool Operator".to_owned(),
+        "vm-power-admin" => "VM Power Admin".to_owned(),
+        "vm-admin" => "VM Admin".to_owned(),
+        "vm-operator" => "VM Operator".to_owned(),
+        "read-only" => "Read Only".to_owned(),
+        _ => name.to_owned(),
+    }
+}
+
+/// The roles of a connection's session, as the role elevation dialog and
+/// the permission errors word them.
+pub fn session_roles_text(conn: &ConnectionView) -> String {
+    match conn.rbac.as_deref() {
+        Some(r) if r.is_local_superuser => ops_strings().superuser_role.to_owned(),
+        Some(r) => rbac::session_roles(&conn.model, r)
+            .iter()
+            .map(|r| role_name(&r.name_label))
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => String::new(),
+    }
+}
+
+/// Human-readable description of a XAPI error raised on connection
+/// `conn`: object references become names, and a permission error says
+/// which roles could do it (`Failure.ParseRBACFailure`).
+pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error) -> String {
     let s = strings();
     match error {
         xapi::Error::Api { code, params } => match code.as_str() {
@@ -355,11 +461,43 @@ pub fn describe_xapi_error(error: &xapi::Error) -> String {
                     params.first().map(String::as_str).unwrap_or("?"),
                 )],
             ),
-            codes::RBAC_PERMISSION_DENIED => s.err_permission_denied.to_owned(),
             codes::HOST_STILL_BOOTING => s.err_host_booting.to_owned(),
-            codes::VM_BAD_POWER_STATE => s.err_bad_power_state.to_owned(),
             codes::SESSION_INVALID => s.err_session_invalid.to_owned(),
-            _ => error.to_string(),
+            codes::RBAC_PERMISSION_DENIED if conn.is_some_and(|c| c.rbac.is_some()) => {
+                let conn = conn.expect("checked");
+                let method = params
+                    .first()
+                    .map(|m| rbac::normalize(m))
+                    .unwrap_or_default();
+                let authorized = rbac::authorized_roles(&conn.model, &[method])
+                    .iter()
+                    .map(|r| role_name(&r.name_label))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                fill(
+                    ops_strings().rbac_denied,
+                    &[
+                        ("roles", &session_roles_text(conn)),
+                        ("authorized", &authorized),
+                    ],
+                )
+            }
+            _ => {
+                let params: Vec<String> = params
+                    .iter()
+                    .map(|p| {
+                        conn.and_then(|c| name_of_ref(&c.model, p))
+                            .unwrap_or_else(|| p.clone())
+                    })
+                    .collect();
+                friendly_error(code, &params).unwrap_or_else(|| {
+                    xapi::Error::Api {
+                        code: code.clone(),
+                        params,
+                    }
+                    .to_string()
+                })
+            }
         },
         xapi::Error::Transport(e) => {
             let mut detail = e.to_string();
@@ -411,11 +549,79 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
     match kind {
         OperationKind::Connect => fill(s.op_connect, &[("server", server)]),
         OperationKind::Reconnect => fill(s.op_reconnect, &[("server", server)]),
-        OperationKind::VmAction { vm_name, action } => fill(
-            s.op_vm_action,
-            &[("action", action_label(*action)), ("vm", vm_name)],
-        ),
+        OperationKind::VmAction {
+            vm_name,
+            action,
+            location,
+            from,
+            target,
+        } => {
+            let o = ops_strings();
+            let target = target.as_deref().unwrap_or_default();
+            let vm = ("vm", vm_name.as_str());
+            match action {
+                VmAction::Start => fill(o.op_starting, &[vm]),
+                VmAction::StartOn(_) => fill(o.op_starting_on, &[vm, ("host", target)]),
+                VmAction::CleanShutdown | VmAction::HardShutdown => {
+                    fill(o.op_shutting_down_on, &[vm, ("host", location)])
+                }
+                VmAction::CleanReboot | VmAction::HardReboot => {
+                    fill(o.op_rebooting_on, &[vm, ("host", location)])
+                }
+                VmAction::Suspend => fill(o.op_suspending, &[vm]),
+                VmAction::Resume => fill(o.op_resuming, &[vm]),
+                VmAction::ResumeOn(_) => fill(o.op_resuming_on, &[vm, ("host", target)]),
+                VmAction::Pause => fill(o.op_pausing, &[vm]),
+                VmAction::Unpause => fill(o.op_unpausing, &[vm]),
+                VmAction::Migrate(_) => match from {
+                    Some(from) => fill(
+                        o.op_migrating_from,
+                        &[vm, ("from", from.as_str()), ("to", target)],
+                    ),
+                    None => fill(o.op_migrating, &[vm, ("to", target)]),
+                },
+            }
+        }
+        OperationKind::HostAction { host_name, action } => {
+            let o = ops_strings();
+            let template = match action {
+                HostAction::Reboot => o.op_host_rebooting,
+                HostAction::Shutdown => o.op_host_shutting_down,
+                HostAction::PowerOn => o.op_host_power_on,
+                HostAction::EnterMaintenance => o.op_host_evacuating,
+                HostAction::ExitMaintenance => o.op_host_exiting_maintenance,
+                HostAction::RestartToolstack => o.op_toolstack_restart,
+            };
+            fill(template, &[("host", host_name)])
+        }
         OperationKind::CancelTask { task_name } => fill(s.op_cancel_task, &[("task", task_name)]),
+    }
+}
+
+/// What a running operation is doing now.
+pub fn operation_step(step: &OperationStep) -> String {
+    let o = ops_strings();
+    match step {
+        OperationStep::ShuttingDownVm {
+            vm_name,
+            index,
+            count,
+            for_reboot,
+        } => fill(
+            if *for_reboot {
+                o.step_reboot_vm_shutdown
+            } else {
+                o.step_shutdown_vm_shutdown
+            },
+            &[
+                ("vm", vm_name),
+                ("index", &index.to_string()),
+                ("count", &count.to_string()),
+            ],
+        ),
+        OperationStep::Disabling => o.step_disabling.to_owned(),
+        OperationStep::Evacuating => o.step_evacuating.to_owned(),
+        OperationStep::Reenabling => o.step_reenabling.to_owned(),
     }
 }
 
@@ -430,11 +636,15 @@ pub fn operation_status_label(status: &OperationStatus) -> &'static str {
     }
 }
 
-/// Why an operation failed.
-pub fn describe_operation_failure(failure: &OperationFailure) -> String {
+/// Why an operation failed (`conn`: the connection it ran on, if still
+/// there, for object names and roles).
+pub fn describe_operation_failure(
+    conn: Option<&ConnectionView>,
+    failure: &OperationFailure,
+) -> String {
     let s = strings();
     match failure {
-        OperationFailure::Xapi(e) => describe_xapi_error(e),
+        OperationFailure::Xapi(e) => describe_xapi_error_in(conn, e),
         OperationFailure::Connection(e) => describe_connection_error(e),
         OperationFailure::NotConnected => s.op_not_connected.to_owned(),
         OperationFailure::Disconnected => s.op_disconnected.to_owned(),
@@ -465,11 +675,35 @@ pub fn short_duration(d: Duration) -> String {
     }
 }
 
-/// Label of a VM action.
-pub fn action_label(action: VmAction) -> &'static str {
+/// Label of a VM action (its menu item).
+pub fn action_label(action: &VmAction) -> &'static str {
+    let o = ops_strings();
     match action {
         VmAction::Start => strings().action_start,
         VmAction::CleanShutdown => strings().action_clean_shutdown,
+        VmAction::CleanReboot => o.reboot,
+        VmAction::Suspend => o.suspend,
+        VmAction::Resume => o.resume,
+        VmAction::Pause => o.pause,
+        VmAction::Unpause => o.unpause,
+        VmAction::HardShutdown => o.force_shut_down,
+        VmAction::HardReboot => o.force_reboot,
+        VmAction::StartOn(_) => o.start_on_server,
+        VmAction::ResumeOn(_) => o.resume_on_server,
+        VmAction::Migrate(_) => o.migrate_to_server,
+    }
+}
+
+/// Label of a host action (its menu item).
+pub fn host_action_label(action: HostAction) -> &'static str {
+    let o = ops_strings();
+    match action {
+        HostAction::Reboot => o.reboot,
+        HostAction::Shutdown => o.shut_down,
+        HostAction::PowerOn => o.power_on,
+        HostAction::EnterMaintenance => o.enter_maintenance,
+        HostAction::ExitMaintenance => o.exit_maintenance,
+        HostAction::RestartToolstack => o.restart_toolstack,
     }
 }
 
@@ -497,6 +731,24 @@ mod tests {
             params: vec!["p".into()],
         };
         assert_eq!(describe_xapi_error(&e), "SOMETHING_NEW (p)");
+        // The original's wording, parameters filled in.
+        let e = xapi::Error::Api {
+            code: codes::VM_BAD_POWER_STATE.into(),
+            params: vec!["OpaqueRef:vm".into(), "running".into(), "halted".into()],
+        };
+        assert_eq!(
+            describe_xapi_error(&e),
+            "You attempted an operation on a VM that needed it to be in state 'running' but was in state 'halted'."
+        );
+        let e = xapi::Error::Api {
+            code: "HOST_DISABLED".into(),
+            params: vec!["OpaqueRef:h".into()],
+        };
+        assert_eq!(short_error(&e), "Disabled");
+        // Every entry is reachable by binary search.
+        for (code, _) in FRIENDLY_ERRORS {
+            assert!(friendly_error(code, &[]).is_some(), "{code}");
+        }
     }
 
     #[test]
@@ -507,8 +759,22 @@ mod tests {
         let kind = OperationKind::VmAction {
             vm_name: "web".into(),
             action: VmAction::Start,
+            location: "h1".into(),
+            from: None,
+            target: None,
         };
-        assert_eq!(operation_title(&kind, "h"), "Start VM 'web'");
+        assert_eq!(operation_title(&kind, "h"), "Starting VM 'web'");
+        let kind = OperationKind::VmAction {
+            vm_name: "web".into(),
+            action: VmAction::Migrate(xapi::Ref::new("OpaqueRef:h2")),
+            location: "h1".into(),
+            from: Some("h1".into()),
+            target: Some("h2".into()),
+        };
+        assert_eq!(
+            operation_title(&kind, "h"),
+            "Migrating VM 'web' from 'h1' to 'h2'"
+        );
         assert!(
             describe_connection_error(&ConnectionError::AlreadyConnected {
                 existing: "10.0.0.1".into()

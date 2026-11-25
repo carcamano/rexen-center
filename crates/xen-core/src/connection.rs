@@ -133,6 +133,7 @@ pub(crate) async fn run(
             shared.update_connection(spec.id, |v| {
                 v.status = ConnectionStatus::Failed { error };
                 v.busy_vms = Arc::default();
+                v.busy_hosts = Arc::default();
             });
             return;
         }
@@ -156,6 +157,7 @@ pub(crate) async fn run(
                 retry_at: Some(retry_at),
             };
             v.busy_vms = Arc::default();
+            v.busy_hosts = Arc::default();
         });
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
@@ -228,12 +230,22 @@ async fn establish(
 
     remember(shared, spec, &read_from, &password).await;
 
+    // What this user may do, for the checks made before each operation.
+    let rights = match crate::rbac::fetch(&session).await {
+        Ok(r) => Some(Arc::new(r)),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the session's permissions");
+            None
+        }
+    };
+
     let label = spec.label();
     tracing::info!(server = %label, objects = model.object_count(), "connected");
     let snapshot = Arc::new(model.clone());
     shared.update_connection(spec.id, |v| {
         v.status = ConnectionStatus::Connected { api_version };
         v.model = snapshot;
+        v.rbac = rights;
     });
     Ok(Live {
         session,
