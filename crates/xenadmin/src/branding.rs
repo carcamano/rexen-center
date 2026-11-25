@@ -4,6 +4,10 @@
 /// Product name shown in the window title, About box and login originator.
 pub const PRODUCT_NAME: &str = "xenadmin-rs";
 
+/// The server platform the console manages (the original's
+/// `BrandManager.ProductBrand`).
+pub const PLATFORM_NAME: &str = "XCP-ng";
+
 /// Product version (from Cargo).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

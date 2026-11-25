@@ -8,10 +8,10 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F9 (networking) on top of F1–F8 (base, connection and
-model, detail tabs, VM and host operations, VNC console, performance
-graphs and alerts, VM creation, templates, snapshots and disks, storage
-repositories).** What works:
+**Status: phase F10a (pools, pool and server properties) on top of F1–F9
+(base, connection and model, detail tabs, VM and host operations, VNC
+console, performance graphs and alerts, VM creation, templates, snapshots
+and disks, storage repositories, networking).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -206,6 +206,35 @@ repositories).** What works:
   settings), **Remove Interface** (confirmed) and **Activate** /
   **Deactivate**; a new interface of a running VM is hot-plugged when the
   server allows it, else the user is told to restart the VM;
+- **pools** (the original's Pool menu and the server menu's pool
+  entries): **New Pool** (name, description, coordinator, and every
+  connected server listed with the reason it can or cannot join, as
+  `PoolJoinRules`), **Add Server** / **Add to Pool** (the servers that
+  cannot join are listed with why; the move is confirmed; the licensing,
+  CPU and Active Directory questions; **Add New Server** connects first),
+  **Remove Server** / **Remove From Pool** (confirmed; the removed server
+  is connected to again once it answers), **Make into standalone server**,
+  and in **Enter Maintenance Mode** on a pool's coordinator the choice of
+  the **new coordinator** (`pool.designate_new_master`; the connection
+  follows it). A joined server leaves the console's own connections. When
+  no member could join, New Pool is undone (the original leaves the named
+  pool behind);
+- the **pool and server Properties** dialogs with the pages the original
+  shows for the object and server version: General (name, description,
+  tags, a server's iSCSI IQN), Alerts, Email Notifications, Multipathing
+  (maintenance mode only; PBDs replugged), Log Destination (remote
+  syslog), Power On (disabled, Wake-on-LAN, DRAC, custom script; passwords
+  in secrets), Auto-start on server boot, Live Patching (before XCP-ng
+  8.3), Network (IGMP snooping), Clustering, Advanced (migration
+  compression) and NRPE (read with the `nrpe` plugin), each with the
+  original's checks; OK saves only what changed;
+- the server menu's **Control Domain Memory** (maintenance mode; the
+  server reboots), **Password → Change Server Password** (the current
+  password checked; later logins use the new one), **Certificate →
+  Install / Reset**, **Back Up** and **Restore From Backup** (files streamed
+  through `GET /host_backup` and `PUT /host_restore`; paths are typed, there
+  is no native file dialog), and the Pool menu's **Rotate Pool Secret** and
+  **Enable Certificate Verification**;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -420,6 +449,19 @@ end to end:
   wizard for every type with its checks, the network Properties and
   Remove Network, the NICs tab (Create Bond, Delete Bond, Rescan), the
   Configure IP Addresses dialog, and role elevation;
+- pools against two mock servers in one process (`MockServer::start_lab`
+  with `xapi_mock::lab_records`, standalone XCP-ng 8.3 servers that can
+  join each other's pool, `xapi_mock::pool`): New Pool, Remove Server and
+  the server connected again, Add Server, the coordinator handing over the
+  pool; failed joins (refused by the joining server, by the coordinator,
+  shared storage) that change nothing, a failed New Pool undone; the join
+  rules; every Properties page saved (and failures: a power-on secret
+  destroyed again, PBDs replugged after a multipath failure); Control
+  Domain Memory, Change Server Password, Rotate Pool Secret, certificate
+  verification, Install / Reset Certificate, Back Up / Restore; RBAC; in
+  the window: the Pool menu, the New Pool dialog, Remove and Add Server,
+  the new coordinator choice, every Properties page with its checks, and
+  the server dialogs;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -503,6 +545,16 @@ of its first interface, changes its QoS limit and removes it, and checks
 the VM ends with exactly the interfaces it had. `f9_real_run_on_the_mock`
 rehearses the same run on the capture.
 
+Pools and server settings on a real host, strictly read only
+(`app/tests/pool_real.rs`, same variables plus `XENADMIN_REAL_LOG`):
+`real_f10a_properties_read_only` opens the pool and server Properties
+dialogs (every page; NRPE, the cluster network and power-on passwords are
+read as the dialogs do), compares their values with the cache and
+cancels; opens and cancels New Pool, Change Server Password, Control
+Domain Memory, Install Certificate, Back Up and Restore. No operation
+runs. `f10a_real_run_on_the_mock` rehearses it on the capture and checks
+every call made is a read.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -536,9 +588,9 @@ same directory explains how to rebuild it with opam.
 
 | Crate | Role |
 |---|---|
-| `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
+| `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

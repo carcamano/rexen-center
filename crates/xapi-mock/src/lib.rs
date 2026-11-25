@@ -55,11 +55,13 @@
 
 pub mod networking;
 pub mod ops;
+pub mod pool;
 pub mod provisioning;
 pub mod rrd;
 pub mod storage;
 
 pub use ops::RBAC_USERS;
+pub use pool::lab_records;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
@@ -190,6 +192,8 @@ impl MockServer {
         let state = Arc::new(State::new(records));
         let scheme = if tls { "https" } else { "http" };
         state.db().point_consoles_at(&format!("{scheme}://{addr}"));
+        state.db().pool.authority = addr.to_string();
+        pool::register(&addr.to_string(), &state);
         let running = serve(listener, tls, state.clone());
         Self {
             addr,
@@ -197,6 +201,71 @@ impl MockServer {
             state,
             running: Mutex::new(Some(running)),
         }
+    }
+
+    /// Starts a standalone lab server ([`lab_records`]`(tag, index)`) whose
+    /// host's `address` is this mock's own, so other lab servers can join
+    /// its pool.
+    pub async fn start_lab(tls: bool, tag: &str, index: u8) -> Self {
+        let server = Self::start_with_records(tls, lab_records(tag, index)).await;
+        let authority = server.addr.to_string();
+        {
+            let mut db = server.state.db();
+            let hosts: Vec<String> = db
+                .objects
+                .keys()
+                .filter(|(c, _)| c == "host")
+                .map(|(_, r)| r.clone())
+                .collect();
+            for h in hosts {
+                if let Some(Value::Object(rec)) = db.objects.get_mut(&("host".to_owned(), h)) {
+                    rec.insert("address".into(), json!(authority));
+                }
+            }
+            let local: Vec<String> = db
+                .objects
+                .iter()
+                .filter(|((c, _), rec)| c == "sr" && rec.get("shared") != Some(&json!(true)))
+                .filter_map(|(_, rec)| rec.get("uuid").and_then(Value::as_str).map(str::to_owned))
+                .collect();
+            for uuid in local {
+                db.storage.register_local_sr(&uuid);
+            }
+            db.events.clear();
+        }
+        server
+    }
+
+    /// The root password the server accepts now (after
+    /// `session.change_password`).
+    pub fn root_password(&self) -> String {
+        self.state.db().pool.root_password().to_owned()
+    }
+
+    /// Whether this server is a pool member now (logins answer
+    /// `HOST_IS_SLAVE`).
+    pub fn is_pool_member(&self) -> bool {
+        self.state.db().coordinator.is_some()
+    }
+
+    /// Whether NRPE is enabled on `host` (the `nrpe` plugin's state).
+    pub fn nrpe_enabled(&self, host: &str) -> bool {
+        self.state
+            .db()
+            .pool
+            .nrpe
+            .get(host)
+            .is_some_and(|n| format!("{n:?}").contains("enabled: true"))
+    }
+
+    /// How many times `pool.rotate_secret` ran.
+    pub fn secret_rotations(&self) -> u32 {
+        self.state.db().pool.secret_rotations
+    }
+
+    /// The hosts a `PUT /host_restore` restored, in order.
+    pub fn restored(&self) -> Vec<String> {
+        self.state.db().pool.restored.clone()
     }
 
     /// Stops listening and drops every client connection (requests in flight,
@@ -679,6 +748,7 @@ impl State {
             next_object: 1,
             storage: storage::World::default(),
             networking: networking::World::default(),
+            pool: pool::World::default(),
         };
         db.init_sr_ops();
         db.init_vif_ops();
@@ -786,6 +856,8 @@ struct Db {
     storage: storage::World,
     /// Networking knobs.
     networking: networking::World,
+    /// Pool membership and server settings.
+    pool: pool::World,
 }
 
 impl Db {
@@ -1042,6 +1114,12 @@ async fn handle(
     {
         return Ok(rrd_get(&state, &req));
     }
+    if req.method() == Method::GET && req.uri().path() == "/host_backup" {
+        return Ok(host_backup(&state, &req));
+    }
+    if req.method() == Method::PUT && req.uri().path() == "/host_restore" {
+        return Ok(host_restore(&state, req).await);
+    }
     if req.method() != Method::POST || req.uri().path() != "/jsonrpc" {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -1145,6 +1223,83 @@ fn console_connect(state: &Arc<State>, mut req: Request<Incoming>) -> Response<F
     Response::new(Full::new(Bytes::new()))
 }
 
+/// The task and session of a transfer (`?session_id=…&task_id=…`), checked.
+fn transfer_task(db: &Db, query: &str) -> Result<String, Box<Response<Full<Bytes>>>> {
+    let q = rrd::Query::parse(query);
+    if !q
+        .get("session_id")
+        .is_some_and(|s| db.sessions.contains_key(s))
+    {
+        return Err(Box::new(plain(StatusCode::UNAUTHORIZED, "session invalid")));
+    }
+    match q.get("task_id") {
+        Some(t) if db.objects.contains_key(&("task".to_owned(), t.to_owned())) => Ok(t.to_owned()),
+        _ => Err(Box::new(plain(StatusCode::BAD_REQUEST, "task missing"))),
+    }
+}
+
+/// `GET /host_backup`: the backup of the host the task names.
+fn host_backup(state: &Arc<State>, req: &Request<Incoming>) -> Response<Full<Bytes>> {
+    let mut db = state.db();
+    db.calls.push("http/host_backup".to_owned());
+    let task = match transfer_task(&db, req.uri().query().unwrap_or_default()) {
+        Ok(t) => t,
+        Err(r) => return *r,
+    };
+    let body = db.host_of_transfer(&task).and_then(|h| db.backup_body(&h));
+    match body {
+        Some(body) => {
+            db.finish_task(&task, "success", "", &[]);
+            drop(db);
+            state.changed.notify_waiters();
+            Response::builder()
+                .header("content-type", "application/octet-stream")
+                .body(Full::new(Bytes::from(body)))
+                .expect("response")
+        }
+        None => {
+            db.finish_task(&task, "failure", "", &["HANDLE_INVALID", "host"]);
+            plain(StatusCode::NOT_FOUND, "no such host")
+        }
+    }
+}
+
+/// `PUT /host_restore`: accepts a backup of the host the task names.
+async fn host_restore(state: &Arc<State>, req: Request<Incoming>) -> Response<Full<Bytes>> {
+    let query = req.uri().query().unwrap_or_default().to_owned();
+    let task = {
+        let mut db = state.db();
+        db.calls.push("http/host_restore".to_owned());
+        match transfer_task(&db, &query) {
+            Ok(t) => t,
+            Err(r) => return *r,
+        }
+    };
+    let body = req
+        .into_body()
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let mut db = state.db();
+    let host = db.host_of_transfer(&task);
+    let uuid = host.as_ref().and_then(|h| db.get_str("host", h, "uuid"));
+    let text = String::from_utf8_lossy(&body);
+    let matches = uuid.as_ref().is_some_and(|u| {
+        text.starts_with("XCP-NG-MOCK-HOST-BACKUP ")
+            && text.split_whitespace().nth(1) == Some(u.as_str())
+    });
+    if matches && let Some(h) = host {
+        db.pool.restored.push(h);
+        db.finish_task(&task, "success", "", &[]);
+    } else {
+        db.finish_task(&task, "failure", "", &["RESTORE_TARGET_MISMATCH"]);
+    }
+    drop(db);
+    state.changed.notify_waiters();
+    Response::new(Full::new(Bytes::new()))
+}
+
 /// `GET /rrd_updates`, `/host_rrds`, `/vm_rrds` with `session_id=`.
 fn rrd_get(state: &Arc<State>, req: &Request<Incoming>) -> Response<Full<Bytes>> {
     let path = req.uri().path().to_owned();
@@ -1181,7 +1336,14 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     state.db().calls.push(method.to_owned());
     match method {
         "session.login_with_password" => {
-            let Some(role) = ops::login(str_param(params, 0), str_param(params, 1)) else {
+            let (user, password) = (str_param(params, 0), str_param(params, 1));
+            let root = state.db().pool.root_password().to_owned();
+            let role = if user == USERNAME {
+                (password == root).then_some(None)
+            } else {
+                ops::login(user, password)
+            };
+            let Some(role) = role else {
                 return api_error(
                     "SESSION_AUTHENTICATION_FAILED",
                     &[str_param(params, 0), "Authentication failure"],
@@ -1201,6 +1363,10 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     }
 
     let session = str_param(params, 0).to_owned();
+    // `pool.join`: the coordinator's checks, before this server changes
+    // anything (and without holding two databases at once).
+    let join =
+        (method.trim_start_matches("Async.") == "pool.join").then(|| pool::check_join(params));
     let mut db = state.db();
     let (class, call) = method.split_once('.').unwrap_or((method, ""));
     let class = class.to_lowercase();
@@ -1219,7 +1385,12 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
         );
     }
     let sync = method.trim_start_matches("Async.");
-    let failure = db.failures.get(sync).cloned();
+    let mut failure = db.failures.get(sync).cloned();
+    match join {
+        Some(Err(e)) if failure.is_none() => failure = Some(e),
+        Some(Ok(target)) => db.pool.join_target = Some(target),
+        _ => {}
+    }
     if let Some((code, params)) = failure.clone()
         && !method.starts_with("Async.")
     {
@@ -1361,6 +1532,11 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 .push((plugin.to_owned(), function.to_owned()));
             match (plugin, function) {
                 ("perfmon", "refresh" | "start" | "stop") => Ok(json!("")),
+                ("nrpe", f) => {
+                    let host = str_param(params, 1).to_owned();
+                    let args = params.get(4).cloned().unwrap_or(json!({}));
+                    db.nrpe_call(&host, f, &args)
+                }
                 ("trim", "do_trim") => db.trim(params),
                 _ => api_error("XENAPI_MISSING_PLUGIN", &[plugin]),
             }
@@ -1405,6 +1581,7 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
             .unwrap_or_else(|| api_error("MESSAGE_METHOD_UNKNOWN", &[method])),
     };
     drop(db);
+    pool::run_after(state);
     state.changed.notify_waiters();
     reply
 }
@@ -1522,6 +1699,7 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
                 }
             }
             drop(db);
+            pool::run_after(&state);
             state.changed.notify_waiters();
         }
     });

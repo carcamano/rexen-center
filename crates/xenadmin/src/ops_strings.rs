@@ -87,8 +87,6 @@ pub struct OpsStrings {
     /// `{error}`
     pub evacuate_check_failed: &'static str,
     /// `{product}`
-    pub evacuate_coordinator: &'static str,
-
     // Role elevation dialog.
     pub elevation_blurb: &'static str,
     pub elevation_action: &'static str,
@@ -228,7 +226,6 @@ pub static OPS_EN: OpsStrings = OpsStrings {
     evacuate_button: "Enter Maintenance Mode",
     evacuate_check_again: "Check Again",
     evacuate_check_failed: "Could not check the VMs: {error}",
-    evacuate_coordinator: "This server is the pool coordinator. {product} will temporarily lose its connection to the pool while its VMs are migrated.",
 
     elevation_blurb: "Your current role is not authorized to perform this action.",
     elevation_action: "Current action:",

@@ -26,6 +26,7 @@ pub mod endpoint;
 pub mod error;
 pub mod event_batch;
 pub mod generated;
+pub mod http;
 pub mod params;
 pub mod refs;
 pub mod session_handle;

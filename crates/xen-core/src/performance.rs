@@ -221,10 +221,21 @@ pub fn host_endpoint(
     let coordinator = model.pool().map(|(_, p)| &p.master) == Some(host);
     match model.get(host) {
         Some(h) if !coordinator && !h.address.is_empty() && h.address != connected.host => {
-            xapi::Endpoint {
-                tls: connected.tls,
-                host: h.address.clone(),
-                port: connected.port,
+            // An address with its own port (`host:port`, behind a port
+            // forward or in the test mock) keeps it.
+            match h.address.split_once(':') {
+                Some((host, port)) if !port.contains(':') && port.parse::<u16>().is_ok() => {
+                    xapi::Endpoint {
+                        tls: connected.tls,
+                        host: host.to_owned(),
+                        port: port.parse().unwrap_or(connected.port),
+                    }
+                }
+                _ => xapi::Endpoint {
+                    tls: connected.tls,
+                    host: h.address.clone(),
+                    port: connected.port,
+                },
             }
         }
         _ => connected.clone(),

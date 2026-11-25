@@ -29,6 +29,8 @@ use crate::ops_ui::{self, Entry, OpsUi};
 use crate::perf_strings::perf_strings;
 use crate::perf_view::{PerfAction, PerfKey, Performance};
 use crate::perfmon_ui::{self, PerfmonDialog};
+use crate::pool_strings::pool_strings;
+use crate::pool_ui::{self, PoolUi};
 use crate::prov_strings::prov_strings;
 use crate::provision_ui::{self, DialogRequest, ProvisionUi};
 use crate::sr_strings::sr_strings;
@@ -131,6 +133,9 @@ pub struct XenAdminApp {
     /// Networking: the New Network wizard, the networking dialogs and the
     /// selections of the Networking and NICs tabs.
     network: NetUi,
+    /// Pools and server settings: New Pool, Add Server, the Properties
+    /// dialog and the server dialogs.
+    pool: PoolUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -172,6 +177,7 @@ impl XenAdminApp {
             provision: ProvisionUi::default(),
             storage: StorageUi::default(),
             network: NetUi::default(),
+            pool: PoolUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -196,9 +202,17 @@ impl XenAdminApp {
                         ],
                     ));
                 }
-                // The New SR wizard's probes.
+                // The New SR wizard's probes, the pool dialogs' questions.
                 Notification::Precheck { id, result, .. } => {
-                    self.storage.on_precheck(&state, id, result);
+                    if !self.pool.on_precheck(id, &result) {
+                        self.storage.on_precheck(&state, id, result);
+                    }
+                }
+                Notification::ReconnectFailed { server } => {
+                    self.errors.push(fill(
+                        pool_strings().reconnect_failed,
+                        &[("server", &server)],
+                    ));
                 }
                 // Taken by `OpsUi`.
                 Notification::ActionFailed { .. } | Notification::Elevation { .. } => {}
@@ -515,6 +529,17 @@ impl XenAdminApp {
                         .push(Action::Send(Command::SetPreferences(prefs)));
                 }
             });
+            ui.menu_button(pool_strings().menu_pool, |ui| {
+                let conn = self
+                    .selected_connection(state)
+                    .or_else(|| state.connections.first().map(|c| &**c));
+                let Some(conn) = conn else {
+                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                    return;
+                };
+                let entries = pool_ui::pool_entries(state, conn);
+                self.ops.menu(ui, conn, None, entries, false, &self.backend);
+            });
             ui.menu_button(s.menu_vm, |ui| {
                 let Some(conn) = self.selected_connection(state) else {
                     ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
@@ -539,7 +564,8 @@ impl XenAdminApp {
             ui.menu_button(ops_strings().menu_server, |ui| {
                 match self.selected_host(state) {
                     Some((conn, r, host)) => {
-                        let entries = ops_ui::host_entries(conn, &r, host);
+                        let mut entries = ops_ui::host_entries(conn, &r, host);
+                        entries.extend(pool_ui::host_entries(state, conn, &r, host));
                         self.ops.menu(ui, conn, None, entries, false, &self.backend);
                     }
                     None => {
@@ -721,10 +747,12 @@ impl XenAdminApp {
             }
             response.context_menu(|ui| {
                 if conn.status.is_connected() {
-                    let entries = vec![
+                    let mut entries = vec![
                         provision_ui::new_vm_entry(conn, None),
                         storage_ui::new_sr_entry(conn),
+                        Entry::Separator,
                     ];
+                    entries.extend(pool_ui::pool_entries(state, conn));
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                     ui.separator();
                 }
@@ -1021,6 +1049,12 @@ impl XenAdminApp {
                     Entry::Separator,
                 ];
                 entries.extend(ops_ui::host_entries(conn, host, record));
+                entries.extend(pool_ui::host_entries(
+                    &self.backend.state(),
+                    conn,
+                    host,
+                    record,
+                ));
                 self.ops.menu(ui, conn, None, entries, true, &self.backend);
             });
         }
@@ -1711,7 +1745,9 @@ impl eframe::App for XenAdminApp {
         self.ops.windows(&ctx, &state, &self.backend);
         for (c, request) in std::mem::take(&mut self.ops.dialog_requests) {
             if let Some(conn) = state.connection(c) {
-                if request.is_storage() {
+                if request.is_pool() {
+                    self.pool.open(&state, conn, request, &self.backend);
+                } else if request.is_storage() {
                     self.storage.open(conn, request);
                 } else {
                     self.provision.open(conn, request);
@@ -1727,6 +1763,12 @@ impl eframe::App for XenAdminApp {
         self.network
             .windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.network.errors);
+        self.pool
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.pool.errors);
+        if std::mem::take(&mut self.pool.open_connect) {
+            self.open_connect_dialog(&state, None);
+        }
         if let Some((c, vm)) = self.provision.take_created(&state) {
             self.selection = Some(Selection::Vm(c, vm));
         }
@@ -1902,6 +1944,11 @@ mod tests {
     // read only plus one VM's interfaces (`app/tests/network_real.rs`).
     mod network;
     mod network_real;
+    // F10a: pools, the pool and server Properties and the server dialogs
+    // (`app/tests/pool.rs`), and the real host's pool and server settings
+    // read only (`app/tests/pool_real.rs`).
+    mod pool;
+    mod pool_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -3042,6 +3089,35 @@ mod tests {
                 && c.model.vms[&Ref::new("OpaqueRef:vm-web")].resident_on == h2
         });
         assert!(server.calls().iter().any(|c| c == "Async.host.evacuate"));
+        // As the original, the coordinator hands the pool to the server
+        // chosen in the dialog (the only other one).
+        step_until(&mut harness, "host 2 coordinator", |h| {
+            first_conn(h)
+                .unwrap()
+                .model
+                .pool()
+                .is_some_and(|(_, p)| p.master == h2)
+        });
+        assert!(
+            server
+                .calls()
+                .iter()
+                .any(|c| c == "Async.pool.designate_new_master")
+        );
+        // The rest of this test drives host 1 as the coordinator again.
+        server.set_field(
+            "pool",
+            "OpaqueRef:pool-0001",
+            "master",
+            serde_json::json!(h1.as_str()),
+        );
+        step_until(&mut harness, "host 1 coordinator again", |h| {
+            first_conn(h)
+                .unwrap()
+                .model
+                .pool()
+                .is_some_and(|(_, p)| p.master == h1)
+        });
         right_click(&mut harness, "xcp-host-01");
         click_last(&mut harness, o.exit_maintenance);
         step_until(&mut harness, "host 1 enabled", |h| {

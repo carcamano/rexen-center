@@ -150,7 +150,19 @@ pub(crate) async fn run(
         | ActionRequest::DeleteVif { .. }
         | ActionRequest::UpdateVif { .. }
         | ActionRequest::PlugVif { .. }
-        | ActionRequest::UnplugVif { .. } => {
+        | ActionRequest::UnplugVif { .. }
+        | ActionRequest::DestroyPool { .. }
+        | ActionRequest::EjectHost { .. }
+        | ActionRequest::EvacuateCoordinator { .. }
+        | ActionRequest::SetProperties { .. }
+        | ActionRequest::SetDom0Memory { .. }
+        | ActionRequest::ChangePassword { .. }
+        | ActionRequest::RotatePoolSecret
+        | ActionRequest::EnableTlsVerification
+        | ActionRequest::InstallCertificate { .. }
+        | ActionRequest::ResetCertificate { .. }
+        | ActionRequest::BackupHost { .. }
+        | ActionRequest::RestoreHost { .. } => {
             unreachable!("run by crate::operations")
         }
     }

@@ -50,6 +50,20 @@ pub enum Entry {
         enabled: bool,
         menu: HostMenu,
     },
+    /// An item with a computed label (a server or pool name) that opens a
+    /// dialog; `hint` explains why it is disabled.
+    Named {
+        label: String,
+        enabled: bool,
+        hint: Option<String>,
+        dialog: crate::provision_ui::DialogRequest,
+    },
+    /// A submenu of other entries.
+    Submenu {
+        label: String,
+        enabled: bool,
+        entries: Vec<Entry>,
+    },
     Separator,
 }
 
@@ -320,6 +334,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
+        request if request.is_pool() => crate::pool_ui::confirmation(conn, request),
         request => crate::net_ui::confirmation(conn, request),
     }
 }
@@ -361,6 +376,8 @@ struct MaintenanceDialog {
     host: Ref<Host>,
     host_name: String,
     coordinator: bool,
+    /// The server chosen as new coordinator (a coordinator of several).
+    new_coordinator: Option<Ref<Host>>,
     vms: Vec<EvacuatedVm>,
     /// Precheck id while asking.
     pending: Option<u64>,
@@ -541,6 +558,9 @@ impl OpsUi {
             host: host.clone(),
             host_name: record.name_label.clone(),
             coordinator: coordinator && model.hosts.len() > 1,
+            new_coordinator: xen_core::pool::new_coordinator_candidates(model, host)
+                .first()
+                .map(|(r, _)| (*r).clone()),
             vms,
             pending: None,
             result: None,
@@ -709,6 +729,47 @@ impl OpsUi {
     ) -> bool {
         let mut chosen = None;
         let mut dialog = None;
+        let drawn = self.draw_entries(
+            ui,
+            conn,
+            vm,
+            entries,
+            only_enabled,
+            backend,
+            &mut chosen,
+            &mut dialog,
+        );
+        if drawn == 0 {
+            ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+        }
+        if let Some(dialog) = dialog {
+            self.dialog_requests.push((conn.id, dialog));
+            ui.close();
+            return true;
+        }
+        match chosen {
+            Some(request) => {
+                self.request(conn, request, backend);
+                ui.close();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Draws `entries`; returns how many were drawn.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_entries(
+        &mut self,
+        ui: &mut Ui,
+        conn: &ConnectionView,
+        vm: Option<(&Ref<Vm>, &VmRecord)>,
+        entries: Vec<Entry>,
+        only_enabled: bool,
+        backend: &BackendHandle,
+        chosen: &mut Option<ActionRequest>,
+        dialog: &mut Option<crate::provision_ui::DialogRequest>,
+    ) -> usize {
         let mut pending_separator = false;
         let mut drawn = 0;
         for entry in entries {
@@ -727,7 +788,28 @@ impl OpsUi {
                     }
                     drawn += 1;
                     if ui.add_enabled(enabled, Button::new(label)).clicked() {
-                        dialog = Some(request);
+                        *dialog = Some(request);
+                    }
+                }
+                Entry::Named {
+                    label,
+                    enabled,
+                    hint,
+                    dialog: request,
+                } => {
+                    if only_enabled && !enabled {
+                        continue;
+                    }
+                    if std::mem::take(&mut pending_separator) {
+                        ui.separator();
+                    }
+                    drawn += 1;
+                    let mut response = ui.add_enabled(enabled, Button::new(label));
+                    if let Some(hint) = hint {
+                        response = response.on_disabled_hover_text(hint);
+                    }
+                    if response.clicked() {
+                        *dialog = Some(request);
                     }
                 }
                 Entry::Item {
@@ -743,8 +825,32 @@ impl OpsUi {
                     }
                     drawn += 1;
                     if ui.add_enabled(enabled, Button::new(label)).clicked() {
-                        chosen = Some(request);
+                        *chosen = Some(request);
                     }
+                }
+                Entry::Submenu {
+                    label,
+                    enabled,
+                    entries,
+                } => {
+                    if only_enabled && !enabled {
+                        continue;
+                    }
+                    if std::mem::take(&mut pending_separator) {
+                        ui.separator();
+                    }
+                    drawn += 1;
+                    if !enabled {
+                        ui.add_enabled(false, Button::new(label));
+                        continue;
+                    }
+                    ui.menu_button(label, |ui| {
+                        let n = self
+                            .draw_entries(ui, conn, vm, entries, false, backend, chosen, dialog);
+                        if n == 0 {
+                            ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                        }
+                    });
                 }
                 Entry::Servers {
                     label,
@@ -767,28 +873,13 @@ impl OpsUi {
                         if let Some(request) =
                             self.servers_menu(ui, conn, vm_ref, vm, menu, backend)
                         {
-                            chosen = Some(request);
+                            *chosen = Some(request);
                         }
                     });
                 }
             }
         }
-        if drawn == 0 {
-            ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
-        }
-        if let Some(dialog) = dialog {
-            self.dialog_requests.push((conn.id, dialog));
-            ui.close();
-            return true;
-        }
-        match chosen {
-            Some(request) => {
-                self.request(conn, request, backend);
-                ui.close();
-                true
-            }
-            None => false,
-        }
+        drawn
     }
 
     /// The servers of a Start on / Resume on / Migrate to submenu: the home
@@ -1080,14 +1171,53 @@ impl OpsUi {
                 ui.set_max_width(480.0);
                 ui.label(o.evacuate_blurb);
                 if dialog.coordinator {
+                    let p = crate::pool_strings::pool_strings();
                     ui.add_space(4.0);
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
                         fill(
-                            o.evacuate_coordinator,
-                            &[("product", branding::PRODUCT_NAME)],
+                            p.new_coordinator_blurb,
+                            &[("console", branding::PRODUCT_NAME)],
                         ),
                     );
+                    let candidates =
+                        xen_core::pool::new_coordinator_candidates(&conn.model, &dialog.host);
+                    let problem = xen_core::pool::new_coordinator_problem(&conn.model);
+                    ui.horizontal(|ui| {
+                        ui.label(p.new_coordinator_label);
+                        let shown = dialog
+                            .new_coordinator
+                            .as_ref()
+                            .and_then(|r| conn.model.hosts.get(r))
+                            .map(|h| h.name_label.clone())
+                            .unwrap_or_default();
+                        ui.add_enabled_ui(problem.is_none(), |ui| {
+                            egui::ComboBox::from_id_salt("new-coordinator")
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    for (r, h) in &candidates {
+                                        ui.selectable_value(
+                                            &mut dialog.new_coordinator,
+                                            Some((*r).clone()),
+                                            &h.name_label,
+                                        );
+                                    }
+                                });
+                        });
+                    });
+                    if let Some(problem) = problem {
+                        use xen_core::pool::NewCoordinatorProblem as P;
+                        let text = match problem {
+                            P::SecretRotationPending => p.new_coordinator_psr,
+                            P::HaEnabling => p.new_coordinator_ha_enabling,
+                            P::HaDisabling => p.new_coordinator_ha_disabling,
+                            P::ClusterCreating => p.new_coordinator_cluster,
+                            P::NotAllowed => "",
+                        };
+                        if !text.is_empty() {
+                            ui.colored_label(ui.visuals().warn_fg_color, text);
+                        }
+                    }
                 }
                 ui.add_space(6.0);
                 ui.strong(o.evacuate_vms);
@@ -1134,7 +1264,10 @@ impl OpsUi {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let ready = matches!(&dialog.result, Some(Ok(b)) if b.is_empty())
-                        && conn.status.is_connected();
+                        && conn.status.is_connected()
+                        && (!dialog.coordinator
+                            || (dialog.new_coordinator.is_some()
+                                && xen_core::pool::new_coordinator_problem(&conn.model).is_none()));
                     if ui
                         .add_enabled(ready, Button::new(o.evacuate_button))
                         .clicked()
@@ -1159,9 +1292,15 @@ impl OpsUi {
             return;
         }
         if evacuate {
-            let request = ActionRequest::Host {
-                host: dialog.host.clone(),
-                action: HostAction::EnterMaintenance,
+            let request = match (&dialog.new_coordinator, dialog.coordinator) {
+                (Some(new_coordinator), true) => ActionRequest::EvacuateCoordinator {
+                    host: dialog.host.clone(),
+                    new_coordinator: new_coordinator.clone(),
+                },
+                _ => ActionRequest::Host {
+                    host: dialog.host.clone(),
+                    action: HostAction::EnterMaintenance,
+                },
             };
             self.dispatch(&conn, request, backend);
             return;
@@ -1217,7 +1356,7 @@ mod tests {
                 Entry::Item { label, enabled, .. }
                 | Entry::Servers { label, enabled, .. }
                 | Entry::Dialog { label, enabled, .. } => Some((*label, *enabled)),
-                Entry::Separator => None,
+                Entry::Named { .. } | Entry::Submenu { .. } | Entry::Separator => None,
             })
             .collect()
     }

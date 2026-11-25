@@ -455,6 +455,7 @@ pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error
     if let xapi::Error::Api { code, params } = error
         && let Some(text) = crate::sr_strings::storage_error(code, params)
             .or_else(|| crate::net_strings::network_error(code))
+            .or_else(|| crate::pool_strings::pool_error(code, params))
     {
         return text;
     }
@@ -619,6 +620,33 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         OperationKind::Provision(kind) => provision_title(kind),
         OperationKind::Storage(kind) => storage_title(kind),
         OperationKind::Network(kind) => network_title(kind),
+        OperationKind::Pool(kind) => pool_title(kind),
+    }
+}
+
+/// The title of a pool or server settings operation.
+fn pool_title(kind: &xen_core::operations::PoolKind) -> String {
+    use xen_core::operations::PoolKind;
+    let p = crate::pool_strings::pool_strings();
+    match kind {
+        PoolKind::CreatePool { name, coordinator } => fill(
+            p.op_create_pool,
+            &[("name", name), ("coordinator", coordinator)],
+        ),
+        PoolKind::AddHost { host, pool } => fill(p.op_add_host, &[("host", host), ("pool", pool)]),
+        PoolKind::EjectHost { host, pool } => {
+            fill(p.op_eject_host, &[("host", host), ("pool", pool)])
+        }
+        PoolKind::DestroyPool { pool } => fill(p.op_destroy_pool, &[("pool", pool)]),
+        PoolKind::Properties { name } => fill(p.op_properties, &[("name", name)]),
+        PoolKind::Dom0Memory { host } => fill(p.op_dom0_memory, &[("host", host)]),
+        PoolKind::ChangePassword { pool } => fill(p.op_change_password, &[("pool", pool)]),
+        PoolKind::RotateSecret => p.op_rotate_secret.to_owned(),
+        PoolKind::EnableTls { pool } => fill(p.op_enable_tls, &[("pool", pool)]),
+        PoolKind::InstallCertificate { host } => fill(p.op_install_certificate, &[("host", host)]),
+        PoolKind::ResetCertificate { host } => fill(p.op_reset_certificate, &[("host", host)]),
+        PoolKind::Backup { host } => fill(p.op_backup, &[("host", host)]),
+        PoolKind::Restore { host } => fill(p.op_restore, &[("host", host)]),
     }
 }
 
@@ -812,6 +840,25 @@ fn network_step(step: &OperationStep) -> String {
         OperationStep::ScanningNics => n.step_scanning.to_owned(),
         OperationStep::RefreshingNetworks => n.step_refreshing.to_owned(),
         OperationStep::UndoingNetwork => n.step_undo.to_owned(),
+        step => pool_step(step),
+    }
+}
+
+fn pool_step(step: &OperationStep) -> String {
+    let p = crate::pool_strings::pool_strings();
+    match step {
+        OperationStep::CreatingPool => p.step_creating_pool.to_owned(),
+        OperationStep::AddingMembers => p.step_adding_members.to_owned(),
+        OperationStep::Joining => p.step_joining.to_owned(),
+        OperationStep::Ejecting => p.step_ejecting.to_owned(),
+        OperationStep::UndoingPool => p.step_undoing_pool.to_owned(),
+        OperationStep::NewCoordinator { host } => fill(p.step_new_coordinator, &[("host", host)]),
+        OperationStep::SavingSettings => p.step_saving.to_owned(),
+        OperationStep::BackingUp { received } => fill(
+            p.step_backing_up,
+            &[("received", &xen_core::format::memory_size(*received, false))],
+        ),
+        OperationStep::WaitingForCertificate => p.step_certificate.to_owned(),
         _ => String::new(),
     }
 }

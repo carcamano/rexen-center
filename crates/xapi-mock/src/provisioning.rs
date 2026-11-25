@@ -72,7 +72,10 @@ const CALLS: &[(&str, &[&str])] = &[
 /// Whether `class.call` is handled here (setters and map calls included,
 /// for every class but the ones the mock handles elsewhere).
 pub(crate) fn handles(class: &str, call: &str) -> bool {
-    if crate::storage::handles(class, call) || crate::networking::handles(class, call) {
+    if crate::storage::handles(class, call)
+        || crate::networking::handles(class, call)
+        || crate::pool::handles(class, call)
+    {
         return true;
     }
     if CALLS
@@ -393,6 +396,9 @@ impl Db {
         if let Some(reply) = self.networking_call(class, call, params) {
             return Some(reply);
         }
+        if let Some(reply) = self.pool_call(class, call, params) {
+            return Some(reply);
+        }
         let lower = class.to_lowercase();
         Some(match (class, call) {
             ("VM", "clone") => self.vm_clone(params, None),
@@ -409,6 +415,38 @@ impl Db {
             ("VM", "get_allowed_VBD_devices") => self.allowed_devices(params, "VBDs", 16),
             ("VM", "get_allowed_VIF_devices") => self.allowed_devices(params, "VIFs", 7),
             ("VM", "set_memory_limits") => self.vm_memory_limits(params),
+            ("VM", "set_memory")
+                if self
+                    .record("vm", str_param(params, 1))
+                    .is_some_and(|r| r.get("is_control_domain") == Some(&json!(true))) =>
+            {
+                // A control domain's memory is set while it runs; it takes
+                // effect when the server reboots.
+                let vm = str_param(params, 1).to_owned();
+                let v = int_param(params, 2).unwrap_or(0);
+                let min = self
+                    .record("vm", &vm)
+                    .map_or(0, |r| int(r, "memory_static_min"));
+                if v < min {
+                    return Some(api_error(
+                        "MEMORY_CONSTRAINT_VIOLATION",
+                        &[
+                            "Memory limits must satisfy: static_min <= dynamic_min <= dynamic_max <= static_max",
+                        ],
+                    ));
+                }
+                self.modify("vm", &vm, |rec| {
+                    for f in [
+                        "memory_dynamic_min",
+                        "memory_dynamic_max",
+                        "memory_static_max",
+                        "memory_target",
+                    ] {
+                        rec.insert(f.into(), json!(v));
+                    }
+                });
+                Ok(json!(""))
+            }
             ("VM", "set_memory") => {
                 let v = params.get(2).cloned().unwrap_or(json!(0));
                 let vm = json!(str_param(params, 1));

@@ -54,6 +54,7 @@ const MAX_REDIRECTS: u32 = 3;
 const HEARTBEAT_FAILURES: u32 = 2;
 
 /// Where the password comes from.
+#[derive(Clone)]
 pub(crate) enum Secret {
     /// Typed by the user; kept in memory until it is saved in the keyring.
     Given(Password),
@@ -68,8 +69,29 @@ pub(crate) struct ConnectionSpec {
     /// The address as given (before any redirect).
     pub typed_address: String,
     pub username: String,
-    pub secret: Secret,
+    /// Shared with the backend, which reads it for the operations that
+    /// need the connection's password (pool join, password change) and
+    /// replaces it after a password change.
+    pub secret: SecretCell,
     pub remember_password: bool,
+}
+
+/// Where a connection's password comes from, shared between the
+/// connection task and the backend.
+pub(crate) type SecretCell = Arc<std::sync::Mutex<Secret>>;
+
+/// The current value of `cell`.
+pub(crate) fn secret_of(cell: &SecretCell) -> Secret {
+    cell.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Replaces the value of `cell`.
+pub(crate) fn set_secret(cell: &SecretCell, secret: Secret) {
+    *cell
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = secret;
 }
 
 impl ConnectionSpec {
@@ -191,8 +213,8 @@ async fn establish(
     slot: &SessionSlot,
 ) -> Result<Live, ConnectionError> {
     let read_from = spec.endpoint.clone();
-    let password = match &spec.secret {
-        Secret::Given(p) => p.clone(),
+    let password = match secret_of(&spec.secret) {
+        Secret::Given(p) => p,
         Secret::Saved => {
             let (username, endpoint) = (spec.username.clone(), spec.endpoint.clone());
             match keyring(shared, move |store| store.password(&username, &endpoint)).await {
@@ -284,7 +306,7 @@ async fn remember(
     shared.publish_settings(settings);
     spec.typed_address = address;
 
-    let given = matches!(spec.secret, Secret::Given(_));
+    let given = matches!(secret_of(&spec.secret), Secret::Given(_));
     let moved = *read_from != spec.endpoint;
     let (username, endpoint, old) = (
         spec.username.clone(),
@@ -304,10 +326,10 @@ async fn remember(
             })
             .await;
             match saved {
-                Ok(()) => spec.secret = Secret::Saved,
+                Ok(()) => set_secret(&spec.secret, Secret::Saved),
                 Err(e) => {
                     tracing::warn!(error = %e, "could not save the password in the keyring; keeping it in memory");
-                    spec.secret = Secret::Given(password.clone());
+                    set_secret(&spec.secret, Secret::Given(password.clone()));
                 }
             }
         }

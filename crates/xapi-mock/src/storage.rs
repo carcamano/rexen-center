@@ -183,6 +183,14 @@ impl World {
         self.locations.last_mut().expect("just pushed")
     }
 
+    /// Makes local storage SR `uuid` found on the lab's local disk.
+    pub(crate) fn register_local_sr(&mut self, uuid: &str) {
+        let loc = self.location("local:/dev/sdb", 500 * GIB);
+        if !loc.srs.iter().any(|s| s == uuid) {
+            loc.srs.push(uuid.to_owned());
+        }
+    }
+
     fn find(&self, key: &str) -> Option<&Location> {
         self.locations.iter().find(|l| l.key == key)
     }

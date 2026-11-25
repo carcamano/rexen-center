@@ -63,9 +63,55 @@ pub enum DialogRequest {
     RepairSr(Ref<Sr>),
     /// The SR Properties dialog.
     SrProperties(Ref<Sr>),
+    /// New Pool, with these connections' servers chosen (the first as
+    /// coordinator, the others as members).
+    NewPool {
+        servers: Vec<xen_core::ConnectionId>,
+    },
+    /// Add Server / Add to Pool: the servers of `hosts` join the pool of
+    /// `pool` (`confirm`: ask first).
+    AddToPool {
+        pool: xen_core::ConnectionId,
+        hosts: Vec<xen_core::ConnectionId>,
+        confirm: bool,
+    },
+    /// Add New Server: connect to a server, then add it to `pool`.
+    AddNewServer {
+        pool: xen_core::ConnectionId,
+    },
+    /// Make into standalone server (checked first).
+    MakeStandalone,
+    /// An operation with a computed menu label (through the operations'
+    /// questions).
+    Run(xen_core::ActionRequest),
+    /// The pool or server Properties dialog.
+    Properties(xen_core::properties::PropertiesTarget),
+    ChangePassword,
+    Dom0Memory(Ref<xapi::Host>),
+    InstallCertificate(Ref<xapi::Host>),
+    Backup(Ref<xapi::Host>),
+    Restore(Ref<xapi::Host>),
 }
 
 impl DialogRequest {
+    /// A pool or server settings dialog ([`crate::pool_ui`]).
+    pub fn is_pool(&self) -> bool {
+        matches!(
+            self,
+            Self::NewPool { .. }
+                | Self::AddToPool { .. }
+                | Self::AddNewServer { .. }
+                | Self::MakeStandalone
+                | Self::Run(_)
+                | Self::Properties(_)
+                | Self::ChangePassword
+                | Self::Dom0Memory(_)
+                | Self::InstallCertificate(_)
+                | Self::Backup(_)
+                | Self::Restore(_)
+        )
+    }
+
     /// A storage dialog ([`crate::storage_ui`]).
     pub fn is_storage(&self) -> bool {
         matches!(
@@ -543,7 +589,18 @@ impl ProvisionUi {
             }
             DialogRequest::NewSr { .. }
             | DialogRequest::RepairSr(_)
-            | DialogRequest::SrProperties(_) => {
+            | DialogRequest::SrProperties(_)
+            | DialogRequest::NewPool { .. }
+            | DialogRequest::AddToPool { .. }
+            | DialogRequest::AddNewServer { .. }
+            | DialogRequest::MakeStandalone
+            | DialogRequest::Run(_)
+            | DialogRequest::Properties(_)
+            | DialogRequest::ChangePassword
+            | DialogRequest::Dom0Memory(_)
+            | DialogRequest::InstallCertificate(_)
+            | DialogRequest::Backup(_)
+            | DialogRequest::Restore(_) => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(

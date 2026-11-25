@@ -84,6 +84,40 @@ pub enum OperationKind {
     Storage(StorageKind),
     /// A networking operation.
     Network(NetworkKind),
+    /// A pool, server settings or server maintenance operation (F10a).
+    Pool(PoolKind),
+}
+
+/// The pool and server operations of F10a, with the names their titles
+/// show (the original's action titles).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PoolKind {
+    /// "Creating new pool '{name}' with coordinator '{coordinator}'".
+    CreatePool { name: String, coordinator: String },
+    /// "Adding server '{host}' to pool '{pool}'".
+    AddHost { host: String, pool: String },
+    /// "Removing server '{host}' from pool '{pool}'".
+    EjectHost { host: String, pool: String },
+    /// "Making pool '{pool}' into standalone server".
+    DestroyPool { pool: String },
+    /// "Saving properties of {name}".
+    Properties { name: String },
+    /// "Changing control domain memory settings on '{host}'".
+    Dom0Memory { host: String },
+    /// "Changing administrator password on {pool}".
+    ChangePassword { pool: String },
+    /// "Rotating pool secret".
+    RotateSecret,
+    /// "Enabling certificate verification on {pool}...".
+    EnableTls { pool: String },
+    /// "Installing certificate on server {host}...".
+    InstallCertificate { host: String },
+    /// "Resetting certificate on server {host}...".
+    ResetCertificate { host: String },
+    /// "Backing up server '{host}'".
+    Backup { host: String },
+    /// "Restoring server '{host}'".
+    Restore { host: String },
 }
 
 /// The networking operations, with the names their titles show (the
@@ -279,6 +313,26 @@ pub enum OperationStep {
     RefreshingNetworks,
     /// New network or bond: undoing what was made after a failure.
     UndoingNetwork,
+    /// New Pool: "Creating pool".
+    CreatingPool,
+    /// New Pool: "Adding members...".
+    AddingMembers,
+    /// Add Server: "Adding to Pool".
+    Joining,
+    /// Remove Server: "Removing from pool".
+    Ejecting,
+    /// New Pool: nobody could join; the pool of one is a standalone server
+    /// again.
+    UndoingPool,
+    /// "Nominating server {host} as new coordinator...".
+    NewCoordinator { host: String },
+    /// Properties: "Saving settings...".
+    SavingSettings,
+    /// "Backing up server '{host}' ({received} received)...".
+    BackingUp { received: i64 },
+    /// Install Certificate: waiting for the server to present the new
+    /// certificate.
+    WaitingForCertificate,
 }
 
 /// How an operation ended (or that it has not).
@@ -409,7 +463,51 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
             OperationKind::Storage(storage_kind(model, request))
         }
         request if request.is_network() => OperationKind::Network(network_kind(model, request)),
+        ActionRequest::EvacuateCoordinator { host, .. } => OperationKind::HostAction {
+            host_name: host_name(host),
+            action: HostAction::EnterMaintenance,
+        },
+        request if request.is_pool() => OperationKind::Pool(pool_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an F10a request.
+fn pool_kind(model: &ConnectionModel, request: &ActionRequest) -> PoolKind {
+    let pool = model
+        .pool()
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    let host = |h: &Ref<Host>| {
+        model
+            .hosts
+            .get(h)
+            .map(|r| r.name_label.clone())
+            .unwrap_or_default()
+    };
+    match request {
+        ActionRequest::DestroyPool { .. } => PoolKind::DestroyPool { pool },
+        ActionRequest::EjectHost { host: h } => PoolKind::EjectHost {
+            host: host(h),
+            pool,
+        },
+        ActionRequest::SetProperties { target, .. } => PoolKind::Properties {
+            name: match target {
+                crate::properties::PropertiesTarget::Pool(_) => pool,
+                crate::properties::PropertiesTarget::Host(h) => host(h),
+            },
+        },
+        ActionRequest::SetDom0Memory { host: h, .. } => PoolKind::Dom0Memory { host: host(h) },
+        ActionRequest::ChangePassword { .. } => PoolKind::ChangePassword { pool },
+        ActionRequest::RotatePoolSecret => PoolKind::RotateSecret,
+        ActionRequest::EnableTlsVerification => PoolKind::EnableTls { pool },
+        ActionRequest::InstallCertificate { host: h, .. } => {
+            PoolKind::InstallCertificate { host: host(h) }
+        }
+        ActionRequest::ResetCertificate { host: h } => PoolKind::ResetCertificate { host: host(h) },
+        ActionRequest::BackupHost { host: h, .. } => PoolKind::Backup { host: host(h) },
+        ActionRequest::RestoreHost { host: h, .. } => PoolKind::Restore { host: host(h) },
+        _ => unreachable!("not a pool request"),
     }
 }
 
@@ -636,7 +734,25 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
     };
     let vm = match request {
         ActionRequest::Vm { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
-        ActionRequest::Host { host, .. } => return Some(OperationObject::Host(host.clone())),
+        ActionRequest::Host { host, .. }
+        | ActionRequest::EjectHost { host }
+        | ActionRequest::EvacuateCoordinator { host, .. }
+        | ActionRequest::SetDom0Memory { host, .. }
+        | ActionRequest::InstallCertificate { host, .. }
+        | ActionRequest::ResetCertificate { host }
+        | ActionRequest::BackupHost { host, .. }
+        | ActionRequest::RestoreHost { host, .. } => {
+            return Some(OperationObject::Host(host.clone()));
+        }
+        ActionRequest::SetProperties {
+            target: crate::properties::PropertiesTarget::Host(host),
+            ..
+        } => return Some(OperationObject::Host(host.clone())),
+        ActionRequest::DestroyPool { .. }
+        | ActionRequest::SetProperties { .. }
+        | ActionRequest::ChangePassword { .. }
+        | ActionRequest::RotatePoolSecret
+        | ActionRequest::EnableTlsVerification => None,
         ActionRequest::Sr { sr, .. } | ActionRequest::SetSrProperties { sr, .. } => {
             return Some(OperationObject::Sr(sr.clone()));
         }
@@ -750,6 +866,9 @@ pub(crate) fn start_action(
             request if request.is_network() => {
                 crate::network_run::run(&shared, connection, op, &session, request).await
             }
+            request if request.is_pool() => {
+                crate::pool_run::run(&shared, connection, op, &session, request).await
+            }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
         if let Some(object) = &object {
@@ -845,7 +964,7 @@ async fn dismiss_alerts(
 /// itself, the VM's home, the SR's hosts); without that refresh perfmon
 /// picks the change up within half an hour. A failed refresh is logged
 /// only, as in the original.
-async fn set_perfmon(
+pub(crate) async fn set_perfmon(
     shared: &Shared,
     connection: ConnectionId,
     session: &Session,
@@ -985,48 +1104,71 @@ async fn run_host_action(
             let start = xapi::host::async_restart_agent(s, host);
             run_task(shared, op, session, start, Span::FULL, coordinator).await
         }
-        HostAction::EnterMaintenance => {
-            shared.update_operation(op, |o| o.step = Some(OperationStep::Disabling));
-            let disabled = run_task(
-                shared,
-                op,
-                session,
-                xapi::host::async_disable(s, host),
-                Span(0.0, 0.2),
-                false,
-            )
-            .await;
-            if !matches!(disabled, TaskOutcome::Succeeded) {
-                return disabled;
-            }
-            let flagged = async {
-                let _ = xapi::host::remove_from_other_config(s, host, MAINTENANCE_MODE).await;
-                xapi::host::add_to_other_config(s, host, MAINTENANCE_MODE, "true").await
-            }
-            .await;
-            let outcome = match flagged {
-                Err(e) => TaskOutcome::Failed(e),
-                Ok(()) => {
-                    shared.update_operation(op, |o| o.step = Some(OperationStep::Evacuating));
-                    let start = xapi::host::async_evacuate(s, host, None, None);
-                    run_task(shared, op, session, start, Span(0.2, 1.0), false).await
-                }
-            };
-            if !matches!(outcome, TaskOutcome::Succeeded) {
-                shared.update_operation(op, |o| o.step = Some(OperationStep::Reenabling));
-                if let TaskOutcome::Failed(e) = enable(shared, op, session, host).await {
-                    tracing::warn!(error = %e, "could not take the host out of maintenance mode again");
-                }
-            }
-            outcome
-        }
+        HostAction::EnterMaintenance => enter_maintenance(shared, op, session, host, None).await,
         HostAction::ExitMaintenance => enable(shared, op, session, host).await,
     }
 }
 
+/// `EvacuateHostAction`: disables the host, flags it, migrates its VMs
+/// away and, for the coordinator with `new_coordinator` (its ref and name),
+/// hands the pool to that server (`pool.designate_new_master`; the
+/// connection then follows the new coordinator). On failure the host is
+/// enabled again.
+pub(crate) async fn enter_maintenance(
+    shared: &Shared,
+    op: OperationId,
+    session: &Session,
+    host: &Ref<Host>,
+    new_coordinator: Option<(&Ref<Host>, String)>,
+) -> TaskOutcome {
+    let s = session;
+    let end = if new_coordinator.is_some() { 0.8 } else { 1.0 };
+    shared.update_operation(op, |o| o.step = Some(OperationStep::Disabling));
+    let disabled = run_task(
+        shared,
+        op,
+        session,
+        xapi::host::async_disable(s, host),
+        Span(0.0, 0.2),
+        false,
+    )
+    .await;
+    if !matches!(disabled, TaskOutcome::Succeeded) {
+        return disabled;
+    }
+    let flagged = async {
+        let _ = xapi::host::remove_from_other_config(s, host, MAINTENANCE_MODE).await;
+        xapi::host::add_to_other_config(s, host, MAINTENANCE_MODE, "true").await
+    }
+    .await;
+    let mut outcome = match flagged {
+        Err(e) => TaskOutcome::Failed(e),
+        Ok(()) => {
+            shared.update_operation(op, |o| o.step = Some(OperationStep::Evacuating));
+            let start = xapi::host::async_evacuate(s, host, None, None);
+            run_task(shared, op, session, start, Span(0.2, end), false).await
+        }
+    };
+    if let (TaskOutcome::Succeeded, Some((coordinator, name))) = (&outcome, new_coordinator) {
+        shared.update_operation(op, |o| {
+            o.step = Some(OperationStep::NewCoordinator { host: name });
+        });
+        let start = xapi::pool::async_designate_new_master(s, coordinator);
+        // The old coordinator stops answering as such: losing it is fine.
+        outcome = run_task(shared, op, session, start, Span(0.8, 1.0), true).await;
+    }
+    if !matches!(outcome, TaskOutcome::Succeeded) {
+        shared.update_operation(op, |o| o.step = Some(OperationStep::Reenabling));
+        if let TaskOutcome::Failed(e) = enable(shared, op, session, host).await {
+            tracing::warn!(error = %e, "could not take the host out of maintenance mode again");
+        }
+    }
+    outcome
+}
+
 /// `HostAbstractAction.Enable`: clears the maintenance flag and enables the
 /// host.
-async fn enable(
+pub(crate) async fn enable(
     shared: &Shared,
     op: OperationId,
     session: &Session,
@@ -1039,7 +1181,7 @@ async fn enable(
     run_task(shared, op, session, start, Span::FULL, false).await
 }
 
-async fn reboot_or_shutdown(
+pub(crate) async fn reboot_or_shutdown(
     shared: &Shared,
     connection: ConnectionId,
     op: OperationId,
@@ -1344,6 +1486,16 @@ pub enum Precheck {
         iqn: String,
         chap: Option<(String, Secret)>,
     },
+    /// The NRPE configuration of a server (`NRPERetrieveAction`: the `nrpe`
+    /// plugin's `status`, `get-config` and `get-threshold`).
+    Nrpe { host: Ref<Host> },
+    /// The power-on passwords of these servers (`PowerOnMode.GetSecret`).
+    PowerOnSecrets { hosts: Vec<Ref<Host>> },
+    /// The network of the pool's cluster (`Cluster.get_network`).
+    ClusterNetwork { cluster: Ref<xapi::Cluster> },
+    /// Whether `password` is the one this connection logged in with
+    /// (Change Server Password's check of the current password).
+    CurrentPassword { password: crate::backend::Password },
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -1362,6 +1514,11 @@ pub enum PrecheckResult {
     SrProbe(Result<ProbeResult, Arc<xapi::Error>>),
     IscsiIqns(IscsiScan<IqnInfo>),
     IscsiLuns(IscsiScan<LunInfo>),
+    Nrpe(Result<crate::properties::NrpeConfig, Arc<xapi::Error>>),
+    /// Server and password, for those whose secret could be read.
+    PowerOnSecrets(Vec<(Ref<Host>, String)>),
+    ClusterNetwork(Option<Ref<xapi::Network>>),
+    CurrentPassword(bool),
 }
 
 pub(crate) fn run_precheck(
@@ -1419,6 +1576,26 @@ pub(crate) fn run_precheck(
                 )
                 .await
                 .map_err(Arc::new),
+            ),
+            Precheck::Nrpe { host } => PrecheckResult::Nrpe(
+                crate::pool_run::read_nrpe(&session, &host)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::PowerOnSecrets { hosts } => {
+                let model = crate::storage_run::model(&shared, connection);
+                PrecheckResult::PowerOnSecrets(
+                    crate::pool_run::read_power_on_secrets(&session, &model, &hosts).await,
+                )
+            }
+            Precheck::ClusterNetwork { cluster } => PrecheckResult::ClusterNetwork(
+                xapi::cluster::get_network(&session, &cluster).await.ok(),
+            ),
+            Precheck::CurrentPassword { password } => PrecheckResult::CurrentPassword(
+                shared
+                    .connection_password(connection)
+                    .await
+                    .is_ok_and(|p| p == password),
             ),
         };
         shared.notify(Notification::Precheck {

@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 use xapi::{ClientOptions, Endpoint, Fingerprint, Host, JsonRpcClient, Ref, Session, Sr, Task, Vm};
 
 use crate::actions::{ActionRequest, HostAction, VmAction};
-use crate::connection::{self, ConnectionSpec, Secret};
+use crate::connection::{self, ConnectionSpec, Secret, SecretCell};
 use crate::model::ConnectionModel;
 use crate::operations::{
     self, Operation, OperationFailure, OperationKind, OperationStatus, Precheck, PrecheckResult,
@@ -50,7 +50,7 @@ pub type ConnectionId = u64;
 pub type OperationId = u64;
 
 /// A password. Its `Debug` output is redacted so it cannot leak into logs.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Password(String);
 
 impl Password {
@@ -160,6 +160,20 @@ pub enum Command {
         connection: ConnectionId,
         target: crate::performance::PerfTarget,
         link: crate::performance::PerfLink,
+    },
+    /// New Pool (`CreatePoolAction`): the server of `coordinator` becomes
+    /// the coordinator of pool `name`, and the servers of `members` join it.
+    NewPool {
+        coordinator: ConnectionId,
+        members: Vec<ConnectionId>,
+        name: String,
+        description: String,
+    },
+    /// Add Server (`AddHostToPoolAction`): the servers of `hosts` join the
+    /// pool of connection `pool`.
+    JoinPool {
+        pool: ConnectionId,
+        hosts: Vec<ConnectionId>,
     },
     /// Drop finished entries from the operation history.
     ClearFinishedOperations,
@@ -330,6 +344,9 @@ pub enum Notification {
         id: u64,
         result: PrecheckResult,
     },
+    /// A server removed from its pool did not come back in time to be
+    /// connected to (`MESSAGEBOX_RECONNECT_FAIL`).
+    ReconnectFailed { server: String },
     /// A connection could not even start (bad address, already connected…).
     ConnectionRefused {
         server: String,
@@ -419,6 +436,18 @@ pub struct BackendOptions {
     /// and how often it looks.
     pub member_recovery_timeout: Duration,
     pub member_recovery_poll: Duration,
+    /// After a server joined a pool, how long to wait for the pool to list
+    /// it before the join counts as lost.
+    pub join_wait: Duration,
+    /// After a server was removed from its pool: the wait before trying
+    /// to reach it, the interval between tries and how many tries
+    /// (`RemoveHostFromPoolCommand.WaitForReboot`: 30 s, 15 s, 27).
+    pub eject_reconnect_delay: Duration,
+    pub eject_reconnect_poll: Duration,
+    pub eject_reconnect_attempts: u32,
+    /// How long Install Certificate waits for the server to present the
+    /// new certificate.
+    pub certificate_wait: Duration,
 }
 
 impl Default for BackendOptions {
@@ -439,6 +468,11 @@ impl Default for BackendOptions {
             perfmon_refresh: true,
             member_recovery_timeout: Duration::from_secs(60),
             member_recovery_poll: Duration::from_secs(1),
+            join_wait: Duration::from_secs(120),
+            eject_reconnect_delay: Duration::from_secs(30),
+            eject_reconnect_poll: Duration::from_secs(15),
+            eject_reconnect_attempts: 27,
+            certificate_wait: Duration::from_secs(600),
         }
     }
 }
@@ -480,6 +514,8 @@ impl BackendHandle {
             next_id: AtomicU64::new(1),
             repaint,
             notify_tx,
+            commands: commands.downgrade(),
+            credentials: Mutex::new(HashMap::new()),
             options,
         });
         runtime.spawn(run(shared.clone(), command_rx));
@@ -542,10 +578,100 @@ pub(crate) struct Shared {
     next_id: AtomicU64,
     repaint: RepaintFn,
     notify_tx: mpsc::UnboundedSender<Notification>,
+    /// The backend's own command channel, for operations that end by
+    /// asking for more (connect to an ejected server, drop the connection
+    /// of a server that joined a pool). Weak, so the loop still ends when
+    /// the handle goes away.
+    commands: mpsc::WeakUnboundedSender<Command>,
+    /// Where each connection's password comes from.
+    credentials: Mutex<HashMap<ConnectionId, SecretCell>>,
     pub(crate) options: BackendOptions,
 }
 
 impl Shared {
+    /// Queues `command` on the backend's own loop.
+    pub(crate) fn send(&self, command: Command) {
+        match self.commands.upgrade() {
+            Some(tx) => {
+                let _ = tx.send(command);
+            }
+            None => tracing::debug!("backend stopped; command dropped"),
+        }
+    }
+
+    /// The password connection `id` logged in with: kept in memory, or read
+    /// from the OS keyring. Never log it.
+    pub(crate) async fn connection_password(
+        &self,
+        id: ConnectionId,
+    ) -> Result<Password, ConnectionError> {
+        let cell = self
+            .credentials
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&id)
+            .cloned();
+        let view = self.state().connection(id).cloned();
+        let (Some(cell), Some(view)) = (cell, view) else {
+            return Err(ConnectionError::PasswordRequired);
+        };
+        match connection::secret_of(&cell) {
+            Secret::Given(p) => Ok(p),
+            Secret::Saved => {
+                let endpoint = Endpoint::parse(&view.server).map_err(ConnectionError::Connect)?;
+                let store = self.options.store.clone();
+                let username = view.username.clone();
+                let read =
+                    tokio::task::spawn_blocking(move || store.password(&username, &endpoint))
+                        .await
+                        .unwrap_or_else(|e| {
+                            Err(crate::secrets::SecretError(format!(
+                                "keyring call failed: {e}"
+                            )))
+                        });
+                match read {
+                    Ok(Some(p)) => Ok(Password::new(p)),
+                    Ok(None) => Err(ConnectionError::PasswordRequired),
+                    Err(e) => Err(ConnectionError::PasswordUnavailable(e)),
+                }
+            }
+        }
+    }
+
+    /// Records that connection `id` now logs in with `password` (after a
+    /// password change): in memory, or in the keyring where it was saved.
+    pub(crate) async fn set_connection_password(&self, id: ConnectionId, password: &Password) {
+        let cell = self
+            .credentials
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&id)
+            .cloned();
+        let (Some(cell), Some(view)) = (cell, self.state().connection(id).cloned()) else {
+            return;
+        };
+        match connection::secret_of(&cell) {
+            Secret::Given(_) => connection::set_secret(&cell, Secret::Given(password.clone())),
+            Secret::Saved => {
+                let Ok(endpoint) = Endpoint::parse(&view.server) else {
+                    return;
+                };
+                let store = self.options.store.clone();
+                let (username, secret) = (view.username.clone(), password.clone());
+                let saved = tokio::task::spawn_blocking(move || {
+                    store.save_password(&username, &endpoint, secret.expose())
+                })
+                .await;
+                if !matches!(saved, Ok(Ok(()))) {
+                    tracing::warn!(
+                        "could not save the new password in the keyring; keeping it in memory"
+                    );
+                    connection::set_secret(&cell, Secret::Given(password.clone()));
+                }
+            }
+        }
+    }
+
     pub(crate) fn store(&self) -> &Store {
         &self.options.store
     }
@@ -636,6 +762,10 @@ impl Shared {
     }
 
     pub(crate) fn remove_connection(&self, id: ConnectionId) {
+        self.credentials
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
         self.update(|s| s.connections.retain(|c| c.id != id));
     }
 
@@ -893,6 +1023,37 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 }
                 None => tracing::debug!("performance ignored: no such connection"),
             },
+            Command::NewPool {
+                coordinator,
+                members,
+                name,
+                description,
+            } => {
+                let member_of = |c: ConnectionId| {
+                    active
+                        .get(&c)
+                        .and_then(|a| slot_get(&a.session))
+                        .map(|s| (c, s))
+                };
+                let members = members.into_iter().map(member_of).collect();
+                crate::pool_run::start_new_pool(
+                    &shared,
+                    member_of(coordinator),
+                    members,
+                    name,
+                    description,
+                );
+            }
+            Command::JoinPool { pool, hosts } => {
+                let member_of = |c: ConnectionId| {
+                    active
+                        .get(&c)
+                        .and_then(|a| slot_get(&a.session))
+                        .map(|s| (c, s))
+                };
+                let hosts = hosts.into_iter().map(member_of).collect();
+                crate::pool_run::start_join(&shared, member_of(pool), hosts);
+            }
             Command::ClearFinishedOperations => shared.update(|s| {
                 Arc::make_mut(&mut s.operations).retain(|o| o.is_running());
             }),
@@ -976,15 +1137,21 @@ fn connect(
     });
     let session: SessionSlot = Arc::default();
     let wake = Arc::new(Notify::new());
+    let secret: SecretCell = Arc::new(Mutex::new(match password {
+        Some(p) => Secret::Given(p),
+        None => Secret::Saved,
+    }));
+    shared
+        .credentials
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(id, secret.clone());
     let spec = ConnectionSpec {
         id,
         endpoint,
         typed_address: label,
         username,
-        secret: match password {
-            Some(p) => Secret::Given(p),
-            None => Secret::Saved,
-        },
+        secret,
         remember_password,
     };
     let task = tokio::spawn(connection::run(

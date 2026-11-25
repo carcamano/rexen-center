@@ -63,6 +63,14 @@ pub enum Error {
     /// TLS configuration could not be built.
     #[error("TLS setup failed: {0}")]
     TlsSetup(#[from] rustls::Error),
+
+    /// A local file of a transfer could not be read or written.
+    #[error("file error: {0}")]
+    Io(#[source] std::io::Error),
+
+    /// The user cancelled a transfer.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl Error {

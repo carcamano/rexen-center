@@ -8,9 +8,12 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Ref, Sr, Vbd, Vdi, Vif,
-    Vm, VmOperations, VmPowerState, VmRecord,
+    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Sr, Vbd, Vdi,
+    Vif, Vm, VmOperations, VmPowerState, VmRecord,
 };
+
+use crate::backend::Password;
+use crate::properties::{ClusteringChange, PropertiesTarget, PropertyChanges};
 
 use crate::model::{ConnectionModel, is_guest};
 use crate::network::{
@@ -284,6 +287,208 @@ pub enum ActionRequest {
     UnplugVif {
         vif: Ref<Vif>,
     },
+    /// Make into standalone server (`DestroyPoolAction`): the pool of one
+    /// loses its name.
+    DestroyPool {
+        pool: Ref<Pool>,
+    },
+    /// Remove a server from the pool (`EjectHostFromPoolAction`); the
+    /// console then connects to it once it is back.
+    EjectHost {
+        host: Ref<Host>,
+    },
+    /// Enter maintenance mode on the coordinator and hand the pool to
+    /// another server (`EvacuateHostAction` with a new coordinator).
+    EvacuateCoordinator {
+        host: Ref<Host>,
+        new_coordinator: Ref<Host>,
+    },
+    /// The pool or server Properties dialog: what changed.
+    SetProperties {
+        target: PropertiesTarget,
+        changes: Box<PropertyChanges>,
+    },
+    /// Control Domain Memory (`ChangeControlDomainMemoryAction`, then the
+    /// server reboots as `RebootHostAction`); bytes.
+    SetDom0Memory {
+        host: Ref<Host>,
+        memory: i64,
+    },
+    /// Change Server Password (`ChangeHostPasswordAction`).
+    ChangePassword {
+        old: Password,
+        new: Password,
+    },
+    /// Rotate Pool Secret (`pool.rotate_secret`).
+    RotatePoolSecret,
+    /// Enable Certificate Verification (`pool.enable_tls_verification`).
+    EnableTlsVerification,
+    /// Install Certificate (`InstallCertificateAction`): the files' paths.
+    InstallCertificate {
+        host: Ref<Host>,
+        key: String,
+        certificate: String,
+        chain: Vec<String>,
+    },
+    /// Reset to Default Certificate (`host.reset_server_certificate`).
+    ResetCertificate {
+        host: Ref<Host>,
+    },
+    /// Back Up (`HostBackupRestoreAction`: `GET /host_backup` to `path`).
+    BackupHost {
+        host: Ref<Host>,
+        path: String,
+    },
+    /// Restore From Backup (`PUT /host_restore` from `path`).
+    RestoreHost {
+        host: Ref<Host>,
+        path: String,
+    },
+}
+
+impl ActionRequest {
+    /// An F10a pool or properties request (run by [`crate::pool_run`]).
+    pub fn is_pool(&self) -> bool {
+        matches!(
+            self,
+            Self::DestroyPool { .. }
+                | Self::EjectHost { .. }
+                | Self::EvacuateCoordinator { .. }
+                | Self::SetProperties { .. }
+                | Self::SetDom0Memory { .. }
+                | Self::ChangePassword { .. }
+                | Self::RotatePoolSecret
+                | Self::EnableTlsVerification
+                | Self::InstallCertificate { .. }
+                | Self::ResetCertificate { .. }
+                | Self::BackupHost { .. }
+                | Self::RestoreHost { .. }
+        )
+    }
+
+    /// The RBAC calls of an F10a request.
+    fn pool_rbac_methods(&self) -> Vec<&'static str> {
+        match self {
+            Self::DestroyPool { .. } => vec!["pool.set_name_label", "pool.set_name_description"],
+            Self::EjectHost { .. } => vec!["pool.eject"],
+            Self::EvacuateCoordinator { .. } => vec![
+                "host.disable",
+                "host.enable",
+                "host.evacuate",
+                "host.add_to_other_config",
+                "host.remove_from_other_config",
+                "pool.designate_new_master",
+            ],
+            Self::SetProperties { target, changes } => properties_rbac(target, changes),
+            Self::SetDom0Memory { .. } => vec![
+                "vm.set_memory",
+                "host.disable",
+                "host.enable",
+                "vm.clean_shutdown",
+                "vm.hard_shutdown",
+                "host.reboot",
+            ],
+            // Every user may change their own password (the original does
+            // not check, and only offers it to the superuser).
+            Self::ChangePassword { .. } => vec![],
+            Self::RotatePoolSecret => vec!["pool.rotate_secret"],
+            Self::EnableTlsVerification => vec!["pool.enable_tls_verification"],
+            Self::InstallCertificate { .. } => vec!["host.install_server_certificate"],
+            Self::ResetCertificate { .. } => vec!["host.reset_server_certificate"],
+            Self::BackupHost { .. } => vec!["http/get_host_backup"],
+            Self::RestoreHost { .. } => vec!["http/put_host_restore"],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The calls the Properties dialog's save makes (`SaveChangesAction` and
+/// the pages' actions).
+fn properties_rbac(target: &PropertiesTarget, c: &PropertyChanges) -> Vec<&'static str> {
+    let host = matches!(target, PropertiesTarget::Host(_));
+    let mut m = Vec::new();
+    if c.name.is_some() {
+        m.push(if host {
+            "host.set_name_label"
+        } else {
+            "pool.set_name_label"
+        });
+    }
+    if c.description.is_some() {
+        m.push(if host {
+            "host.set_name_description"
+        } else {
+            "pool.set_name_description"
+        });
+    }
+    if c.tags.is_some() {
+        m.push(if host {
+            "host.set_tags"
+        } else {
+            "pool.set_tags"
+        });
+    }
+    if c.iqn.is_some() {
+        m.push("host.set_iscsi_iqn");
+    }
+    if let Some(config) = &c.perfmon {
+        m.push("host.remove_from_other_config/key:perfmon");
+        if config.is_some() {
+            m.push("host.add_to_other_config/key:perfmon");
+        }
+    }
+    if c.email.is_some() {
+        m.extend(["pool.remove_from_other_config", "pool.add_to_other_config"]);
+    }
+    if c.multipath.is_some() {
+        m.extend([
+            "pbd.plug",
+            "pbd.unplug",
+            "host.set_multipathing",
+            "host.remove_from_other_config/key:multipathhandle",
+            "host.add_to_other_config/key:multipathhandle",
+        ]);
+    }
+    if c.syslog.is_some() {
+        m.extend(["host.set_logging", "host.syslog_reconfigure"]);
+    }
+    if !c.power_on.is_empty() {
+        m.push("host.set_power_on_mode");
+        if c.power_on.iter().any(|(_, mode)| {
+            mode.config()
+                .contains_key(crate::properties::POWER_ON_PASSWORD_SECRET)
+        }) {
+            m.extend(["secret.create", "secret.get_by_uuid", "secret.destroy"]);
+        }
+    }
+    if c.autostart.is_some() {
+        m.extend([
+            "pool.remove_from_other_config/key:auto_poweron",
+            "pool.add_to_other_config/key:auto_poweron",
+        ]);
+    }
+    if c.live_patching_disabled.is_some() {
+        m.push("pool.set_live_patching_disabled");
+    }
+    if c.igmp_snooping.is_some() {
+        m.push("pool.set_igmp_snooping_enabled");
+    }
+    match &c.clustering {
+        Some(ClusteringChange::Enable(_)) => {
+            m.extend(["cluster.pool_create", "pif.set_disallow_unplug"])
+        }
+        Some(ClusteringChange::Disable) => {
+            m.extend(["cluster.pool_destroy", "pif.set_disallow_unplug"])
+        }
+        None => {}
+    }
+    if c.migration_compression.is_some() {
+        m.push("pool.set_migration_compression");
+    }
+    if c.nrpe.is_some() {
+        m.push("host.call_plugin");
+    }
+    m
 }
 
 impl ActionRequest {
@@ -410,6 +615,11 @@ impl ActionRequest {
     /// (lowercase `class.method`, without `async_`). The original lists the
     /// same calls in each action's `ApiMethodsToRoleCheck`.
     pub fn rbac_methods(&self) -> Vec<&'static str> {
+        if self.is_pool() {
+            let mut m = self.pool_rbac_methods();
+            m.push("task.destroy");
+            return m;
+        }
         if self.is_network() {
             let mut m = self.network_rbac_methods();
             m.push("task.destroy");
@@ -612,6 +822,18 @@ impl ActionRequest {
             | Self::UpdateVif { .. }
             | Self::PlugVif { .. }
             | Self::UnplugVif { .. } => &[],
+            Self::DestroyPool { .. }
+            | Self::EjectHost { .. }
+            | Self::EvacuateCoordinator { .. }
+            | Self::SetProperties { .. }
+            | Self::SetDom0Memory { .. }
+            | Self::ChangePassword { .. }
+            | Self::RotatePoolSecret
+            | Self::EnableTlsVerification
+            | Self::InstallCertificate { .. }
+            | Self::ResetCertificate { .. }
+            | Self::BackupHost { .. }
+            | Self::RestoreHost { .. } => &[],
             Self::ChangeCd { .. } | Self::InstallTools { .. } => &["vbd.eject", "vbd.insert"],
             Self::NewCdDrive { .. } => &["vbd.create", "vbd.plug"],
             Self::Vm { action, .. } => match action {

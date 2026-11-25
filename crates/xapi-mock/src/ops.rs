@@ -187,6 +187,48 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("host.management_reconfigure", "pool-operator"),
     ("vif.plug", "vm-admin"),
     ("vif.unplug", "vm-admin"),
+    ("pool.join", "pool-admin"),
+    ("pool.eject", "pool-admin"),
+    ("pool.designate_new_master", "pool-admin"),
+    ("pool.rotate_secret", "pool-admin"),
+    ("pool.enable_tls_verification", "pool-admin"),
+    ("pool.set_name_label", "pool-operator"),
+    ("pool.set_name_description", "pool-operator"),
+    ("pool.set_tags", "pool-operator"),
+    ("pool.add_to_other_config", "pool-operator"),
+    ("pool.remove_from_other_config", "pool-operator"),
+    ("pool.add_to_other_config/key:auto_poweron", "pool-operator"),
+    (
+        "pool.remove_from_other_config/key:auto_poweron",
+        "pool-operator",
+    ),
+    ("pool.set_igmp_snooping_enabled", "pool-operator"),
+    ("pool.set_migration_compression", "pool-operator"),
+    ("pool.set_live_patching_disabled", "pool-operator"),
+    ("host.set_name_label", "pool-operator"),
+    ("host.set_name_description", "pool-operator"),
+    ("host.set_tags", "pool-operator"),
+    ("host.set_iscsi_iqn", "pool-operator"),
+    ("host.set_logging", "pool-operator"),
+    ("host.syslog_reconfigure", "pool-operator"),
+    ("host.set_multipathing", "pool-operator"),
+    ("host.set_power_on_mode", "pool-operator"),
+    (
+        "host.add_to_other_config/key:multipathhandle",
+        "pool-operator",
+    ),
+    (
+        "host.remove_from_other_config/key:multipathhandle",
+        "pool-operator",
+    ),
+    ("host.install_server_certificate", "pool-admin"),
+    ("host.reset_server_certificate", "pool-admin"),
+    ("secret.get_by_uuid", "pool-operator"),
+    ("cluster.pool_create", "pool-operator"),
+    ("cluster.pool_destroy", "pool-operator"),
+    ("vm.set_memory", "vm-admin"),
+    ("http/get_host_backup", "pool-admin"),
+    ("http/put_host_restore", "pool-admin"),
 ];
 
 fn rank(role: &str) -> usize {
@@ -344,7 +386,7 @@ pub(crate) enum HostEffect {
 }
 
 impl Db {
-    fn rec(&self, class: &str, r: &str) -> Option<&Map<String, Value>> {
+    pub(crate) fn rec(&self, class: &str, r: &str) -> Option<&Map<String, Value>> {
         self.objects
             .get(&(class.to_owned(), r.to_owned()))
             .and_then(Value::as_object)
