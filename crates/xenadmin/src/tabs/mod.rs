@@ -1,0 +1,327 @@
+//! The detail tabs of the selected object (read-only): General, Memory,
+//! Storage, Networking and NICs, as the original console lays them out.
+//!
+//! Builders turn the connection's cached model into plain data ([`Section`]
+//! lists, [`Table`]s, memory rows) so they can be tested without a window;
+//! [`render`] draws that data. Everything is rebuilt from the current model
+//! snapshot each frame, so the tabs follow `event.from` updates live.
+
+pub mod general;
+pub mod memory;
+pub mod network;
+pub mod render;
+pub mod storage;
+
+use xapi::{Host, HostRecord, PoolRecord, Ref, Sr, SrRecord, Vm, VmRecord};
+use xen_core::ConnectionModel;
+use xen_core::objects::{self, VmKind};
+
+use crate::i18n::fill;
+use crate::tab_strings::tab_strings;
+
+/// A detail tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Tab {
+    General,
+    Memory,
+    /// A VM's disks.
+    VmStorage,
+    /// An SR's virtual disks.
+    SrStorage,
+    /// The SRs of a host or pool.
+    PhysicalStorage,
+    Networking,
+    Nics,
+}
+
+impl Tab {
+    pub fn title(self) -> &'static str {
+        let t = tab_strings();
+        match self {
+            Self::General => t.tab_general,
+            Self::Memory => t.tab_memory,
+            Self::VmStorage | Self::SrStorage | Self::PhysicalStorage => t.tab_storage,
+            Self::Networking => t.tab_networking,
+            Self::Nics => t.tab_nics,
+        }
+    }
+}
+
+/// The object whose tabs are shown.
+#[derive(Clone, Copy)]
+pub enum Subject<'a> {
+    Pool(&'a PoolRecord),
+    Host(&'a Ref<Host>, &'a HostRecord),
+    Vm(&'a Ref<Vm>, &'a VmRecord),
+    Sr(&'a Ref<Sr>, &'a SrRecord),
+}
+
+/// What the builders read.
+#[derive(Clone, Copy)]
+pub struct Ctx<'a> {
+    pub model: &'a ConnectionModel,
+    /// Current time, Unix seconds (for uptimes).
+    pub now: i64,
+    /// View > Hidden Objects.
+    pub show_hidden: bool,
+}
+
+/// The tabs shown for `subject` (`MainWindow.GetNewTabPages`).
+pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
+    match subject {
+        Subject::Pool(..) => vec![
+            Tab::General,
+            Tab::Memory,
+            Tab::PhysicalStorage,
+            Tab::Networking,
+        ],
+        Subject::Host(_, host) if objects::host_is_live(model, host) => vec![
+            Tab::General,
+            Tab::Memory,
+            Tab::PhysicalStorage,
+            Tab::Networking,
+            Tab::Nics,
+        ],
+        Subject::Host(..) => vec![Tab::General],
+        Subject::Vm(_, vm) => {
+            let mut tabs = vec![Tab::General, Tab::Memory];
+            // Templates with provisioning instructions have no disks yet.
+            let provision = vm.is_a_template && vm.other_config.contains_key("disks");
+            if !provision {
+                tabs.push(Tab::VmStorage);
+            }
+            tabs.push(Tab::Networking);
+            tabs
+        }
+        Subject::Sr(..) => vec![Tab::General, Tab::SrStorage],
+    }
+}
+
+/// The page title above a tab's content.
+pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
+    let t = tab_strings();
+    match (tab, subject) {
+        (Tab::General, Subject::Vm(_, vm)) => match objects::vm_kind(vm) {
+            VmKind::Snapshot => t.hdr_snapshot_general,
+            VmKind::UserTemplate | VmKind::DefaultTemplate => t.hdr_template_general,
+            _ => t.hdr_vm_general,
+        },
+        (Tab::General, Subject::Host(..)) => t.hdr_host_general,
+        (Tab::General, Subject::Pool(..)) => t.hdr_pool_general,
+        (Tab::General, Subject::Sr(..)) => t.hdr_sr_general,
+        (Tab::Memory, _) => t.hdr_memory,
+        (Tab::VmStorage, _) => t.hdr_vm_disks,
+        (Tab::SrStorage, _) => t.hdr_virtual_disks,
+        (Tab::PhysicalStorage, _) => t.hdr_physical_storage,
+        (Tab::Networking, Subject::Vm(..)) => t.hdr_vm_networks,
+        (Tab::Networking, Subject::Host(..)) => t.hdr_host_networks,
+        (Tab::Networking, _) => t.hdr_pool_networks,
+        (Tab::Nics, _) => t.hdr_nics,
+    }
+}
+
+/// One label/value line of a General-tab section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub label: String,
+    pub value: String,
+    /// Shown in the warning colour (the original's red text).
+    pub warn: bool,
+}
+
+impl Row {
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            warn: false,
+        }
+    }
+
+    pub fn warn(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            warn: true,
+            ..Self::new(label, value)
+        }
+    }
+}
+
+/// A titled group of rows. Sections without rows are not shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub title: &'static str,
+    pub rows: Vec<Row>,
+}
+
+impl Section {
+    /// The value of the first row labelled `label`.
+    #[cfg(test)]
+    pub fn value(&self, label: &str) -> Option<&str> {
+        self.rows
+            .iter()
+            .find(|r| r.label == label)
+            .map(|r| r.value.as_str())
+    }
+}
+
+/// A grid of the original's list views.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Table {
+    pub columns: Vec<&'static str>,
+    pub rows: Vec<TableRow>,
+}
+
+impl Table {
+    pub fn new(columns: Vec<&'static str>) -> Self {
+        Self {
+            columns,
+            rows: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, cells: Vec<String>) {
+        self.rows.push(TableRow {
+            cells,
+            greyed: false,
+        });
+    }
+
+    /// The cells of column `column` (by header), top to bottom.
+    #[cfg(test)]
+    pub fn column(&self, column: &str) -> Vec<&str> {
+        let Some(i) = self.columns.iter().position(|c| *c == column) else {
+            return Vec::new();
+        };
+        self.rows
+            .iter()
+            .map(|r| r.cells.get(i).map(String::as_str).unwrap_or_default())
+            .collect()
+    }
+}
+
+/// One line of a [`Table`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRow {
+    pub cells: Vec<String>,
+    /// Drawn greyed out (bond members).
+    pub greyed: bool,
+}
+
+/// "Yes" / "No".
+pub fn yes_no(value: bool) -> String {
+    let t = tab_strings();
+    if value { t.yes } else { t.no }.to_owned()
+}
+
+/// "3 days 4 hours 5 minutes", like the original's `PrettyTimeSpan`.
+pub fn pretty_duration(seconds: i64) -> String {
+    let t = tab_strings();
+    let (d, h, m) = xen_core::format::split_duration(seconds);
+    let part = |n: i64, one: &str, many: &str| {
+        fill(if n == 1 { one } else { many }, &[("n", &n.to_string())])
+    };
+    let mut parts = Vec::new();
+    if d > 0 {
+        parts.push(part(d, t.day, t.days));
+    }
+    if d > 0 || h > 0 {
+        parts.push(part(h, t.hour, t.hours));
+    }
+    parts.push(part(m, t.minute, t.minutes));
+    parts.join(" ")
+}
+
+/// Name of a VM record as the original shows it ("Control domain on host
+/// X" without the colon).
+pub fn vm_display_name(vm: &VmRecord) -> String {
+    match vm.name_label.strip_prefix("Control domain on host: ") {
+        Some(host) if vm.is_control_domain => format!("Control domain on host {host}"),
+        _ => vm.name_label.clone(),
+    }
+}
+
+/// Pool name, or the coordinator's name for an unnamed pool.
+pub fn pool_display_name(model: &ConnectionModel, pool: &PoolRecord) -> String {
+    if pool.name_label.is_empty() {
+        model
+            .coordinator()
+            .map(|h| h.name_label.clone())
+            .unwrap_or_default()
+    } else {
+        pool.name_label.clone()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use xen_core::ConnectionModel;
+
+    use super::Ctx;
+
+    /// The hand-written fixture pool.
+    pub fn fixture() -> ConnectionModel {
+        ConnectionModel::from_database(&xapi_mock::fixture_records())
+    }
+
+    /// The sanitized real-host capture.
+    pub fn capture() -> ConnectionModel {
+        ConnectionModel::from_database(&xapi_mock::capture_records())
+    }
+
+    /// 2026-11-25T12:00:00Z.
+    pub const NOW: i64 = 1_795_608_000;
+
+    pub fn ctx(model: &ConnectionModel) -> Ctx<'_> {
+        Ctx {
+            model,
+            now: NOW,
+            show_hidden: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn tabs_follow_the_object_type() {
+        let m = fixture();
+        let (_, p) = m.pool().unwrap();
+        assert_eq!(
+            tabs_for(&m, Subject::Pool(p)),
+            [
+                Tab::General,
+                Tab::Memory,
+                Tab::PhysicalStorage,
+                Tab::Networking
+            ]
+        );
+        let hr = Ref::new("OpaqueRef:host-0001");
+        assert_eq!(tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr])).len(), 5);
+        let vr = Ref::new("OpaqueRef:vm-web");
+        assert_eq!(
+            tabs_for(&m, Subject::Vm(&vr, &m.vms[&vr])),
+            [Tab::General, Tab::Memory, Tab::VmStorage, Tab::Networking]
+        );
+        // A built-in template still to be provisioned has no Storage tab.
+        let tr = Ref::new("OpaqueRef:vm-template-debian");
+        assert!(!tabs_for(&m, Subject::Vm(&tr, &m.vms[&tr])).contains(&Tab::VmStorage));
+        let sr = Ref::new("OpaqueRef:sr-nfs");
+        assert_eq!(
+            tabs_for(&m, Subject::Sr(&sr, &m.srs[&sr])),
+            [Tab::General, Tab::SrStorage]
+        );
+    }
+
+    #[test]
+    fn durations_read_like_the_original() {
+        assert_eq!(pretty_duration(59), "0 minutes");
+        assert_eq!(pretty_duration(3660), "1 hour 1 minute");
+        assert_eq!(
+            pretty_duration(86_400 + 12 * 60),
+            "1 day 0 hours 12 minutes"
+        );
+    }
+}

@@ -3,6 +3,9 @@
 //! * [`model`]: the live object cache of one connection ([`ConnectionModel`],
 //!   one map per XenAPI class the event loop delivers) and the infrastructure
 //!   tree derived from it.
+//! * [`objects`]: facts derived from cached objects (VM home server, SR
+//!   broken, host memory, NIC and network names…) and [`format`](mod@format): sizes and
+//!   durations as the original console shows them.
 //! * [`backend`]: the asynchronous connection manager. It runs on a tokio
 //!   runtime outside the UI thread, takes [`Command`]s over an mpsc channel,
 //!   publishes an immutable [`AppState`] snapshot (an `Arc`, swapped
@@ -18,7 +21,9 @@
 
 pub mod backend;
 pub mod connection;
+pub mod format;
 pub mod model;
+pub mod objects;
 pub mod operations;
 pub mod secrets;
 pub mod settings;
@@ -29,7 +34,9 @@ pub use backend::{
     ConnectionId, ConnectionStatus, ConnectionView, Notification, OperationId, Password, RepaintFn,
     VmAction,
 };
-pub use model::{ClassMap, ConnectionModel, ModelClass, TreeHost, TreePool, TreeVm};
+pub use model::{
+    ClassMap, ConnectionModel, ModelClass, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm,
+};
 pub use operations::{Operation, OperationFailure, OperationKind, OperationStatus};
 pub use secrets::{KeyringSecretStore, MemorySecretStore, SecretStore};
 pub use settings::{ConfigLocation, ConfigPaths, Preferences, SavedServer, Settings};

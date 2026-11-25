@@ -91,7 +91,7 @@ async fn lists_records() {
     );
 
     let vms = xapi::vm::get_all_records(&session).await.unwrap();
-    assert_eq!(vms.len(), 8);
+    assert_eq!(vms.len(), 9);
     let web = &vms[&Ref::new("OpaqueRef:vm-web")];
     assert_eq!(web.power_state, VmPowerState::Running);
     assert_eq!(web.resident_on, pool.master);
@@ -111,7 +111,7 @@ async fn start_and_shutdown_emit_events() {
             .iter()
             .all(|e| e.operation == EventOperation::Add)
     );
-    assert_eq!(initial.events.len(), 8);
+    assert_eq!(initial.events.len(), 9);
 
     xapi::vm::start(&session, &db, false, false).await.unwrap();
     let batch = session

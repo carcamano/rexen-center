@@ -22,7 +22,8 @@
 //! * `event.inject` and `event.from` (tokens, `"*"`, long-polling).
 //!
 //! Tests can also change objects behind the client's back
-//! ([`MockServer::set_vm_power_state`], [`MockServer::add_object`],
+//! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
+//! [`MockServer::add_object`],
 //! [`MockServer::start_task`], …) to prove that updates arrive through
 //! `event.from` alone, and inject failures:
 //! [`MockServer::lose_events`] (`EVENTS_LOST`),
@@ -375,6 +376,17 @@ impl MockServer {
         let mut db = self.state.db();
         db.modify(&class.to_lowercase(), opaque_ref, |rec| {
             rec.insert("name_label".into(), json!(name));
+        });
+        drop(db);
+        self.state.changed.notify_waiters();
+    }
+
+    /// Sets any field of an object as if someone else did it (emits a `mod`
+    /// event), e.g. `("host", "OpaqueRef:host-0002", "enabled", json!(false))`.
+    pub fn set_field(&self, class: &str, opaque_ref: &str, field: &str, value: Value) {
+        let mut db = self.state.db();
+        db.modify(&class.to_lowercase(), opaque_ref, |rec| {
+            rec.insert(field.to_owned(), value);
         });
         drop(db);
         self.state.changed.notify_waiters();

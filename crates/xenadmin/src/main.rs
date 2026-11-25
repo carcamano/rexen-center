@@ -18,6 +18,8 @@ mod events;
 mod i18n;
 mod icons;
 mod logging;
+mod tab_strings;
+mod tabs;
 
 use std::sync::Arc;
 

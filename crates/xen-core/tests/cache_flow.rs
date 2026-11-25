@@ -71,30 +71,30 @@ async fn objects_of_any_class_follow_events() {
 
     server.add_object(
         "SR",
-        "OpaqueRef:sr-nfs",
+        "OpaqueRef:sr-new-nfs",
         json!({"uuid": "sr-nfs-uuid", "name_label": "NFS store", "type": "nfs", "shared": true}),
     );
     let state = h
         .wait_conn("SR added", |c| {
-            c.model.srs.contains_key(&Ref::new("OpaqueRef:sr-nfs"))
+            c.model.srs.contains_key(&Ref::new("OpaqueRef:sr-new-nfs"))
         })
         .await;
-    let sr = &first(&state).model.srs[&Ref::new("OpaqueRef:sr-nfs")];
+    let sr = &first(&state).model.srs[&Ref::new("OpaqueRef:sr-new-nfs")];
     assert_eq!(sr.name_label, "NFS store");
     assert!(sr.shared);
 
-    server.set_name_label("SR", "OpaqueRef:sr-nfs", "NFS renamed");
+    server.set_name_label("SR", "OpaqueRef:sr-new-nfs", "NFS renamed");
     h.wait_conn("SR renamed", |s| {
         s.model
             .srs
-            .get(&Ref::new("OpaqueRef:sr-nfs"))
+            .get(&Ref::new("OpaqueRef:sr-new-nfs"))
             .is_some_and(|r| r.name_label == "NFS renamed")
     })
     .await;
 
-    server.remove_object("SR", "OpaqueRef:sr-nfs");
+    server.remove_object("SR", "OpaqueRef:sr-new-nfs");
     h.wait_conn("SR removed", |s| {
-        !s.model.srs.contains_key(&Ref::new("OpaqueRef:sr-nfs"))
+        !s.model.srs.contains_key(&Ref::new("OpaqueRef:sr-new-nfs"))
     })
     .await;
 }

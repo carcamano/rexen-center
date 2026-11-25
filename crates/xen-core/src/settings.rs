@@ -125,13 +125,43 @@ pub struct Preferences {
     /// On start, reconnect to the servers that were connected when the
     /// application last closed.
     pub restore_connections: bool,
+    /// View > Custom Templates.
+    pub show_user_templates: bool,
+    /// View > XCP-ng Templates (the built-in ones).
+    pub show_default_templates: bool,
+    /// View > Local Storage.
+    pub show_local_storage: bool,
+    /// View > Snapshots.
+    pub show_snapshots: bool,
+    /// View > Hidden Objects.
+    pub show_hidden_objects: bool,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
+        let tree = crate::model::TreeOptions::default();
         Self {
             save_passwords: true,
             restore_connections: true,
+            show_user_templates: tree.user_templates,
+            show_default_templates: tree.default_templates,
+            show_local_storage: tree.local_storage,
+            show_snapshots: tree.snapshots,
+            show_hidden_objects: tree.hidden_objects,
+        }
+    }
+}
+
+impl Preferences {
+    /// Tree options for these view preferences and a name filter.
+    pub fn tree_options(&self, filter: &str) -> crate::model::TreeOptions {
+        crate::model::TreeOptions {
+            user_templates: self.show_user_templates,
+            default_templates: self.show_default_templates,
+            local_storage: self.show_local_storage,
+            snapshots: self.show_snapshots,
+            hidden_objects: self.show_hidden_objects,
+            filter: filter.to_owned(),
         }
     }
 }

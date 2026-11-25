@@ -38,10 +38,22 @@ F1 (base).** What works:
   connection events, with progress and Cancel for those that run as XAPI
   tasks, plus the tasks other clients run on the connected servers (also
   cancellable);
-- a pool → hosts → VMs tree per connection, with power-state icons
-  (templates, snapshots and control domains are hidden), kept live by
-  `event.from` with no manual refresh, plus the saved servers that are not
-  connected;
+- an infrastructure tree per connection, as in the original: pool → hosts →
+  VMs and local storage, with shared storage, VMs without a home server and
+  templates under the pool. Icons show the VM power state (running, halted,
+  suspended, paused, busy), templates, snapshots, hosts in maintenance mode or
+  unreachable, and broken or default SRs. The View menu shows or hides custom
+  and built-in templates, local storage, snapshots (under their VM) and hidden
+  objects (saved in the settings), and a filter keeps the objects whose name
+  matches and their parents. Control domains are never shown. The tree is
+  kept live by `event.from` with no manual refresh, and also lists the saved
+  servers that are not connected;
+- read-only detail tabs for the selected object, with the original's
+  layout and fields: **General** (VM, template, snapshot, host, pool, SR),
+  **Memory** (host bars and per-VM settings), **Storage** (a VM's disks, an
+  SR's virtual disks, the SRs of a host or pool), **Networking** (a VM's
+  interfaces with guest IPs; the networks and IP configuration of a host or
+  pool) and **NICs**. They follow `event.from` live;
 - Start and Shut Down (clean) for VMs, enabled from `power_state` and
   `allowed_operations`, run as `Async.VM.*` tasks;
 - an About window and an Options window;
@@ -51,8 +63,8 @@ F1 (base).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-The management tabs (General, Memory, Storage, Network, NICs…) are phase F3.
-See the port plan for the full roadmap.
+Editing from the tabs, the console and performance graphs come in later
+phases. See the port plan for the full roadmap.
 
 ## Build and run
 
@@ -129,7 +141,9 @@ cargo clippy --all-targets -- -D warnings
 The tests need no XCP-ng host and never touch the OS keyring (they use an
 in-memory store). `crates/xapi-mock` is a JSON-RPC server loaded
 with fixtures from `tests/fixtures/`: `records.json`, a small hand-written lab
-pool, and `xcp-ng-8.3-capture.json`, a sanitized read-only capture of a real
+pool (two hosts, one in maintenance mode, VMs in several power states,
+templates, a snapshot, local, NFS and ISO storage with a broken SR, networks
+with a VLAN, NICs and metrics), and `xcp-ng-8.3-capture.json`, a sanitized read-only capture of a real
 XCP-ng 8.3 host covering every class it delivers. The tests use it to check,
 end to end:
 
@@ -156,10 +170,13 @@ end to end:
 - VM operations as tasks with progress, cancel and `task.destroy`, and other
   clients' tasks followed and cancelled;
 - logs at `trace` level free of passwords and session references;
+- the tree (homes, storage, templates, snapshots, view options, filter) and
+  every tab's data against the hand-written pool and the real-host capture;
 - the egui window itself, run headlessly with `egui_kittest`: connect dialog,
-  certificate prompt, tree, Events panel (progress, cancel, other clients'
-  tasks), the reconnection shown after a server restart, servers restored on
-  start, and Options;
+  certificate prompt, tree, View options and filter, the detail tabs and
+  their live updates, Events panel (progress, cancel, other clients' tasks),
+  the reconnection shown after a server restart, servers restored on start,
+  and Options;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -170,6 +187,12 @@ waits for the tree and clicks nothing else):
 XENADMIN_REAL_HOST=192.0.2.10 XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=... \
 XENADMIN_REAL_FINGERPRINT=AA:BB:... cargo test -p xenadmin real_host -- --ignored --nocapture
 ```
+
+With the same variables, `real_host_tabs_read_only` also draws every tab of
+the pool, its coordinator, one VM (`XENADMIN_REAL_VM=<uuid>`, else the first
+running guest) and one SR (`XENADMIN_REAL_SR=<uuid>`, else the default SR),
+and writes what they show to `XENADMIN_REAL_DUMP` (a JSON file) for
+comparison with `xe vm-param-list` and friends. It only reads.
 
 A round trip through the real OS keyring, under a test service name, with
 the entry removed again: `cargo test -p xen-core os_keyring -- --ignored`.
@@ -201,7 +224,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class) and its tree, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the operation history, settings, known servers and the keyring store. |
 | `crates/xenadmin` | The egui/eframe desktop app. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 

@@ -1,13 +1,19 @@
 {
-  "_comment": "Mock XAPI database for tests: one pool with two hosts, their control domains, three guest VMs in different power states, a template and a snapshot. Records are partial; the client ignores missing fields.",
+  "_comment": "Mock XAPI database for tests: one pool with two hosts (the second in maintenance mode), their control domains, guest VMs in different power states, a default and a user template, a snapshot, local, shared NFS and ISO storage (the ISO SR is broken: unplugged on the second host), networks with a VLAN and the hidden host-internal network, NICs and metrics. Records are partial; the client ignores missing fields.",
   "pool": {
     "OpaqueRef:pool-0001": {
       "uuid": "5a0e3b3c-0000-4000-8000-000000000001",
       "name_label": "Lab Pool",
       "name_description": "",
       "master": "OpaqueRef:host-0001",
-      "default_SR": "OpaqueRef:NULL",
-      "other_config": {}
+      "default_SR": "OpaqueRef:sr-nfs",
+      "other_config": {
+        "auto_poweron": "true"
+      },
+      "ha_enabled": false,
+      "tls_verification_enabled": true,
+      "tags": [],
+      "uefi_certificates": ""
     }
   },
   "host": {
@@ -20,9 +26,52 @@
       "enabled": true,
       "API_version_major": 2,
       "API_version_minor": 21,
-      "software_version": {"product_brand": "XCP-ng", "product_version": "8.3.0"},
-      "resident_VMs": ["OpaqueRef:vm-dom0-01", "OpaqueRef:vm-web"],
-      "other_config": {}
+      "software_version": {
+        "product_brand": "XCP-ng",
+        "product_version": "8.3.0",
+        "product_version_text": "8.3",
+        "date": "2026-01-15",
+        "dbv": "2025.0819"
+      },
+      "resident_VMs": [
+        "OpaqueRef:vm-dom0-01",
+        "OpaqueRef:vm-web"
+      ],
+      "other_config": {
+        "boot_time": "1795000000.",
+        "agent_start_time": "1795003600."
+      },
+      "memory_overhead": 67108864,
+      "metrics": "OpaqueRef:host-metrics-01",
+      "host_CPUs": [
+        "OpaqueRef:host-cpu-01-0",
+        "OpaqueRef:host-cpu-01-1"
+      ],
+      "PIFs": [
+        "OpaqueRef:pif-01-eth0",
+        "OpaqueRef:pif-01-eth1",
+        "OpaqueRef:pif-01-vlan20"
+      ],
+      "PBDs": [
+        "OpaqueRef:pbd-local-01",
+        "OpaqueRef:pbd-nfs-01",
+        "OpaqueRef:pbd-iso-01"
+      ],
+      "control_domain": "OpaqueRef:vm-dom0-01",
+      "cpu_info": {
+        "socket_count": "1",
+        "cpu_count": "2"
+      },
+      "iscsi_iqn": "iqn.2026-01.org.example:host-01",
+      "logging": {},
+      "tls_verification_enabled": true,
+      "external_auth_type": "",
+      "tags": [],
+      "certificates": [
+        "OpaqueRef:cert-host-01"
+      ],
+      "crashdumps": [],
+      "current_operations": {}
     },
     "OpaqueRef:host-0002": {
       "uuid": "1c0e3b3c-0000-4000-8000-000000000002",
@@ -30,12 +79,113 @@
       "name_description": "Default install",
       "hostname": "xcp-host-02",
       "address": "192.0.2.12",
-      "enabled": true,
+      "enabled": false,
       "API_version_major": 2,
       "API_version_minor": 21,
-      "software_version": {"product_brand": "XCP-ng", "product_version": "8.3.0"},
-      "resident_VMs": ["OpaqueRef:vm-dom0-02"],
-      "other_config": {}
+      "software_version": {
+        "product_brand": "XCP-ng",
+        "product_version": "8.3.0",
+        "product_version_text": "8.3",
+        "date": "2026-01-15",
+        "dbv": "2025.0819"
+      },
+      "resident_VMs": [
+        "OpaqueRef:vm-dom0-02"
+      ],
+      "other_config": {
+        "boot_time": "1795100000.",
+        "agent_start_time": "1795100100.",
+        "MAINTENANCE_MODE": "true"
+      },
+      "memory_overhead": 67108864,
+      "metrics": "OpaqueRef:host-metrics-02",
+      "host_CPUs": [
+        "OpaqueRef:host-cpu-02-0"
+      ],
+      "PIFs": [
+        "OpaqueRef:pif-02-eth0",
+        "OpaqueRef:pif-02-eth1"
+      ],
+      "PBDs": [
+        "OpaqueRef:pbd-local-02",
+        "OpaqueRef:pbd-nfs-02",
+        "OpaqueRef:pbd-iso-02"
+      ],
+      "control_domain": "OpaqueRef:vm-dom0-02",
+      "cpu_info": {
+        "socket_count": "1",
+        "cpu_count": "1"
+      },
+      "iscsi_iqn": "iqn.2026-01.org.example:host-02",
+      "logging": {},
+      "tls_verification_enabled": true,
+      "external_auth_type": "",
+      "tags": [],
+      "certificates": [
+        "OpaqueRef:cert-host-02"
+      ],
+      "crashdumps": [],
+      "current_operations": {}
+    }
+  },
+  "host_metrics": {
+    "OpaqueRef:host-metrics-01": {
+      "uuid": "4e0e3b3c-0000-4000-8000-000000000001",
+      "memory_total": 34359738368,
+      "memory_free": 28991029248,
+      "live": true
+    },
+    "OpaqueRef:host-metrics-02": {
+      "uuid": "4e0e3b3c-0000-4000-8000-000000000002",
+      "memory_total": 17179869184,
+      "memory_free": 15032385536,
+      "live": true
+    }
+  },
+  "host_cpu": {
+    "OpaqueRef:host-cpu-01-0": {
+      "uuid": "c0c0c0c0-0000-4000-8000-000000000010",
+      "host": "OpaqueRef:host-0001",
+      "number": 0,
+      "vendor": "GenuineIntel",
+      "modelname": "Intel(R) Xeon(R) CPU E5-2690 v3 @ 2.60GHz",
+      "speed": 2596
+    },
+    "OpaqueRef:host-cpu-01-1": {
+      "uuid": "c0c0c0c0-0000-4000-8000-000000000011",
+      "host": "OpaqueRef:host-0001",
+      "number": 1,
+      "vendor": "GenuineIntel",
+      "modelname": "Intel(R) Xeon(R) CPU E5-2690 v3 @ 2.60GHz",
+      "speed": 2596
+    },
+    "OpaqueRef:host-cpu-02-0": {
+      "uuid": "c0c0c0c0-0000-4000-8000-000000000020",
+      "host": "OpaqueRef:host-0002",
+      "number": 0,
+      "vendor": "GenuineIntel",
+      "modelname": "Intel(R) Xeon(R) CPU E5-2690 v3 @ 2.60GHz",
+      "speed": 2596
+    }
+  },
+  "certificate": {
+    "OpaqueRef:cert-host-01": {
+      "uuid": "ce0e3b3c-0000-4000-8000-000000000001",
+      "name": "",
+      "type": "host",
+      "host": "OpaqueRef:host-0001",
+      "not_before": "20260101T00:00:00Z",
+      "not_after": "20360101T00:00:00Z",
+      "fingerprint_sha256": "AA:BB:CC:01"
+    },
+    "OpaqueRef:cert-host-02": {
+      "uuid": "ce0e3b3c-0000-4000-8000-000000000002",
+      "name": "",
+      "type": "host",
+      "host": "OpaqueRef:host-0002",
+      "not_before": "20260101T00:00:00Z",
+      "not_after": "20360101T00:00:00Z",
+      "fingerprint_sha256": "AA:BB:CC:02"
     }
   },
   "vm": {
@@ -51,7 +201,35 @@
       "resident_on": "OpaqueRef:host-0001",
       "affinity": "OpaqueRef:host-0001",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:vm-metrics-dom0-01",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 2147483648,
+      "memory_dynamic_min": 2147483648,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 2147483648,
+      "memory_target": 2147483648,
+      "domid": 0,
+      "VCPUs_max": 4,
+      "VCPUs_at_startup": 4
     },
     "OpaqueRef:vm-dom0-02": {
       "uuid": "d0d0d0d0-0000-4000-8000-000000000002",
@@ -65,14 +243,51 @@
       "resident_on": "OpaqueRef:host-0002",
       "affinity": "OpaqueRef:host-0002",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:vm-metrics-dom0-02",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 1073741824,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 1073741824,
+      "memory_static_max": 1073741824,
+      "memory_target": 1073741824,
+      "domid": 0,
+      "VCPUs_max": 4,
+      "VCPUs_at_startup": 4
     },
     "OpaqueRef:vm-web": {
       "uuid": "0b0b0b0b-0000-4000-8000-000000000001",
       "name_label": "web-01",
       "name_description": "Debian 12 web server",
       "power_state": "Running",
-      "allowed_operations": ["clean_shutdown", "clean_reboot", "hard_shutdown", "hard_reboot", "suspend", "pause", "snapshot", "pool_migrate"],
+      "allowed_operations": [
+        "clean_shutdown",
+        "clean_reboot",
+        "hard_shutdown",
+        "hard_reboot",
+        "suspend",
+        "pause",
+        "snapshot",
+        "pool_migrate"
+      ],
       "current_operations": {},
       "is_a_template": false,
       "is_a_snapshot": false,
@@ -80,14 +295,69 @@
       "resident_on": "OpaqueRef:host-0001",
       "affinity": "OpaqueRef:host-0001",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {
+        "auto_poweron": "true",
+        "folder": "/Production/Web"
+      },
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {
+        "cores-per-socket": "2"
+      },
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [
+        "web",
+        "production"
+      ],
+      "VBDs": [
+        "OpaqueRef:vbd-web-0",
+        "OpaqueRef:vbd-web-1",
+        "OpaqueRef:vbd-web-cd"
+      ],
+      "VIFs": [
+        "OpaqueRef:vif-web-0",
+        "OpaqueRef:vif-web-1"
+      ],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:vm-metrics-web",
+      "guest_metrics": "OpaqueRef:vm-guest-metrics-web",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 536870912,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 4294967296,
+      "memory_target": 2147483648,
+      "VCPUs_max": 4,
+      "VCPUs_at_startup": 2,
+      "snapshots": [
+        "OpaqueRef:vm-web-snap"
+      ],
+      "domid": 7
     },
     "OpaqueRef:vm-db": {
       "uuid": "0b0b0b0b-0000-4000-8000-000000000002",
       "name_label": "db-01",
       "name_description": "PostgreSQL",
       "power_state": "Halted",
-      "allowed_operations": ["start", "start_on", "clone", "copy", "export", "destroy", "snapshot", "make_into_template"],
+      "allowed_operations": [
+        "start",
+        "start_on",
+        "clone",
+        "copy",
+        "export",
+        "destroy",
+        "snapshot",
+        "make_into_template"
+      ],
       "current_operations": {},
       "is_a_template": false,
       "is_a_snapshot": false,
@@ -95,14 +365,58 @@
       "resident_on": "OpaqueRef:NULL",
       "affinity": "OpaqueRef:host-0002",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {
+        "secureboot": "true"
+      },
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "dc",
+        "firmware": "uefi"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [
+        "OpaqueRef:vbd-db-0"
+      ],
+      "VIFs": [
+        "OpaqueRef:vif-db-0"
+      ],
+      "VTPMs": [
+        "OpaqueRef:vtpm-db"
+      ],
+      "metrics": "OpaqueRef:NULL",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 8589934592,
+      "memory_dynamic_min": 8589934592,
+      "memory_dynamic_max": 8589934592,
+      "memory_static_max": 8589934592,
+      "memory_target": 8589934592,
+      "VCPUs_max": 4,
+      "VCPUs_at_startup": 4
     },
     "OpaqueRef:vm-build": {
       "uuid": "0b0b0b0b-0000-4000-8000-000000000003",
       "name_label": "build-runner",
       "name_description": "",
       "power_state": "Halted",
-      "allowed_operations": ["start", "start_on", "clone", "copy", "export", "destroy", "snapshot", "make_into_template"],
+      "allowed_operations": [
+        "start",
+        "start_on",
+        "clone",
+        "copy",
+        "export",
+        "destroy",
+        "snapshot",
+        "make_into_template"
+      ],
       "current_operations": {},
       "is_a_template": false,
       "is_a_snapshot": false,
@@ -110,14 +424,46 @@
       "resident_on": "OpaqueRef:NULL",
       "affinity": "OpaqueRef:NULL",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "console=hvc0",
+      "tags": [],
+      "VBDs": [],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:NULL",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 1073741824,
+      "memory_dynamic_min": 2147483648,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 2147483648,
+      "memory_target": 2147483648,
+      "VCPUs_max": 2,
+      "VCPUs_at_startup": 2
     },
     "OpaqueRef:vm-legacy": {
       "uuid": "0b0b0b0b-0000-4000-8000-000000000004",
       "name_label": "legacy-app",
       "name_description": "",
       "power_state": "Suspended",
-      "allowed_operations": ["resume", "resume_on", "hard_shutdown", "snapshot"],
+      "allowed_operations": [
+        "resume",
+        "resume_on",
+        "hard_shutdown",
+        "snapshot"
+      ],
       "current_operations": {},
       "is_a_template": false,
       "is_a_snapshot": false,
@@ -125,13 +471,47 @@
       "resident_on": "OpaqueRef:NULL",
       "affinity": "OpaqueRef:host-0001",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [
+        "OpaqueRef:vbd-legacy-0"
+      ],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:vm-metrics-legacy",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 1073741824,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 1073741824,
+      "memory_static_max": 1073741824,
+      "memory_target": 1073741824,
+      "VCPUs_max": 1,
+      "VCPUs_at_startup": 1
     },
     "OpaqueRef:vm-template-debian": {
       "uuid": "7e7e7e7e-0000-4000-8000-000000000001",
       "name_label": "Debian Bookworm 12",
       "power_state": "Halted",
-      "allowed_operations": ["clone", "copy", "export", "provision"],
+      "allowed_operations": [
+        "clone",
+        "copy",
+        "export",
+        "provision"
+      ],
       "current_operations": {},
       "is_a_template": true,
       "is_default_template": true,
@@ -140,13 +520,49 @@
       "resident_on": "OpaqueRef:NULL",
       "affinity": "OpaqueRef:NULL",
       "snapshot_of": "OpaqueRef:NULL",
-      "other_config": {}
+      "other_config": {
+        "default_template": "true",
+        "disks": "<provision/>"
+      },
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:NULL",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "memory_static_min": 536870912,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 1073741824,
+      "memory_static_max": 1073741824,
+      "memory_target": 1073741824,
+      "VCPUs_max": 1,
+      "VCPUs_at_startup": 1
     },
     "OpaqueRef:vm-web-snap": {
       "uuid": "5e5e5e5e-0000-4000-8000-000000000001",
       "name_label": "web-01 before upgrade",
       "power_state": "Halted",
-      "allowed_operations": ["revert", "clone", "copy", "export", "destroy"],
+      "allowed_operations": [
+        "revert",
+        "clone",
+        "copy",
+        "export",
+        "destroy"
+      ],
       "current_operations": {},
       "is_a_template": true,
       "is_a_snapshot": true,
@@ -154,6 +570,837 @@
       "resident_on": "OpaqueRef:NULL",
       "affinity": "OpaqueRef:host-0001",
       "snapshot_of": "OpaqueRef:vm-web",
+      "other_config": {},
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [
+        "OpaqueRef:vbd-snap-0"
+      ],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:NULL",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "20261101T10:30:00Z",
+      "memory_static_min": 536870912,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 4294967296,
+      "memory_target": 2147483648,
+      "VCPUs_max": 4,
+      "VCPUs_at_startup": 2
+    },
+    "OpaqueRef:vm-template-user": {
+      "memory_overhead": 33554432,
+      "VCPUs_params": {},
+      "platform": {},
+      "HVM_boot_policy": "BIOS order",
+      "HVM_boot_params": {
+        "order": "cd",
+        "firmware": "bios"
+      },
+      "PV_args": "",
+      "tags": [],
+      "VBDs": [],
+      "VIFs": [],
+      "VTPMs": [],
+      "metrics": "OpaqueRef:NULL",
+      "guest_metrics": "OpaqueRef:NULL",
+      "ha_restart_priority": "",
+      "has_vendor_device": false,
+      "bios_strings": {},
+      "appliance": "OpaqueRef:NULL",
+      "snapshot_time": "19700101T00:00:00Z",
+      "uuid": "7e7e7e7e-0000-4000-8000-000000000002",
+      "name_label": "Web server template",
+      "name_description": "Hardened Debian 12",
+      "power_state": "Halted",
+      "allowed_operations": [
+        "clone",
+        "copy",
+        "export",
+        "provision",
+        "destroy"
+      ],
+      "current_operations": {},
+      "is_a_template": true,
+      "is_default_template": false,
+      "is_a_snapshot": false,
+      "is_control_domain": false,
+      "resident_on": "OpaqueRef:NULL",
+      "affinity": "OpaqueRef:NULL",
+      "snapshot_of": "OpaqueRef:NULL",
+      "other_config": {},
+      "memory_static_min": 536870912,
+      "memory_dynamic_min": 1073741824,
+      "memory_dynamic_max": 2147483648,
+      "memory_static_max": 2147483648,
+      "VCPUs_max": 2,
+      "VCPUs_at_startup": 2
+    }
+  },
+  "vm_metrics": {
+    "OpaqueRef:vm-metrics-dom0-01": {
+      "uuid": "3e000000-0000-4000-8000-000000000001",
+      "memory_actual": 2147483648,
+      "VCPUs_number": 4,
+      "start_time": "20261110T09:00:00Z"
+    },
+    "OpaqueRef:vm-metrics-dom0-02": {
+      "uuid": "3e000000-0000-4000-8000-000000000002",
+      "memory_actual": 1073741824,
+      "VCPUs_number": 4,
+      "start_time": "20261110T09:00:00Z"
+    },
+    "OpaqueRef:vm-metrics-web": {
+      "uuid": "3e000000-0000-4000-8000-000000000003",
+      "memory_actual": 2147483648,
+      "VCPUs_number": 2,
+      "start_time": "20261120T08:00:00Z"
+    },
+    "OpaqueRef:vm-metrics-legacy": {
+      "uuid": "3e000000-0000-4000-8000-000000000004",
+      "memory_actual": 0,
+      "VCPUs_number": 1,
+      "start_time": "20261001T08:00:00Z"
+    }
+  },
+  "vm_guest_metrics": {
+    "OpaqueRef:vm-guest-metrics-web": {
+      "uuid": "6e000000-0000-4000-8000-000000000001",
+      "os_version": {
+        "name": "Debian GNU/Linux 12 (bookworm)",
+        "distro": "debian",
+        "uname": "6.1.0-18-amd64"
+      },
+      "networks": {
+        "0/ip": "192.0.2.101",
+        "0/ipv4/0": "192.0.2.101",
+        "0/ipv6/0": "2001:db8::101",
+        "1/ipv4/0": "10.20.0.5"
+      },
+      "PV_drivers_version": {
+        "major": "8",
+        "minor": "3",
+        "micro": "0"
+      },
+      "PV_drivers_up_to_date": true,
+      "PV_drivers_detected": true,
+      "other": {
+        "feature-balloon": "1"
+      },
+      "live": true
+    }
+  },
+  "vtpm": {
+    "OpaqueRef:vtpm-db": {
+      "uuid": "9e000000-0000-4000-8000-000000000001",
+      "VM": "OpaqueRef:vm-db"
+    }
+  },
+  "sr": {
+    "OpaqueRef:sr-local-01": {
+      "uuid": "5e000000-0000-4000-8000-000000000001",
+      "name_label": "Local storage",
+      "name_description": "",
+      "type": "lvm",
+      "content_type": "user",
+      "shared": false,
+      "PBDs": [
+        "OpaqueRef:pbd-local-01"
+      ],
+      "VDIs": [
+        "OpaqueRef:vdi-web-root",
+        "OpaqueRef:vdi-legacy-root",
+        "OpaqueRef:vdi-web-root-snap"
+      ],
+      "physical_size": 536870912000,
+      "physical_utilisation": 128849018880,
+      "virtual_allocation": 32212254720,
+      "other_config": {},
+      "sm_config": {},
+      "tags": [],
+      "introduced_by": "OpaqueRef:NULL",
+      "is_tools_sr": false
+    },
+    "OpaqueRef:sr-local-02": {
+      "uuid": "5e000000-0000-4000-8000-000000000002",
+      "name_label": "Local storage",
+      "name_description": "",
+      "type": "ext",
+      "content_type": "user",
+      "shared": false,
+      "PBDs": [
+        "OpaqueRef:pbd-local-02"
+      ],
+      "VDIs": [],
+      "physical_size": 268435456000,
+      "physical_utilisation": 10737418240,
+      "virtual_allocation": 0,
+      "other_config": {},
+      "sm_config": {},
+      "tags": [],
+      "introduced_by": "OpaqueRef:NULL",
+      "is_tools_sr": false
+    },
+    "OpaqueRef:sr-nfs": {
+      "uuid": "5e000000-0000-4000-8000-000000000003",
+      "name_label": "NFS VM storage",
+      "name_description": "Shared VM disks",
+      "type": "nfs",
+      "content_type": "user",
+      "shared": true,
+      "PBDs": [
+        "OpaqueRef:pbd-nfs-01",
+        "OpaqueRef:pbd-nfs-02"
+      ],
+      "VDIs": [
+        "OpaqueRef:vdi-web-data",
+        "OpaqueRef:vdi-db-root",
+        "OpaqueRef:vdi-hidden"
+      ],
+      "physical_size": 2199023255552,
+      "physical_utilisation": 644245094400,
+      "virtual_allocation": 169651208192,
+      "other_config": {},
+      "sm_config": {},
+      "tags": [],
+      "introduced_by": "OpaqueRef:NULL",
+      "is_tools_sr": false
+    },
+    "OpaqueRef:sr-iso": {
+      "uuid": "5e000000-0000-4000-8000-000000000004",
+      "name_label": "ISO library",
+      "name_description": "Installation media",
+      "type": "iso",
+      "content_type": "iso",
+      "shared": true,
+      "PBDs": [
+        "OpaqueRef:pbd-iso-01",
+        "OpaqueRef:pbd-iso-02"
+      ],
+      "VDIs": [
+        "OpaqueRef:vdi-debian-iso"
+      ],
+      "physical_size": 107374182400,
+      "physical_utilisation": 42949672960,
+      "virtual_allocation": 681574400,
+      "other_config": {},
+      "sm_config": {},
+      "tags": [],
+      "introduced_by": "OpaqueRef:NULL",
+      "is_tools_sr": false
+    }
+  },
+  "pbd": {
+    "OpaqueRef:pbd-local-01": {
+      "uuid": "8e000000-0000-4000-8000-000000000001",
+      "host": "OpaqueRef:host-0001",
+      "SR": "OpaqueRef:sr-local-01",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-local-02": {
+      "uuid": "8e000000-0000-4000-8000-000000000002",
+      "host": "OpaqueRef:host-0002",
+      "SR": "OpaqueRef:sr-local-02",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-nfs-01": {
+      "uuid": "8e000000-0000-4000-8000-000000000003",
+      "host": "OpaqueRef:host-0001",
+      "SR": "OpaqueRef:sr-nfs",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-nfs-02": {
+      "uuid": "8e000000-0000-4000-8000-000000000004",
+      "host": "OpaqueRef:host-0002",
+      "SR": "OpaqueRef:sr-nfs",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-iso-01": {
+      "uuid": "8e000000-0000-4000-8000-000000000005",
+      "host": "OpaqueRef:host-0001",
+      "SR": "OpaqueRef:sr-iso",
+      "device_config": {},
+      "currently_attached": true,
+      "other_config": {}
+    },
+    "OpaqueRef:pbd-iso-02": {
+      "uuid": "8e000000-0000-4000-8000-000000000006",
+      "host": "OpaqueRef:host-0002",
+      "SR": "OpaqueRef:sr-iso",
+      "device_config": {},
+      "currently_attached": false,
+      "other_config": {}
+    }
+  },
+  "vdi": {
+    "OpaqueRef:vdi-web-root": {
+      "uuid": "ad000000-0000-4000-8000-000000000001",
+      "name_label": "web-01 root",
+      "name_description": "Created by template provisioner",
+      "SR": "OpaqueRef:sr-local-01",
+      "VBDs": [
+        "OpaqueRef:vbd-web-0"
+      ],
+      "virtual_size": 21474836480,
+      "physical_utilisation": 10737418240,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-web-data": {
+      "uuid": "ad000000-0000-4000-8000-000000000002",
+      "name_label": "web-01 data",
+      "name_description": "Web content",
+      "SR": "OpaqueRef:sr-nfs",
+      "VBDs": [
+        "OpaqueRef:vbd-web-1"
+      ],
+      "virtual_size": 107374182400,
+      "physical_utilisation": 53687091200,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": true
+    },
+    "OpaqueRef:vdi-db-root": {
+      "uuid": "ad000000-0000-4000-8000-000000000003",
+      "name_label": "db-01 root",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-nfs",
+      "VBDs": [
+        "OpaqueRef:vbd-db-0"
+      ],
+      "virtual_size": 53687091200,
+      "physical_utilisation": 26843545600,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-legacy-root": {
+      "uuid": "ad000000-0000-4000-8000-000000000004",
+      "name_label": "legacy-app disk",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-local-01",
+      "VBDs": [
+        "OpaqueRef:vbd-legacy-0"
+      ],
+      "virtual_size": 8589934592,
+      "physical_utilisation": 4294967296,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-web-root-snap": {
+      "uuid": "ad000000-0000-4000-8000-000000000005",
+      "name_label": "web-01 root",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-local-01",
+      "VBDs": [
+        "OpaqueRef:vbd-snap-0"
+      ],
+      "virtual_size": 21474836480,
+      "physical_utilisation": 10737418240,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": true,
+      "snapshot_of": "OpaqueRef:vdi-web-root",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-debian-iso": {
+      "uuid": "ad000000-0000-4000-8000-000000000006",
+      "name_label": "debian-12.iso",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-iso",
+      "VBDs": [
+        "OpaqueRef:vbd-web-cd"
+      ],
+      "virtual_size": 681574400,
+      "physical_utilisation": 340787200,
+      "type": "user",
+      "read_only": true,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {},
+      "cbt_enabled": false
+    },
+    "OpaqueRef:vdi-hidden": {
+      "uuid": "ad000000-0000-4000-8000-000000000007",
+      "name_label": "hidden scratch",
+      "name_description": "",
+      "SR": "OpaqueRef:sr-nfs",
+      "VBDs": [],
+      "virtual_size": 8589934592,
+      "physical_utilisation": 4294967296,
+      "type": "user",
+      "read_only": false,
+      "managed": true,
+      "missing": false,
+      "is_a_snapshot": false,
+      "snapshot_of": "OpaqueRef:NULL",
+      "sm_config": {},
+      "other_config": {
+        "HideFromXenCenter": "true"
+      },
+      "cbt_enabled": false
+    }
+  },
+  "vbd": {
+    "OpaqueRef:vbd-web-0": {
+      "uuid": "bd000000-0000-4000-8000-000000000001",
+      "VM": "OpaqueRef:vm-web",
+      "VDI": "OpaqueRef:vdi-web-root",
+      "userdevice": "0",
+      "device": "xvda",
+      "currently_attached": true,
+      "type": "Disk",
+      "mode": "RW",
+      "bootable": true,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    },
+    "OpaqueRef:vbd-web-1": {
+      "uuid": "bd000000-0000-4000-8000-000000000002",
+      "VM": "OpaqueRef:vm-web",
+      "VDI": "OpaqueRef:vdi-web-data",
+      "userdevice": "1",
+      "device": "xvdb",
+      "currently_attached": true,
+      "type": "Disk",
+      "mode": "RW",
+      "bootable": false,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {
+        "class": "7"
+      },
+      "other_config": {}
+    },
+    "OpaqueRef:vbd-web-cd": {
+      "uuid": "bd000000-0000-4000-8000-000000000003",
+      "VM": "OpaqueRef:vm-web",
+      "VDI": "OpaqueRef:vdi-debian-iso",
+      "userdevice": "3",
+      "device": "xvdd",
+      "currently_attached": true,
+      "type": "CD",
+      "mode": "RO",
+      "bootable": false,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    },
+    "OpaqueRef:vbd-db-0": {
+      "uuid": "bd000000-0000-4000-8000-000000000004",
+      "VM": "OpaqueRef:vm-db",
+      "VDI": "OpaqueRef:vdi-db-root",
+      "userdevice": "0",
+      "device": "",
+      "currently_attached": false,
+      "type": "Disk",
+      "mode": "RW",
+      "bootable": true,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    },
+    "OpaqueRef:vbd-legacy-0": {
+      "uuid": "bd000000-0000-4000-8000-000000000005",
+      "VM": "OpaqueRef:vm-legacy",
+      "VDI": "OpaqueRef:vdi-legacy-root",
+      "userdevice": "0",
+      "device": "xvda",
+      "currently_attached": false,
+      "type": "Disk",
+      "mode": "RO",
+      "bootable": true,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    },
+    "OpaqueRef:vbd-snap-0": {
+      "uuid": "bd000000-0000-4000-8000-000000000006",
+      "VM": "OpaqueRef:vm-web-snap",
+      "VDI": "OpaqueRef:vdi-web-root-snap",
+      "userdevice": "0",
+      "device": "",
+      "currently_attached": false,
+      "type": "Disk",
+      "mode": "RW",
+      "bootable": true,
+      "empty": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    }
+  },
+  "network": {
+    "OpaqueRef:net-eth0": {
+      "uuid": "ae000000-0000-4000-8000-000000000001",
+      "name_label": "Pool-wide network associated with eth0",
+      "name_description": "",
+      "PIFs": [
+        "OpaqueRef:pif-01-eth0",
+        "OpaqueRef:pif-02-eth0"
+      ],
+      "VIFs": [
+        "OpaqueRef:vif-web-0",
+        "OpaqueRef:vif-db-0"
+      ],
+      "MTU": 1500,
+      "bridge": "xenbr0",
+      "other_config": {},
+      "managed": true,
+      "tags": []
+    },
+    "OpaqueRef:net-eth1": {
+      "uuid": "ae000000-0000-4000-8000-000000000002",
+      "name_label": "Storage network",
+      "name_description": "NFS and iSCSI",
+      "PIFs": [
+        "OpaqueRef:pif-01-eth1",
+        "OpaqueRef:pif-02-eth1"
+      ],
+      "VIFs": [],
+      "MTU": 9000,
+      "bridge": "xenbr1",
+      "other_config": {
+        "automatic": "false"
+      },
+      "managed": true,
+      "tags": []
+    },
+    "OpaqueRef:net-vlan20": {
+      "uuid": "ae000000-0000-4000-8000-000000000003",
+      "name_label": "Guests VLAN 20",
+      "name_description": "Guest traffic",
+      "PIFs": [
+        "OpaqueRef:pif-01-vlan20"
+      ],
+      "VIFs": [
+        "OpaqueRef:vif-web-1"
+      ],
+      "MTU": 1500,
+      "bridge": "xapi1",
+      "other_config": {},
+      "managed": true,
+      "tags": []
+    },
+    "OpaqueRef:net-himn": {
+      "uuid": "ae000000-0000-4000-8000-000000000004",
+      "name_label": "Host internal management network",
+      "name_description": "",
+      "PIFs": [],
+      "VIFs": [],
+      "MTU": 1500,
+      "bridge": "xenapi",
+      "other_config": {
+        "is_guest_installer_network": "true"
+      },
+      "managed": true,
+      "tags": []
+    }
+  },
+  "pif": {
+    "OpaqueRef:pif-01-eth0": {
+      "uuid": "be000000-0000-4000-8000-000000000001",
+      "device": "eth0",
+      "host": "OpaqueRef:host-0001",
+      "network": "OpaqueRef:net-eth0",
+      "MAC": "02:00:00:00:01:00",
+      "MTU": 1500,
+      "VLAN": -1,
+      "metrics": "OpaqueRef:pifm-01-eth0",
+      "physical": true,
+      "currently_attached": true,
+      "management": true,
+      "ip_configuration_mode": "Static",
+      "IP": "192.0.2.11",
+      "netmask": "255.255.255.0",
+      "gateway": "192.0.2.1",
+      "DNS": "192.0.2.53",
+      "managed": true,
+      "capabilities": [
+        "fcoe"
+      ],
+      "bond_slave_of": "OpaqueRef:NULL",
+      "bond_master_of": [],
+      "VLAN_master_of": "OpaqueRef:NULL",
+      "VLAN_slave_of": [],
+      "tunnel_access_PIF_of": [],
+      "tunnel_transport_PIF_of": [],
+      "sriov_logical_PIF_of": [],
+      "sriov_physical_PIF_of": [],
+      "other_config": {}
+    },
+    "OpaqueRef:pif-01-eth1": {
+      "uuid": "be000000-0000-4000-8000-000000000002",
+      "device": "eth1",
+      "host": "OpaqueRef:host-0001",
+      "network": "OpaqueRef:net-eth1",
+      "MAC": "02:00:00:00:01:01",
+      "MTU": 9000,
+      "VLAN": -1,
+      "metrics": "OpaqueRef:pifm-01-eth1",
+      "physical": true,
+      "currently_attached": true,
+      "management": false,
+      "ip_configuration_mode": "Static",
+      "IP": "198.51.100.11",
+      "netmask": "255.255.255.0",
+      "gateway": "",
+      "DNS": "",
+      "managed": true,
+      "capabilities": [],
+      "bond_slave_of": "OpaqueRef:NULL",
+      "bond_master_of": [],
+      "VLAN_master_of": "OpaqueRef:NULL",
+      "VLAN_slave_of": [
+        "OpaqueRef:vlan-20"
+      ],
+      "tunnel_access_PIF_of": [],
+      "tunnel_transport_PIF_of": [],
+      "sriov_logical_PIF_of": [],
+      "sriov_physical_PIF_of": [],
+      "other_config": {
+        "management_purpose": "Storage"
+      }
+    },
+    "OpaqueRef:pif-01-vlan20": {
+      "uuid": "be000000-0000-4000-8000-000000000003",
+      "device": "eth1",
+      "host": "OpaqueRef:host-0001",
+      "network": "OpaqueRef:net-vlan20",
+      "MAC": "02:00:00:00:01:01",
+      "MTU": 1500,
+      "VLAN": 20,
+      "metrics": "OpaqueRef:pifm-01-eth1",
+      "physical": false,
+      "currently_attached": true,
+      "management": false,
+      "ip_configuration_mode": "None",
+      "IP": "",
+      "netmask": "",
+      "gateway": "",
+      "DNS": "",
+      "managed": true,
+      "capabilities": [],
+      "bond_slave_of": "OpaqueRef:NULL",
+      "bond_master_of": [],
+      "VLAN_master_of": "OpaqueRef:vlan-20",
+      "VLAN_slave_of": [],
+      "tunnel_access_PIF_of": [],
+      "tunnel_transport_PIF_of": [],
+      "sriov_logical_PIF_of": [],
+      "sriov_physical_PIF_of": [],
+      "other_config": {}
+    },
+    "OpaqueRef:pif-02-eth0": {
+      "uuid": "be000000-0000-4000-8000-000000000004",
+      "device": "eth0",
+      "host": "OpaqueRef:host-0002",
+      "network": "OpaqueRef:net-eth0",
+      "MAC": "02:00:00:00:02:00",
+      "MTU": 1500,
+      "VLAN": -1,
+      "metrics": "OpaqueRef:pifm-02-eth0",
+      "physical": true,
+      "currently_attached": true,
+      "management": true,
+      "ip_configuration_mode": "DHCP",
+      "IP": "",
+      "netmask": "",
+      "gateway": "",
+      "DNS": "",
+      "managed": true,
+      "capabilities": [],
+      "bond_slave_of": "OpaqueRef:NULL",
+      "bond_master_of": [],
+      "VLAN_master_of": "OpaqueRef:NULL",
+      "VLAN_slave_of": [],
+      "tunnel_access_PIF_of": [],
+      "tunnel_transport_PIF_of": [],
+      "sriov_logical_PIF_of": [],
+      "sriov_physical_PIF_of": [],
+      "other_config": {}
+    },
+    "OpaqueRef:pif-02-eth1": {
+      "uuid": "be000000-0000-4000-8000-000000000005",
+      "device": "eth1",
+      "host": "OpaqueRef:host-0002",
+      "network": "OpaqueRef:net-eth1",
+      "MAC": "02:00:00:00:02:01",
+      "MTU": 9000,
+      "VLAN": -1,
+      "metrics": "OpaqueRef:pifm-02-eth1",
+      "physical": true,
+      "currently_attached": true,
+      "management": false,
+      "ip_configuration_mode": "None",
+      "IP": "",
+      "netmask": "",
+      "gateway": "",
+      "DNS": "",
+      "managed": true,
+      "capabilities": [],
+      "bond_slave_of": "OpaqueRef:NULL",
+      "bond_master_of": [],
+      "VLAN_master_of": "OpaqueRef:NULL",
+      "VLAN_slave_of": [],
+      "tunnel_access_PIF_of": [],
+      "tunnel_transport_PIF_of": [],
+      "sriov_logical_PIF_of": [],
+      "sriov_physical_PIF_of": [],
+      "other_config": {}
+    }
+  },
+  "pif_metrics": {
+    "OpaqueRef:pifm-01-eth0": {
+      "uuid": "ce000000-0000-4000-8000-000000000001",
+      "carrier": true,
+      "speed": 10000,
+      "duplex": true,
+      "vendor_name": "Intel Corporation",
+      "device_name": "Ethernet Controller X710 for 10GbE SFP+",
+      "pci_bus_path": "0000:01:00.0",
+      "vendor_id": "8086",
+      "device_id": "1572"
+    },
+    "OpaqueRef:pifm-01-eth1": {
+      "uuid": "ce000000-0000-4000-8000-000000000002",
+      "carrier": true,
+      "speed": 10000,
+      "duplex": true,
+      "vendor_name": "Intel Corporation",
+      "device_name": "Ethernet Controller X710 for 10GbE SFP+",
+      "pci_bus_path": "0000:01:00.1",
+      "vendor_id": "8086",
+      "device_id": "1572"
+    },
+    "OpaqueRef:pifm-02-eth0": {
+      "uuid": "ce000000-0000-4000-8000-000000000003",
+      "carrier": true,
+      "speed": 1000,
+      "duplex": true,
+      "vendor_name": "Intel Corporation",
+      "device_name": "Ethernet Controller X710 for 10GbE SFP+",
+      "pci_bus_path": "0000:01:00.0",
+      "vendor_id": "8086",
+      "device_id": "1572"
+    },
+    "OpaqueRef:pifm-02-eth1": {
+      "uuid": "ce000000-0000-4000-8000-000000000004",
+      "carrier": false,
+      "speed": 0,
+      "duplex": false,
+      "vendor_name": "Intel Corporation",
+      "device_name": "Ethernet Controller X710 for 10GbE SFP+",
+      "pci_bus_path": "0000:01:00.1",
+      "vendor_id": "8086",
+      "device_id": "1572"
+    }
+  },
+  "vlan": {
+    "OpaqueRef:vlan-20": {
+      "uuid": "de000000-0000-4000-8000-000000000001",
+      "tagged_PIF": "OpaqueRef:pif-01-eth1",
+      "untagged_PIF": "OpaqueRef:pif-01-vlan20",
+      "tag": 20,
+      "other_config": {}
+    }
+  },
+  "vif": {
+    "OpaqueRef:vif-web-0": {
+      "uuid": "fe000000-0000-4000-8000-000000000001",
+      "device": "0",
+      "VM": "OpaqueRef:vm-web",
+      "network": "OpaqueRef:net-eth0",
+      "MAC": "02:00:00:00:0a:01",
+      "MTU": 1500,
+      "currently_attached": true,
+      "qos_algorithm_type": "ratelimit",
+      "qos_algorithm_params": {
+        "kbps": "10240"
+      },
+      "other_config": {}
+    },
+    "OpaqueRef:vif-web-1": {
+      "uuid": "fe000000-0000-4000-8000-000000000002",
+      "device": "1",
+      "VM": "OpaqueRef:vm-web",
+      "network": "OpaqueRef:net-vlan20",
+      "MAC": "02:00:00:00:0a:02",
+      "MTU": 1500,
+      "currently_attached": true,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
+      "other_config": {}
+    },
+    "OpaqueRef:vif-db-0": {
+      "uuid": "fe000000-0000-4000-8000-000000000003",
+      "device": "0",
+      "VM": "OpaqueRef:vm-db",
+      "network": "OpaqueRef:net-eth0",
+      "MAC": "02:00:00:00:0b:01",
+      "MTU": 1500,
+      "currently_attached": false,
+      "qos_algorithm_type": "",
+      "qos_algorithm_params": {},
       "other_config": {}
     }
   }

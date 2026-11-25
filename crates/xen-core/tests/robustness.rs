@@ -173,7 +173,10 @@ async fn a_pool_member_redirects_to_the_coordinator() {
     assert_eq!(member.call_count("session.login_with_password"), 1);
     assert_eq!(member.active_sessions(), 0);
     assert_eq!(coordinator.active_sessions(), 1);
-    assert_eq!(first(&state).model.tree()[0].name, "Lab Pool");
+    assert_eq!(
+        first(&state).model.tree(&xen_core::TreeOptions::default())[0].name,
+        "Lab Pool"
+    );
     // The coordinator is what gets saved.
     let saved: Vec<&str> = state
         .settings

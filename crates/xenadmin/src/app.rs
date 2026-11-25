@@ -8,8 +8,9 @@ use egui::collapsing_header::CollapsingState;
 use egui::{
     Align2, Button, CentralPanel, Context, Grid, Key, Panel, RichText, ScrollArea, TextEdit, Ui,
 };
-use xapi::{Host, Pool, Ref, Vm, VmPowerState, VmRecord};
-use xen_core::model::{self, ConnectionModel, TreePool, TreeVm};
+use xapi::{Host, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
+use xen_core::model::{self, ConnectionModel, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm};
+use xen_core::objects::{self, VmKind};
 use xen_core::{
     AppState, BackendHandle, CertificatePrompt, Command, ConfigLocation, ConnectionError,
     ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
@@ -19,7 +20,9 @@ use xen_core::{
 use crate::branding;
 use crate::events;
 use crate::i18n::{self, fill, strings};
-use crate::icons;
+use crate::icons::{self, HostState};
+use crate::tab_strings::tab_strings;
+use crate::tabs::{self, Subject, Tab};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Selection {
@@ -30,12 +33,17 @@ enum Selection {
     Pool(ConnectionId, Ref<Pool>),
     Host(ConnectionId, Ref<Host>),
     Vm(ConnectionId, Ref<Vm>),
+    Sr(ConnectionId, Ref<Sr>),
 }
 
 impl Selection {
     fn connection(&self) -> Option<ConnectionId> {
         match self {
-            Self::Connection(c) | Self::Pool(c, _) | Self::Host(c, _) | Self::Vm(c, _) => Some(*c),
+            Self::Connection(c)
+            | Self::Pool(c, _)
+            | Self::Host(c, _)
+            | Self::Vm(c, _)
+            | Self::Sr(c, _) => Some(*c),
             Self::Saved(_) => None,
         }
     }
@@ -79,11 +87,18 @@ pub struct XenAdminApp {
     options_open: bool,
     events_open: bool,
     errors: Vec<String>,
-    /// Tree derived from each connection's last model snapshot (rebuilt only
-    /// when it changes).
-    tree_cache: HashMap<ConnectionId, (Arc<ConnectionModel>, Arc<Vec<TreePool>>)>,
+    /// Tree derived from each connection's last model snapshot and the view
+    /// options (rebuilt only when either changes).
+    tree_cache: HashMap<ConnectionId, TreeCacheEntry>,
+    /// The tree's name filter.
+    tree_filter: String,
+    /// The detail tab last chosen; kept while moving between objects that
+    /// have it, like the original.
+    tab: Tab,
     actions: Vec<Action>,
 }
+
+type TreeCacheEntry = (Arc<ConnectionModel>, TreeOptions, Arc<Vec<TreePool>>);
 
 impl XenAdminApp {
     /// The connect dialog opens on start unless saved servers are being
@@ -102,6 +117,8 @@ impl XenAdminApp {
             events_open: true,
             errors: Vec::new(),
             tree_cache: HashMap::new(),
+            tree_filter: String::new(),
+            tab: Tab::General,
             actions: Vec::new(),
         };
         if !restoring {
@@ -163,13 +180,17 @@ impl XenAdminApp {
         }
     }
 
-    fn tree_for(&mut self, conn: &ConnectionView) -> Arc<Vec<TreePool>> {
+    fn tree_for(&mut self, conn: &ConnectionView, options: &TreeOptions) -> Arc<Vec<TreePool>> {
         match self.tree_cache.get(&conn.id) {
-            Some((cached, tree)) if Arc::ptr_eq(cached, &conn.model) => tree.clone(),
+            Some((cached, cached_options, tree))
+                if Arc::ptr_eq(cached, &conn.model) && cached_options == options =>
+            {
+                tree.clone()
+            }
             _ => {
-                let tree = Arc::new(conn.model.tree());
+                let tree = Arc::new(conn.model.tree(options));
                 self.tree_cache
-                    .insert(conn.id, (conn.model.clone(), tree.clone()));
+                    .insert(conn.id, (conn.model.clone(), options.clone(), tree.clone()));
                 tree
             }
         }
@@ -248,6 +269,18 @@ impl XenAdminApp {
             });
             ui.menu_button(s.menu_view, |ui| {
                 ui.checkbox(&mut self.events_open, s.menu_events);
+                ui.separator();
+                let t = tab_strings();
+                let mut prefs = state.settings.preferences.clone();
+                ui.checkbox(&mut prefs.show_user_templates, t.view_custom_templates);
+                ui.checkbox(&mut prefs.show_default_templates, t.view_default_templates);
+                ui.checkbox(&mut prefs.show_local_storage, t.view_local_storage);
+                ui.checkbox(&mut prefs.show_snapshots, t.view_snapshots);
+                ui.checkbox(&mut prefs.show_hidden_objects, t.view_hidden);
+                if prefs != state.settings.preferences {
+                    self.actions
+                        .push(Action::Send(Command::SetPreferences(prefs)));
+                }
             });
             ui.menu_button(s.menu_vm, |ui| {
                 let vm = self.selected_vm(state);
@@ -355,8 +388,28 @@ impl XenAdminApp {
 
     fn tree(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
+        let t = tab_strings();
         ui.add_space(4.0);
         ui.strong(s.tree_heading);
+        ui.horizontal(|ui| {
+            let label = ui.label(RichText::new(t.tree_filter_label).weak());
+            let clear = !self.tree_filter.is_empty();
+            let width = ui.available_width() - if clear { 28.0 } else { 0.0 };
+            ui.add(
+                TextEdit::singleline(&mut self.tree_filter)
+                    .hint_text(t.tree_filter)
+                    .desired_width(width),
+            )
+            .labelled_by(label.id);
+            if clear
+                && ui
+                    .small_button("x")
+                    .on_hover_text(t.tree_filter_clear)
+                    .clicked()
+            {
+                self.tree_filter.clear();
+            }
+        });
         ui.separator();
         let saved: Vec<&SavedServer> = state
             .settings
@@ -368,63 +421,159 @@ impl XenAdminApp {
             ui.label(RichText::new(s.tree_empty).weak());
             return;
         }
+        let options = state.settings.preferences.tree_options(&self.tree_filter);
+        let needle = self.tree_filter.trim().to_lowercase();
+        let matches = |name: &str| needle.is_empty() || name.to_lowercase().contains(&needle);
+        let filtering = !needle.is_empty();
         ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+            let mut shown = 0;
             for conn in &state.connections {
                 if conn.model.pools.is_empty() {
-                    self.connection_row(ui, conn);
+                    if matches(&conn.server) {
+                        self.connection_row(ui, conn);
+                        shown += 1;
+                    }
                 } else {
-                    for pool in self.tree_for(conn).iter() {
-                        self.pool_node(ui, state, conn, pool);
+                    for pool in self.tree_for(conn, &options).iter() {
+                        self.pool_node(ui, state, conn, pool, filtering);
+                        shown += 1;
                     }
                 }
             }
-            for server in saved {
+            for server in saved.into_iter().filter(|srv| matches(&srv.address)) {
                 self.saved_row(ui, server);
+                shown += 1;
+            }
+            if shown == 0 {
+                ui.label(RichText::new(t.tree_no_match).weak());
             }
         });
     }
 
-    fn pool_node(&mut self, ui: &mut Ui, state: &AppState, conn: &ConnectionView, pool: &TreePool) {
+    fn pool_node(
+        &mut self,
+        ui: &mut Ui,
+        state: &AppState,
+        conn: &ConnectionView,
+        pool: &TreePool,
+        filtering: bool,
+    ) {
         let id = ui.make_persistent_id(("pool", conn.id, pool.pool_ref.as_str()));
-        CollapsingState::load_with_default_open(ui.ctx(), id, true)
-            .show_header(ui, |ui| {
-                icons::pool(ui);
-                let response = self.tree_label(
-                    ui,
-                    Selection::Pool(conn.id, pool.pool_ref.clone()),
-                    &pool.name,
+        let mut node = CollapsingState::load_with_default_open(ui.ctx(), id, true);
+        if filtering {
+            node.set_open(true);
+        }
+        node.show_header(ui, |ui| {
+            icons::pool(ui);
+            let response = self.tree_label(
+                ui,
+                Selection::Pool(conn.id, pool.pool_ref.clone()),
+                &pool.name,
+            );
+            if !conn.status.is_connected() {
+                ui.label(
+                    RichText::new(i18n::connection_status_label(&conn.status))
+                        .weak()
+                        .italics(),
                 );
-                if !conn.status.is_connected() {
-                    ui.label(
-                        RichText::new(i18n::connection_status_label(&conn.status))
-                            .weak()
-                            .italics(),
-                    );
-                }
-                response.context_menu(|ui| self.connection_menu(ui, conn));
-            })
-            .body(|ui| {
-                for host in &pool.hosts {
-                    let id = ui.make_persistent_id(("host", conn.id, host.host_ref.as_str()));
-                    CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                        .show_header(ui, |ui| {
-                            icons::host(ui, host.enabled && conn.status.is_connected());
-                            self.tree_label(
-                                ui,
-                                Selection::Host(conn.id, host.host_ref.clone()),
-                                &host.name,
-                            );
-                        })
-                        .body(|ui| {
-                            for vm in &host.vms {
-                                self.vm_row(ui, state, conn, vm);
-                            }
-                        });
-                }
-                for vm in &pool.vms {
-                    self.vm_row(ui, state, conn, vm);
-                }
+            }
+            response.context_menu(|ui| self.connection_menu(ui, conn));
+        })
+        .body(|ui| {
+            for host in &pool.hosts {
+                self.host_node(ui, state, conn, host, filtering);
+            }
+            for vm in &pool.vms {
+                self.vm_node(ui, state, conn, vm, filtering);
+            }
+            for sr in &pool.srs {
+                self.sr_row(ui, conn, sr);
+            }
+            for vm in &pool.templates {
+                self.vm_node(ui, state, conn, vm, filtering);
+            }
+        });
+    }
+
+    fn host_node(
+        &mut self,
+        ui: &mut Ui,
+        state: &AppState,
+        conn: &ConnectionView,
+        host: &TreeHost,
+        filtering: bool,
+    ) {
+        let icon = if !conn.status.is_connected() || !host.live {
+            HostState::Disconnected
+        } else if host.maintenance {
+            HostState::Maintenance
+        } else {
+            HostState::Connected
+        };
+        let selection = Selection::Host(conn.id, host.host_ref.clone());
+        if host.vms.is_empty() && host.srs.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                icons::host_state(ui, icon);
+                self.tree_label(ui, selection, &host.name);
             });
+            return;
+        }
+        let id = ui.make_persistent_id(("host", conn.id, host.host_ref.as_str()));
+        let mut node = CollapsingState::load_with_default_open(ui.ctx(), id, true);
+        if filtering {
+            node.set_open(true);
+        }
+        node.show_header(ui, |ui| {
+            icons::host_state(ui, icon);
+            self.tree_label(ui, selection, &host.name);
+        })
+        .body(|ui| {
+            for vm in &host.vms {
+                self.vm_node(ui, state, conn, vm, filtering);
+            }
+            for sr in &host.srs {
+                self.sr_row(ui, conn, sr);
+            }
+        });
+    }
+
+    fn sr_row(&mut self, ui: &mut Ui, conn: &ConnectionView, sr: &TreeSr) {
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().indent);
+            icons::sr(ui, sr.icon);
+            self.tree_label(ui, Selection::Sr(conn.id, sr.sr_ref.clone()), &sr.name);
+        });
+    }
+
+    /// A VM, template or snapshot; a VM with shown snapshots can be expanded.
+    fn vm_node(
+        &mut self,
+        ui: &mut Ui,
+        state: &AppState,
+        conn: &ConnectionView,
+        vm: &TreeVm,
+        filtering: bool,
+    ) {
+        if vm.snapshots.is_empty() {
+            self.vm_row(ui, state, conn, vm);
+            return;
+        }
+        let id = ui.make_persistent_id(("vm", conn.id, vm.vm_ref.as_str()));
+        let mut node = CollapsingState::load_with_default_open(ui.ctx(), id, true);
+        if filtering {
+            node.set_open(true);
+        }
+        node.show_header(ui, |ui| {
+            icons::vm_state(ui, vm.icon);
+            let response = self.tree_label(ui, Selection::Vm(conn.id, vm.vm_ref.clone()), &vm.name);
+            self.vm_context_menu(&response, conn, vm);
+        })
+        .body(|ui| {
+            for snapshot in &vm.snapshots {
+                self.vm_row(ui, state, conn, snapshot);
+            }
+        });
     }
 
     /// A connection with nothing loaded yet (connecting or failed).
@@ -568,27 +717,40 @@ impl XenAdminApp {
         ui.horizontal(|ui| {
             // Leaves line up with the labels of collapsible siblings.
             ui.add_space(ui.spacing().indent);
-            icons::vm(ui, &vm.power_state);
+            icons::vm_state(ui, vm.icon);
             let response = self.tree_label(ui, Selection::Vm(conn.id, vm.vm_ref.clone()), &vm.name);
-            if let Some(record) = conn.model.vms.get(&vm.vm_ref) {
-                response.context_menu(|ui| {
-                    if self.vm_action_buttons(ui, Some((conn, &vm.vm_ref, record))) {
-                        ui.close();
-                    }
-                });
-            }
+            self.vm_context_menu(&response, conn, vm);
         });
     }
 
+    /// Start / Shut Down on a guest's tree row.
+    fn vm_context_menu(&mut self, response: &egui::Response, conn: &ConnectionView, vm: &TreeVm) {
+        if let Some(record) = conn
+            .model
+            .vms
+            .get(&vm.vm_ref)
+            .filter(|r| model::is_guest(r))
+        {
+            response.context_menu(|ui| {
+                if self.vm_action_buttons(ui, Some((conn, &vm.vm_ref, record))) {
+                    ui.close();
+                }
+            });
+        }
+    }
+
     fn details(&mut self, ui: &mut Ui, state: &AppState) {
-        let s = strings();
         let selection = self.selection.clone();
         let conn = selection
             .as_ref()
             .and_then(Selection::connection)
             .and_then(|c| state.connection(c));
-        if let (Some(conn), Some(Selection::Pool(..) | Selection::Host(..) | Selection::Vm(..))) =
-            (conn, &selection)
+        let object = matches!(
+            selection,
+            Some(Selection::Pool(..) | Selection::Host(..) | Selection::Vm(..) | Selection::Sr(..))
+        );
+        if let Some(conn) = conn
+            && object
             && !conn.status.is_connected()
         {
             ui.horizontal(|ui| {
@@ -596,85 +758,220 @@ impl XenAdminApp {
             });
             ui.separator();
         }
-        match (&selection, conn) {
-            (Some(Selection::Vm(_, r)), Some(conn)) if conn.model.vms.contains_key(r) => {
-                let vm = &conn.model.vms[r];
-                ui.horizontal(|ui| {
-                    icons::vm(ui, &vm.power_state);
-                    ui.heading(&vm.name_label);
-                });
-                ui.label(RichText::new(s.details_type_vm).weak());
-                ui.separator();
-                Grid::new("vm-details")
-                    .num_columns(2)
-                    .spacing([16.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(s.details_power_state);
+        let model = conn.map(|c| c.model.clone());
+        let subject = match (&selection, &model) {
+            (Some(Selection::Vm(_, r)), Some(m)) => m.vms.get(r).map(|v| Subject::Vm(r, v)),
+            (Some(Selection::Host(_, r)), Some(m)) => m.hosts.get(r).map(|h| Subject::Host(r, h)),
+            (Some(Selection::Pool(_, r)), Some(m)) => m.pools.get(r).map(|p| Subject::Pool(p)),
+            (Some(Selection::Sr(_, r)), Some(m)) => m.srs.get(r).map(|x| Subject::Sr(r, x)),
+            _ => None,
+        };
+        match (&selection, conn, subject) {
+            (_, Some(conn), Some(subject)) => self.object_details(ui, state, conn, subject),
+            (Some(Selection::Connection(_)), Some(conn), _) => self.connection_details(ui, conn),
+            (Some(Selection::Saved(address)), _, _) => self.saved_details(ui, state, address),
+            _ => no_selection(ui, state),
+        }
+    }
+
+    fn saved_details(&mut self, ui: &mut Ui, state: &AppState, address: &str) {
+        let s = strings();
+        let Some(server) = state
+            .settings
+            .servers
+            .iter()
+            .find(|x| x.address == address)
+            .cloned()
+        else {
+            no_selection(ui, state);
+            return;
+        };
+        ui.horizontal(|ui| {
+            icons::host(ui, false);
+            ui.heading(&server.address);
+        });
+        ui.label(RichText::new(s.server_heading).weak());
+        ui.separator();
+        Grid::new("saved-details")
+            .num_columns(2)
+            .spacing([16.0, 6.0])
+            .show(ui, |ui| {
+                row(ui, s.server_status, s.server_disconnected);
+                row(ui, s.server_user, &server.username);
+            });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            self.saved_buttons(ui, &server);
+        });
+    }
+
+    /// Header, actions and tabs of a pool, host, VM or SR.
+    fn object_details(
+        &mut self,
+        ui: &mut Ui,
+        state: &AppState,
+        conn: &ConnectionView,
+        subject: Subject<'_>,
+    ) {
+        let s = strings();
+        let t = tab_strings();
+        let model = &conn.model;
+        ui.horizontal(|ui| match subject {
+            Subject::Pool(pool) => {
+                icons::pool(ui);
+                ui.heading(tabs::pool_display_name(model, pool));
+            }
+            Subject::Host(_, host) => {
+                let state = if !conn.status.is_connected() || !objects::host_is_live(model, host) {
+                    HostState::Disconnected
+                } else if objects::host_in_maintenance(host) {
+                    HostState::Maintenance
+                } else {
+                    HostState::Connected
+                };
+                icons::host_state(ui, state);
+                ui.heading(&host.name_label);
+            }
+            Subject::Vm(_, vm) => {
+                icons::vm_state(ui, objects::vm_icon(vm));
+                ui.heading(tabs::vm_display_name(vm));
+            }
+            Subject::Sr(r, sr) => {
+                icons::sr(ui, objects::sr_icon(model, r, sr));
+                ui.heading(&sr.name_label);
+            }
+        });
+        ui.horizontal(|ui| {
+            match subject {
+                Subject::Pool(..) => {
+                    ui.label(RichText::new(s.details_type_pool).weak());
+                }
+                Subject::Host(..) => {
+                    ui.label(RichText::new(s.details_type_host).weak());
+                }
+                Subject::Sr(..) => {
+                    ui.label(RichText::new(t.type_sr).weak());
+                }
+                Subject::Vm(_, vm) => {
+                    let kind = match objects::vm_kind(vm) {
+                        VmKind::Snapshot => t.type_snapshot,
+                        VmKind::UserTemplate | VmKind::DefaultTemplate => t.type_template,
+                        _ => s.details_type_vm,
+                    };
+                    ui.label(RichText::new(kind).weak());
+                    if !vm.is_a_template {
+                        ui.label(RichText::new("·").weak());
                         ui.colored_label(
                             icons::power_color(&vm.power_state),
                             power_label(&vm.power_state),
                         );
-                        ui.end_row();
-                        if let Some(host) = conn.model.hosts.get(&vm.resident_on) {
-                            ui.label(s.details_type_host);
-                            ui.label(&host.name_label);
-                            ui.end_row();
-                        }
-                        row(ui, s.details_description, &vm.name_description);
-                        row(ui, s.details_uuid, &vm.uuid);
-                    });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
+                    }
+                }
+            }
+            ui.add_space(16.0);
+            match subject {
+                Subject::Vm(r, vm) if model::is_guest(vm) => {
                     self.vm_action_buttons(ui, Some((conn, r, vm)));
                     if conn.busy_vms.contains(r) {
                         ui.spinner();
                         ui.label(s.details_busy);
                     }
-                });
-            }
-            (Some(Selection::Host(_, r)), Some(conn)) if conn.model.hosts.contains_key(r) => {
-                host_details(ui, &conn.model, &conn.model.hosts[r]);
-            }
-            (Some(Selection::Pool(_, r)), Some(conn)) if conn.model.pools.contains_key(r) => {
-                pool_details(ui, &conn.model, &conn.model.pools[r]);
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
+                }
+                Subject::Pool(..) => {
                     self.connection_buttons(ui, conn);
-                });
+                }
+                _ => {}
             }
-            (Some(Selection::Connection(_)), Some(conn)) => self.connection_details(ui, conn),
-            (Some(Selection::Saved(address)), _) => {
-                match state
-                    .settings
-                    .servers
-                    .iter()
-                    .find(|x| &x.address == address)
-                {
-                    Some(server) => {
-                        let server = server.clone();
-                        ui.horizontal(|ui| {
-                            icons::host(ui, false);
-                            ui.heading(&server.address);
-                        });
-                        ui.label(RichText::new(s.server_heading).weak());
-                        ui.separator();
-                        Grid::new("saved-details")
-                            .num_columns(2)
-                            .spacing([16.0, 6.0])
-                            .show(ui, |ui| {
-                                row(ui, s.server_status, s.server_disconnected);
-                                row(ui, s.server_user, &server.username);
-                            });
-                        ui.add_space(12.0);
-                        ui.horizontal(|ui| {
-                            self.saved_buttons(ui, &server);
-                        });
-                    }
-                    None => no_selection(ui, state),
+        });
+        ui.separator();
+
+        let tabs = tabs::tabs_for(model, subject);
+        if !tabs.contains(&self.tab) {
+            self.tab = Tab::General;
+        }
+        ui.horizontal(|ui| {
+            for tab in &tabs {
+                if ui.selectable_label(self.tab == *tab, tab.title()).clicked() {
+                    self.tab = *tab;
                 }
             }
-            _ => no_selection(ui, state),
-        }
+        });
+        ui.separator();
+        ui.label(
+            RichText::new(tabs::page_title(self.tab, subject))
+                .strong()
+                .size(15.0),
+        );
+        ui.add_space(4.0);
+
+        let ctx = tabs::Ctx {
+            model,
+            now: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            show_hidden: state.settings.preferences.show_hidden_objects,
+        };
+        let kind = match subject {
+            Subject::Pool(..) => "pool",
+            Subject::Host(..) => "host",
+            Subject::Vm(..) => "vm",
+            Subject::Sr(..) => "sr",
+        };
+        ScrollArea::vertical()
+            .id_salt("details-scroll")
+            .auto_shrink(false)
+            .show(ui, |ui| match (self.tab, subject) {
+                (Tab::General, Subject::Vm(_, vm)) => {
+                    tabs::render::sections(ui, kind, &tabs::general::vm_sections(ctx, vm));
+                }
+                (Tab::General, Subject::Host(r, host)) => {
+                    tabs::render::sections(ui, kind, &tabs::general::host_sections(ctx, r, host));
+                }
+                (Tab::General, Subject::Pool(pool)) => {
+                    tabs::render::sections(ui, kind, &tabs::general::pool_sections(ctx, pool));
+                }
+                (Tab::General, Subject::Sr(_, sr)) => {
+                    tabs::render::sections(ui, kind, &tabs::general::sr_sections(ctx, sr));
+                }
+                (Tab::Memory, _) => {
+                    tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject));
+                }
+                (Tab::VmStorage, Subject::Vm(_, vm)) => {
+                    tabs::render::table(ui, "vm-disks", &tabs::storage::vm_disks(ctx, vm));
+                }
+                (Tab::SrStorage, Subject::Sr(_, sr)) => {
+                    tabs::render::table(ui, "sr-disks", &tabs::storage::sr_disks(ctx, sr));
+                }
+                (Tab::PhysicalStorage, Subject::Host(r, _)) => {
+                    tabs::render::table(ui, "srs", &tabs::storage::physical_storage(ctx, Some(r)));
+                }
+                (Tab::PhysicalStorage, _) => {
+                    tabs::render::table(ui, "srs", &tabs::storage::physical_storage(ctx, None));
+                }
+                (Tab::Networking, Subject::Vm(_, vm)) => {
+                    tabs::render::table(ui, "vifs", &tabs::network::vm_interfaces(ctx, vm));
+                }
+                (Tab::Networking, subject) => {
+                    let host = match subject {
+                        Subject::Host(r, _) => Some(r),
+                        _ => None,
+                    };
+                    ui.strong(t.networks_label);
+                    tabs::render::table(ui, "networks", &tabs::network::networks(ctx, host));
+                    ui.add_space(12.0);
+                    ui.strong(t.ip_config_label);
+                    tabs::render::table(
+                        ui,
+                        "ip-config",
+                        &tabs::network::ip_configuration(ctx, host),
+                    );
+                }
+                (Tab::Nics, Subject::Host(r, _)) => {
+                    tabs::render::table(ui, "nics", &tabs::network::nics(ctx, r));
+                }
+                _ => {}
+            });
     }
 
     fn connection_details(&mut self, ui: &mut Ui, conn: &ConnectionView) {
@@ -1008,6 +1305,8 @@ impl eframe::App for XenAdminApp {
             .min_size(180.0)
             .show(ui, |ui| self.tree(ui, &state));
         CentralPanel::default().show(ui, |ui| self.details(ui, &state));
+        // Uptimes on the General tab move on their own.
+        ctx.request_repaint_after(Duration::from_secs(30));
         self.connect_window(&ctx, &state);
         self.certificate_window(&ctx);
         self.options_window(&ctx, &state);
@@ -1107,78 +1406,6 @@ fn no_selection(ui: &mut Ui, state: &AppState) {
         };
         ui.label(RichText::new(hint).weak());
     });
-}
-
-fn host_details(ui: &mut Ui, model: &ConnectionModel, host: &xapi::HostRecord) {
-    let s = strings();
-    ui.horizontal(|ui| {
-        icons::host(ui, host.enabled);
-        ui.heading(&host.name_label);
-    });
-    ui.label(RichText::new(s.details_type_host).weak());
-    ui.separator();
-    let resident = host
-        .resident_vms
-        .iter()
-        .filter(|v| model.vms.get(*v).is_some_and(|rec| model::is_guest(rec)))
-        .count();
-    Grid::new("host-details")
-        .num_columns(2)
-        .spacing([16.0, 6.0])
-        .show(ui, |ui| {
-            row(ui, s.details_address, &host.address);
-            row(
-                ui,
-                s.details_enabled,
-                if host.enabled {
-                    s.details_enabled
-                } else {
-                    s.details_disabled
-                },
-            );
-            let version = [
-                host.software_version.get("product_brand"),
-                host.software_version.get("product_version"),
-            ]
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ");
-            row(ui, s.details_version, &version);
-            row(ui, s.details_vms, &resident.to_string());
-            row(ui, s.details_description, &host.name_description);
-            row(ui, s.details_uuid, &host.uuid);
-        });
-}
-
-fn pool_details(ui: &mut Ui, model: &ConnectionModel, pool: &xapi::PoolRecord) {
-    let s = strings();
-    let name = model
-        .coordinator()
-        .map(|h| h.name_label.as_str())
-        .unwrap_or_default();
-    ui.horizontal(|ui| {
-        icons::pool(ui);
-        ui.heading(if pool.name_label.is_empty() {
-            name
-        } else {
-            &pool.name_label
-        });
-    });
-    ui.label(RichText::new(s.details_type_pool).weak());
-    ui.separator();
-    let guests = model.vms.values().filter(|v| model::is_guest(v)).count();
-    Grid::new("pool-details")
-        .num_columns(2)
-        .spacing([16.0, 6.0])
-        .show(ui, |ui| {
-            row(ui, s.details_coordinator, name);
-            row(ui, s.details_hosts, &model.hosts.len().to_string());
-            row(ui, s.details_vms, &guests.to_string());
-            row(ui, s.details_description, &pool.name_description);
-            row(ui, s.details_uuid, &pool.uuid);
-        });
 }
 
 fn row(ui: &mut Ui, label: &str, value: &str) {
@@ -1431,23 +1658,12 @@ mod tests {
         assert_eq!(model.object_count(), 241);
     }
 
-    /// Read-only check of the real window code against a real host. Ignored
-    /// unless asked for:
-    ///
-    /// ```text
-    /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
-    /// XENADMIN_REAL_FINGERPRINT=AA:BB:… \
-    ///   cargo test -p xenadmin real_host -- --ignored --nocapture
-    /// ```
-    ///
-    /// It types the address and credentials into the connect dialog, trusts
-    /// the certificate only if it has the expected fingerprint, waits for the
-    /// tree and for live `event.from` polling, and checks the tree against
-    /// the backend's cache. It clicks no operation button and changes nothing
-    /// on the host. Only counts are printed (no names).
-    #[test]
-    #[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables)"]
-    fn real_host_tree_read_only() {
+    /// Connects the real window code to a real host, read-only: types the
+    /// address and credentials into the connect dialog, trusts the
+    /// certificate only if it has the expected fingerprint and waits for the
+    /// cache to load. Production timings (heartbeat every 15 s, event.from
+    /// 60 s).
+    fn real_host_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, XenAdminApp> {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("set {name}"));
         let (host, user, password, fingerprint) = (
             var("XENADMIN_REAL_HOST"),
@@ -1455,8 +1671,6 @@ mod tests {
             var("XENADMIN_REAL_PASSWORD"),
             var("XENADMIN_REAL_FINGERPRINT"),
         );
-        let runtime = runtime();
-        // Production timings (heartbeat every 15 s, event.from 60 s).
         let handle = runtime.handle().clone();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1100.0, 800.0))
@@ -1495,8 +1709,30 @@ mod tests {
                 .first()
                 .is_some_and(|c| c.status.is_connected() && c.model.object_count() > 0)
         });
+        harness
+    }
+
+    /// Read-only check of the real window code against a real host. Ignored
+    /// unless asked for:
+    ///
+    /// ```text
+    /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
+    /// XENADMIN_REAL_FINGERPRINT=AA:BB:… \
+    ///   cargo test -p xenadmin real_host -- --ignored --nocapture
+    /// ```
+    ///
+    /// It waits for the tree and for live `event.from` polling, and checks
+    /// the tree against the backend's cache. It clicks no operation button
+    /// and changes nothing on the host. Only counts are printed (no names).
+    #[test]
+    #[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables)"]
+    fn real_host_tree_read_only() {
+        let runtime = runtime();
+        let mut harness = real_host_harness(&runtime);
         let state = harness.state().backend.state();
-        let tree = state.connections[0].model.tree();
+        let tree = state.connections[0]
+            .model
+            .tree(&xen_core::TreeOptions::default());
         assert_eq!(tree.len(), 1);
         harness.get_by_label(&tree[0].name);
         let mut guests = 0;
@@ -1546,6 +1782,195 @@ mod tests {
             .backend
             .shutdown_blocking(Duration::from_secs(5));
         println!("logged out");
+    }
+
+    fn sections_json(sections: &[tabs::Section]) -> serde_json::Value {
+        serde_json::Value::Object(
+            sections
+                .iter()
+                .map(|sec| {
+                    let rows = sec
+                        .rows
+                        .iter()
+                        .map(|r| (r.label.clone(), serde_json::json!(r.value)))
+                        .collect();
+                    (sec.title.to_owned(), serde_json::Value::Object(rows))
+                })
+                .collect(),
+        )
+    }
+
+    fn table_json(table: &tabs::Table) -> serde_json::Value {
+        serde_json::Value::Array(
+            table
+                .rows
+                .iter()
+                .map(|r| {
+                    serde_json::Value::Object(
+                        table
+                            .columns
+                            .iter()
+                            .zip(&r.cells)
+                            .map(|(c, v)| ((*c).to_owned(), serde_json::json!(v)))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn memory_json(rows: &[tabs::memory::MemoryRow]) -> serde_json::Value {
+        use tabs::memory::MemoryRow;
+        serde_json::Value::Array(
+            rows.iter()
+                .map(|row| match row {
+                    MemoryRow::Host {
+                        name,
+                        values,
+                        percent,
+                        ..
+                    } => serde_json::json!({
+                        "host": name,
+                        "values": values.iter().map(|(l, v)| (l.to_string(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+                        "percent": percent,
+                    }),
+                    MemoryRow::Vms { names, values, .. } => serde_json::json!({
+                        "vms": names,
+                        "values": values.iter().map(|(l, v)| (l.to_string(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+                    }),
+                })
+                .collect(),
+        )
+    }
+
+    /// Read-only acceptance check of the detail tabs against a real host:
+    /// selects the pool, its coordinator, one VM (`XENADMIN_REAL_VM`, a
+    /// UUID, or the first running guest) and one SR (`XENADMIN_REAL_SR`, or
+    /// the pool's default SR), draws every tab of each in the real window,
+    /// and writes what the tabs show to the JSON file `XENADMIN_REAL_DUMP`
+    /// for comparison with `xe *-param-list`. It clicks no operation button
+    /// and changes nothing on the host; nothing is printed but counts.
+    #[test]
+    #[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables)"]
+    fn real_host_tabs_read_only() {
+        let dump_path = std::env::var("XENADMIN_REAL_DUMP").expect("set XENADMIN_REAL_DUMP");
+        let runtime = runtime();
+        let mut harness = real_host_harness(&runtime);
+        let state = harness.state().backend.state();
+        let conn = state.connections[0].clone();
+        let m = conn.model.clone();
+        let (pool_ref, pool) = m.pool().map(|(r, p)| (r.clone(), p.clone())).unwrap();
+        let host_ref = pool.master.clone();
+        let host = m.hosts[&host_ref].clone();
+        let vm_ref = match std::env::var("XENADMIN_REAL_VM") {
+            Ok(uuid) => m
+                .vms
+                .iter()
+                .find(|(_, v)| v.uuid == uuid)
+                .map(|(r, _)| r.clone()),
+            Err(_) => {
+                let mut running: Vec<_> = m
+                    .vms
+                    .iter()
+                    .filter(|(_, v)| model::is_guest(v) && v.power_state == VmPowerState::Running)
+                    .collect();
+                running.sort_by(|a, b| a.1.uuid.cmp(&b.1.uuid));
+                running.first().map(|(r, _)| (*r).clone())
+            }
+        }
+        .expect("a VM");
+        let vm = m.vms[&vm_ref].clone();
+        let sr_ref = match std::env::var("XENADMIN_REAL_SR") {
+            Ok(uuid) => m
+                .srs
+                .iter()
+                .find(|(_, x)| x.uuid == uuid)
+                .map(|(r, _)| r.clone()),
+            Err(_) => pool.default_sr.non_null().cloned(),
+        }
+        .expect("an SR");
+        let sr = m.srs[&sr_ref].clone();
+
+        // Draw every tab of each object in the real window.
+        let objects = [
+            Selection::Pool(conn.id, pool_ref.clone()),
+            Selection::Host(conn.id, host_ref.clone()),
+            Selection::Vm(conn.id, vm_ref.clone()),
+            Selection::Sr(conn.id, sr_ref.clone()),
+        ];
+        let mut drawn = 0;
+        for selection in objects {
+            let subject = match &selection {
+                Selection::Pool(..) => Subject::Pool(&pool),
+                Selection::Host(_, r) => Subject::Host(r, &host),
+                Selection::Vm(_, r) => Subject::Vm(r, &vm),
+                Selection::Sr(_, r) => Subject::Sr(r, &sr),
+                _ => unreachable!(),
+            };
+            for tab in tabs::tabs_for(&m, subject) {
+                harness.state_mut().selection = Some(selection.clone());
+                harness.state_mut().tab = tab;
+                harness.step();
+                harness.step();
+                assert!(
+                    harness
+                        .query_all_by_label(tabs::page_title(tab, subject))
+                        .next()
+                        .is_some(),
+                    "{tab:?} not drawn"
+                );
+                drawn += 1;
+            }
+        }
+
+        let ctx = tabs::Ctx {
+            model: &m,
+            now: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            show_hidden: false,
+        };
+        let dump = serde_json::json!({
+            "now": ctx.now,
+            "pool": {
+                "uuid": pool.uuid,
+                "general": sections_json(&tabs::general::pool_sections(ctx, &pool)),
+                "memory": memory_json(&tabs::memory::memory_rows(ctx, Subject::Pool(&pool))),
+                "storage": table_json(&tabs::storage::physical_storage(ctx, None)),
+                "networks": table_json(&tabs::network::networks(ctx, None)),
+            },
+            "host": {
+                "uuid": host.uuid,
+                "general": sections_json(&tabs::general::host_sections(ctx, &host_ref, &host)),
+                "memory": memory_json(&tabs::memory::memory_rows(ctx, Subject::Host(&host_ref, &host))),
+                "storage": table_json(&tabs::storage::physical_storage(ctx, Some(&host_ref))),
+                "networks": table_json(&tabs::network::networks(ctx, Some(&host_ref))),
+                "ip_configuration": table_json(&tabs::network::ip_configuration(ctx, Some(&host_ref))),
+                "nics": table_json(&tabs::network::nics(ctx, &host_ref)),
+            },
+            "vm": {
+                "uuid": vm.uuid,
+                "power_state": power_label(&vm.power_state),
+                "general": sections_json(&tabs::general::vm_sections(ctx, &vm)),
+                "memory": memory_json(&tabs::memory::memory_rows(ctx, Subject::Vm(&vm_ref, &vm))),
+                "storage": table_json(&tabs::storage::vm_disks(ctx, &vm)),
+                "networking": table_json(&tabs::network::vm_interfaces(ctx, &vm)),
+            },
+            "sr": {
+                "uuid": sr.uuid,
+                "general": sections_json(&tabs::general::sr_sections(ctx, &sr)),
+                "storage": table_json(&tabs::storage::sr_disks(ctx, &sr)),
+            },
+        });
+        std::fs::write(&dump_path, serde_json::to_string_pretty(&dump).unwrap()).unwrap();
+        harness
+            .state()
+            .backend
+            .shutdown_blocking(Duration::from_secs(5));
+        println!(
+            "real host: {drawn} tabs drawn for a pool, a host, a VM and an SR; dump written; logged out"
+        );
     }
 
     fn first_conn(h: &Harness<'_, XenAdminApp>) -> Option<Arc<xen_core::ConnectionView>> {
@@ -1700,5 +2125,218 @@ mod tests {
                 .restore_connections
         });
         harness.get_by_label(s.options_mode_memory);
+    }
+
+    /// Clicks the first widget labelled `label` (the tree and the tab bar
+    /// come before the details that may repeat a name).
+    fn click_first(harness: &mut Harness<'_, XenAdminApp>, label: &str) {
+        harness
+            .get_all_by_label(label)
+            .next()
+            .unwrap_or_else(|| panic!("no {label:?}"))
+            .click();
+        harness.step();
+    }
+
+    fn connect_to_mock(
+        runtime: &tokio::runtime::Runtime,
+    ) -> (MockServer, Harness<'static, XenAdminApp>) {
+        let server = runtime.block_on(MockServer::start(false));
+        let mut harness = app_harness(runtime);
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut harness, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+        });
+        (server, harness)
+    }
+
+    /// Every tab of a VM, a host, an SR and the pool shows the fixture's
+    /// data, and changes made on the server show up in the open tab through
+    /// `event.from` alone.
+    #[test]
+    fn detail_tabs_show_and_follow_the_cache() {
+        let runtime = runtime();
+        let (server, mut harness) = connect_to_mock(&runtime);
+        let t = tab_strings();
+
+        // VM: General, Storage, Networking, Memory.
+        click_first(&mut harness, "web-01");
+        step_until(&mut harness, "VM general", |h| {
+            h.query_by_label("Debian GNU/Linux 12 (bookworm)").is_some()
+        });
+        harness.get_by_label(t.hdr_vm_general);
+        harness.get_by_label("Optimized (version 8.3 installed)");
+        harness.get_by_label("production, web");
+        click_first(&mut harness, t.tab_storage);
+        step_until(&mut harness, "VM disks", |h| {
+            h.query_by_label("/dev/xvdb").is_some()
+        });
+        harness.get_by_label("web-01 data");
+        harness.get_by_label("7 (Highest)");
+        // Renamed elsewhere: the open tab follows.
+        server.set_field(
+            "vdi",
+            "OpaqueRef:vdi-web-data",
+            "name_label",
+            serde_json::json!("web-01 content"),
+        );
+        step_until(&mut harness, "renamed disk", |h| {
+            h.query_by_label("web-01 content").is_some()
+        });
+        click_first(&mut harness, t.tab_networking);
+        step_until(&mut harness, "VIFs", |h| {
+            h.query_by_label("192.0.2.101, 2001:db8::101").is_some()
+        });
+        harness.get_by_label("Guests VLAN 20");
+        click_first(&mut harness, t.tab_memory);
+        step_until(&mut harness, "VM memory", |h| {
+            h.query_by_label(t.mem_static_max).is_some()
+        });
+        harness.get_by_label("4.0 GB");
+
+        // The chosen tab sticks when another object has it too.
+        click_first(&mut harness, "xcp-host-01");
+        step_until(&mut harness, "host memory", |h| {
+            h.query_by_label(t.mem_total).is_some()
+        });
+        harness.get_by_label("32.0 GB");
+        click_first(&mut harness, t.tab_nics);
+        step_until(&mut harness, "NICs", |h| {
+            h.query_by_label("0000:01:00.1").is_some()
+        });
+        assert_eq!(harness.get_all_by_label("10000 Mbit/s").count(), 2);
+
+        // Host in maintenance mode, then taken out of it elsewhere.
+        click_first(&mut harness, "xcp-host-02");
+        click_first(&mut harness, t.tab_general);
+        step_until(&mut harness, "maintenance", |h| {
+            h.query_by_label(t.host_maintenance).is_some()
+        });
+        server.set_field(
+            "host",
+            "OpaqueRef:host-0002",
+            "enabled",
+            serde_json::json!(true),
+        );
+        step_until(&mut harness, "enabled", |h| {
+            h.query_by_label(t.host_maintenance).is_none()
+                && h.query_by_label(t.hdr_host_general).is_some()
+        });
+
+        // Broken SR, repaired elsewhere.
+        click_first(&mut harness, "ISO library");
+        // Only "General" starts expanded, as in the original.
+        step_until(&mut harness, "SR page", |h| {
+            h.query_by_label(t.hdr_sr_general).is_some()
+        });
+        assert!(harness.query_by_label(t.sr_broken).is_none());
+        // "Status" is also an Events column; the section header comes last.
+        harness
+            .get_all_by_label(t.sec_status)
+            .last()
+            .unwrap()
+            .click();
+        harness.step();
+        step_until(&mut harness, "broken SR", |h| {
+            h.query_by_label(t.sr_broken).is_some()
+        });
+        harness.get_by_label(t.hdr_sr_general);
+        server.set_field(
+            "pbd",
+            "OpaqueRef:pbd-iso-02",
+            "currently_attached",
+            serde_json::json!(true),
+        );
+        step_until(&mut harness, "repaired SR", |h| {
+            h.query_by_label(t.sr_ok).is_some()
+        });
+        click_first(&mut harness, t.tab_storage);
+        step_until(&mut harness, "SR disks", |h| {
+            h.query_by_label("debian-12.iso").is_some()
+        });
+
+        // Pool: physical storage and networks.
+        click_first(&mut harness, "Lab Pool");
+        click_first(&mut harness, t.tab_storage);
+        step_until(&mut harness, "pool storage", |h| {
+            h.query_by_label("29% (600 GB used)").is_some()
+        });
+        click_first(&mut harness, t.tab_networking);
+        step_until(&mut harness, "pool networks", |h| {
+            h.query_by_label(t.link_partial).is_some()
+        });
+        harness.get_by_label(t.ip_config_label);
+    }
+
+    /// View options add templates, snapshots and storage to the tree (and are
+    /// saved); the filter keeps matching names and their parents.
+    #[test]
+    fn view_options_and_name_filter_shape_the_tree() {
+        let runtime = runtime();
+        let (server, mut harness) = connect_to_mock(&runtime);
+        let s = strings();
+        let t = tab_strings();
+        harness.get_by_label("Web server template");
+        harness.get_by_label("NFS VM storage");
+        assert!(harness.query_by_label("Debian Bookworm 12").is_none());
+        assert!(harness.query_by_label("web-01 before upgrade").is_none());
+
+        for option in [t.view_default_templates, t.view_snapshots] {
+            harness.get_by_label(s.menu_view).click();
+            step_until(&mut harness, "view menu", |h| {
+                h.query_by_label(option).is_some()
+            });
+            harness.get_by_label(option).click();
+            harness.step();
+        }
+        step_until(&mut harness, "templates and snapshots", |h| {
+            h.query_by_label("Debian Bookworm 12").is_some()
+                && h.query_by_label("web-01 before upgrade").is_some()
+        });
+        let prefs = harness.state().backend.state().settings.preferences.clone();
+        assert!(prefs.show_default_templates && prefs.show_snapshots);
+
+        // A snapshot opens on its own General page.
+        click_first(&mut harness, "web-01 before upgrade");
+        step_until(&mut harness, "snapshot page", |h| {
+            h.query_by_label(t.hdr_snapshot_general).is_some()
+        });
+
+        harness.get_by_label(s.menu_view).click();
+        step_until(&mut harness, "view menu", |h| {
+            h.query_by_label(t.view_local_storage).is_some()
+        });
+        harness.get_by_label(t.view_local_storage).click();
+        step_until(&mut harness, "no local storage", |h| {
+            h.query_all_by_label("Local storage").next().is_none()
+        });
+
+        // Filter by name (with the pool selected, so the details repeat no
+        // VM or host name).
+        let count = |h: &Harness<'_, XenAdminApp>, label: &str| h.query_all_by_label(label).count();
+        click_first(&mut harness, "Lab Pool");
+        harness
+            .get_by_role_and_label(Role::TextInput, t.tree_filter_label)
+            .focus();
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::TextInput, t.tree_filter_label)
+            .type_text("DB-");
+        step_until(&mut harness, "filtered", |h| {
+            count(h, "db-01") == 1 && count(h, "web-01") == 0 && count(h, "xcp-host-01") == 0
+        });
+        assert_eq!(count(&harness, "xcp-host-02"), 1);
+        assert!(count(&harness, "Lab Pool") >= 1);
+        // A new match appears live.
+        server.set_name_label("vm", "OpaqueRef:vm-build", "db-migrator");
+        step_until(&mut harness, "live match", |h| count(h, "db-migrator") == 1);
+        harness
+            .get_by_role_and_label(Role::TextInput, t.tree_filter_label)
+            .type_text("nothing-like-this");
+        step_until(&mut harness, "no match", |h| {
+            h.query_by_label(t.tree_no_match).is_some()
+        });
+        harness.get_by_label("x").click();
+        step_until(&mut harness, "cleared", |h| count(h, "web-01") == 1);
     }
 }

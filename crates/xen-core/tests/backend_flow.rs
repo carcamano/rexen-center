@@ -47,7 +47,7 @@ async fn connect_operate_and_follow_live_updates() {
         unreachable!()
     };
     assert_eq!(*api_version, (2, 21));
-    let tree = first(&state).model.tree();
+    let tree = first(&state).model.tree(&xen_core::TreeOptions::default());
     assert_eq!(tree[0].name, "Lab Pool");
     assert_eq!(tree[0].hosts.len(), 2);
     for method in [
@@ -79,7 +79,7 @@ async fn connect_operate_and_follow_live_updates() {
             power_state(s, "OpaqueRef:vm-db") == Some(VmPowerState::Running)
         })
         .await;
-    let host2 = &first(&state).model.tree()[0].hosts[1];
+    let host2 = &first(&state).model.tree(&xen_core::TreeOptions::default())[0].hosts[1];
     assert!(
         host2
             .vms
@@ -111,13 +111,15 @@ async fn connect_operate_and_follow_live_updates() {
             power_state(s, "OpaqueRef:vm-build") == Some(VmPowerState::Running)
                 && first(s)
                     .model
-                    .tree()
+                    .tree(&xen_core::TreeOptions::default())
                     .first()
                     .is_some_and(|p| p.name == "Renamed Pool")
         })
         .await;
     assert!(
-        first(&state).model.tree()[0].vms.is_empty(),
+        first(&state).model.tree(&xen_core::TreeOptions::default())[0]
+            .vms
+            .is_empty(),
         "build-runner moved under its host"
     );
 
