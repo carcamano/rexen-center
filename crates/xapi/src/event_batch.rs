@@ -1,21 +1,15 @@
-//! `event.from`: the long-poll that keeps a client-side cache live.
+//! `event.from` results: the long-poll that keeps a client-side cache live
+//! (hand-written core). The generated `event` module has the raw calls
+//! (`event::from`, `event::inject`); [`EventBatch`] is what `event.from` returns.
 
 use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::EventOperation;
 use crate::error::Result;
-use crate::session::Session;
-
-xapi_enum! {
-    /// What happened to the object an [`Event`] is about.
-    pub enum EventOperation {
-        Add => "add",
-        Mod => "mod",
-        Del => "del",
-    }
-}
+use crate::session_handle::Session;
 
 /// One change notification.
 #[derive(Debug, Clone, Deserialize)]
@@ -62,32 +56,5 @@ impl Session {
             vec![json!(classes), json!(token), json!(timeout)],
         )
         .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decodes_batch() {
-        let batch: EventBatch = serde_json::from_value(json!({
-            "events": [
-                {"id": "1", "timestamp": "x", "class": "vm", "operation": "mod",
-                 "ref": "OpaqueRef:v", "snapshot": {"power_state": "Running"}},
-                {"id": "2", "class": "vm", "operation": "del", "ref": "OpaqueRef:w"},
-                {"id": "3", "class": "vm", "operation": "weird", "ref": "OpaqueRef:z", "snapshot": null}
-            ],
-            "valid_ref_counts": {"vm": 2},
-            "token": "42,0"
-        }))
-        .unwrap();
-        assert_eq!(batch.token, "42,0");
-        assert_eq!(batch.events[0].operation, EventOperation::Mod);
-        assert!(batch.events[1].snapshot.is_none());
-        assert_eq!(
-            batch.events[2].operation,
-            EventOperation::Unknown("weird".into())
-        );
     }
 }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xapi", "crates/xen-core", "crates/xapi-mock", "crates/xenadmin"]
+members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xapi-mock", "crates/xenadmin"]
 
 [workspace.package]
 version = "0.1.0"

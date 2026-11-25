@@ -8,9 +8,13 @@
 //! notification the backend calls the repaint callback (in the app,
 //! `egui::Context::request_repaint`).
 //!
-//! Phase F1 manages a single connection; connecting again replaces it.
-//! Automatic reconnection, multiple connections and persisted settings belong
-//! to phase F2.
+//! One connection at a time; connecting again replaces it. On connect the
+//! backend takes an event token with `event.inject`, loads every cached class
+//! (see [`crate::model`]) and then follows `event.from(["*"])`. When the
+//! server reports `EVENTS_LOST` it reloads everything; on `SESSION_INVALID` it
+//! logs in again with the same credentials and reloads. Reconnection with
+//! backoff, heartbeat, multiple connections and persisted settings are phase
+//! F2b work.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,12 +22,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
+use xapi::error::codes;
 use xapi::{ClientOptions, Endpoint, Fingerprint, JsonRpcClient, Ref, Session, TrustStore, Vm};
 
-use crate::model::{ConnectionModel, EVENT_CLASSES};
+use crate::model::{ConnectionModel, EVENT_CLASSES, class_loaders};
 
 /// Callback asking the UI to redraw. Must be cheap and callable from any thread.
 pub type RepaintFn = Arc<dyn Fn() + Send + Sync>;
@@ -356,6 +361,13 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
     }
 }
 
+/// Concurrent `get_all_records` calls during the initial load.
+const LOAD_CONCURRENCY: usize = 8;
+
+/// Full reloads (after `EVENTS_LOST` or `SESSION_INVALID`) allowed in a row
+/// without a successful `event.from` in between before giving up.
+const MAX_RELOADS_IN_A_ROW: u32 = 3;
+
 async fn connection_task(
     shared: Arc<Shared>,
     generation: u64,
@@ -390,105 +402,225 @@ async fn connection_task(
         };
     });
 
-    let trust = &shared.options.trust;
-    let call_options = ClientOptions {
-        timeout: Duration::from_secs(60),
-        ..ClientOptions::default()
+    let login = Login {
+        shared: &shared,
+        endpoint: &endpoint,
+        label: &label,
+        username: &username,
+        password: &password,
     };
-    let session = loop {
-        let client = match JsonRpcClient::new(&endpoint, trust, &call_options) {
-            Ok(c) => Arc::new(c),
-            Err(e) => return fail(label, ConnectionError::Connect(e)),
-        };
-        match Session::login_with_password(client, &username, &password, &shared.options.originator)
-            .await
-        {
-            Ok(session) => break session,
-            Err(xapi::Error::UntrustedCertificate { host, fingerprint }) => {
-                let (reply, answer) = oneshot::channel();
-                shared.notify(Notification::CertificatePrompt(CertificatePrompt {
-                    server: label.clone(),
-                    fingerprint,
-                    previous: trust.get(&host),
-                    reply,
-                }));
-                if answer.await == Ok(true) {
-                    trust.trust(&host, fingerprint);
-                } else {
-                    return fail(label, ConnectionError::CertificateRejected);
-                }
-            }
-            Err(e) => return fail(label, ConnectionError::Connect(e)),
-        }
+    let mut session = match login.run().await {
+        Ok(s) => s,
+        Err(e) => return fail(label, e),
     };
-    drop(password);
     *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(session.clone());
 
-    let abandon = |error: ConnectionError| {
+    let abandon = |session: &Session, error: ConnectionError| {
         slot.lock().unwrap_or_else(PoisonError::into_inner).take();
         let session = session.clone();
         tokio::spawn(async move { session.logout().await });
         fail(label.clone(), error);
     };
 
-    // Initial load.
-    let loaded = tokio::try_join!(
-        xapi::pool::get_all_records(&session),
-        xapi::host::get_all_records(&session),
-        xapi::vm::get_all_records(&session),
-    );
-    let mut model = match loaded {
-        Ok((pools, hosts, vms)) => ConnectionModel::from_records(pools, hosts, vms),
-        Err(e) => return abandon(ConnectionError::Connect(e)),
-    };
-    let api_version = model
-        .coordinator()
-        .map_or((0, 0), |h| (h.api_version_major, h.api_version_minor));
-    if api_version < xapi::MIN_API_VERSION {
-        let (major, minor) = api_version;
-        return abandon(ConnectionError::Unsupported(
-            xapi::Error::UnsupportedApiVersion { major, minor },
-        ));
-    }
-    shared.update(generation, |s| {
-        s.status = ConnectionStatus::Connected {
-            server: label.clone(),
-            api_version,
-        };
-        s.model = Arc::new(model.clone());
-    });
-
-    // Live updates. event.from long-polls on its own HTTP client so it never
-    // delays regular calls; its timeout must exceed the server-side one.
+    // event.from long-polls on its own HTTP client so it never delays regular
+    // calls; its timeout must exceed the server-side one.
     let event_options = ClientOptions {
         timeout: Duration::from_secs_f64(shared.options.event_timeout + 90.0),
         ..ClientOptions::default()
     };
-    let events = match JsonRpcClient::new(&endpoint, trust, &event_options) {
-        Ok(c) => session.with_client(Arc::new(c)),
-        Err(e) => return abandon(ConnectionError::Lost(e)),
+    let event_client = match JsonRpcClient::new(&endpoint, &shared.options.trust, &event_options) {
+        Ok(c) => Arc::new(c),
+        Err(e) => return abandon(&session, ConnectionError::Connect(e)),
     };
-    // The first call (empty token) returns every object again; applying it is
-    // idempotent and closes the gap between the initial load and the token.
-    let mut token = String::new();
+
+    let mut connected = false;
+    let mut reloads_in_a_row = 0u32;
     loop {
-        match events
-            .event_from(EVENT_CLASSES, &token, shared.options.event_timeout)
-            .await
-        {
-            Ok(batch) => {
-                token = batch.token;
-                if model.apply_events(&batch.events) {
-                    let snapshot = Arc::new(model.clone());
-                    shared.update(generation, |s| s.model = snapshot);
-                    // Coalesce event storms: at most one snapshot per interval.
-                    tokio::time::sleep_until(Instant::now() + shared.options.publish_interval)
-                        .await;
-                }
+        // (Re)load everything. The token is taken first (event.inject), so
+        // changes made while the classes load are replayed by event.from.
+        let (mut model, mut token) = match initial_load(&session).await {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                let error = if connected {
+                    ConnectionError::Lost(e)
+                } else {
+                    ConnectionError::Connect(e)
+                };
+                return abandon(&session, error);
             }
-            Err(e) => return abandon(ConnectionError::Lost(e)),
+        };
+        if !connected {
+            let api_version = model
+                .coordinator()
+                .map_or((0, 0), |h| (h.api_version_major, h.api_version_minor));
+            if api_version < xapi::MIN_API_VERSION {
+                let (major, minor) = api_version;
+                return abandon(
+                    &session,
+                    ConnectionError::Unsupported(xapi::Error::UnsupportedApiVersion {
+                        major,
+                        minor,
+                    }),
+                );
+            }
+            tracing::info!(
+                server = %label,
+                objects = model.object_count(),
+                "connected"
+            );
+            shared.update(generation, |s| {
+                s.status = ConnectionStatus::Connected {
+                    server: label.clone(),
+                    api_version,
+                };
+            });
+            connected = true;
+        } else {
+            tracing::info!(server = %label, objects = model.object_count(), "cache reloaded");
+        }
+        let snapshot = Arc::new(model.clone());
+        shared.update(generation, |s| s.model = snapshot);
+
+        // Live updates until the cache must be reloaded.
+        let events = session.with_client(event_client.clone());
+        let reason = loop {
+            match events
+                .event_from(EVENT_CLASSES, &token, shared.options.event_timeout)
+                .await
+            {
+                Ok(batch) => {
+                    reloads_in_a_row = 0;
+                    token = batch.token;
+                    if model.apply_events(&batch.events) {
+                        let snapshot = Arc::new(model.clone());
+                        shared.update(generation, |s| s.model = snapshot);
+                        // Coalesce event storms: at most one snapshot per interval.
+                        tokio::time::sleep_until(Instant::now() + shared.options.publish_interval)
+                            .await;
+                    }
+                }
+                Err(e) if e.is_api(codes::EVENTS_LOST) => break e,
+                Err(e) if e.is_api(codes::SESSION_INVALID) => break e,
+                Err(e) => return abandon(&session, ConnectionError::Lost(e)),
+            }
+        };
+        reloads_in_a_row += 1;
+        if reloads_in_a_row > MAX_RELOADS_IN_A_ROW {
+            return abandon(&session, ConnectionError::Lost(reason));
+        }
+        tracing::warn!(server = %label, error = %reason, "event stream broken; reloading the cache");
+        if reason.is_api(codes::SESSION_INVALID) {
+            // The server forgot the session (e.g. a toolstack restart): log in
+            // again with the same credentials, then reload. Reconnection with
+            // backoff when the server is unreachable is phase F2b work.
+            session = match login.run().await {
+                Ok(s) => s,
+                Err(e) => {
+                    slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+                    return fail(label.clone(), e);
+                }
+            };
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(session.clone());
         }
     }
+}
+
+/// Logs in, asking the UI about an untrusted certificate when needed.
+struct Login<'a> {
+    shared: &'a Shared,
+    endpoint: &'a Endpoint,
+    label: &'a str,
+    username: &'a str,
+    password: &'a str,
+}
+
+impl Login<'_> {
+    async fn run(&self) -> Result<Session, ConnectionError> {
+        let trust = &self.shared.options.trust;
+        let call_options = ClientOptions {
+            timeout: Duration::from_secs(60),
+            ..ClientOptions::default()
+        };
+        loop {
+            let client = Arc::new(
+                JsonRpcClient::new(self.endpoint, trust, &call_options)
+                    .map_err(ConnectionError::Connect)?,
+            );
+            match Session::login_with_password(
+                client,
+                self.username,
+                self.password,
+                &self.shared.options.originator,
+            )
+            .await
+            {
+                Ok(session) => return Ok(session),
+                Err(xapi::Error::UntrustedCertificate { host, fingerprint }) => {
+                    let (reply, answer) = oneshot::channel();
+                    self.shared
+                        .notify(Notification::CertificatePrompt(CertificatePrompt {
+                            server: self.label.to_owned(),
+                            fingerprint,
+                            previous: trust.get(&host),
+                            reply,
+                        }));
+                    if answer.await == Ok(true) {
+                        trust.trust(&host, fingerprint);
+                    } else {
+                        return Err(ConnectionError::CertificateRejected);
+                    }
+                }
+                Err(e) => return Err(ConnectionError::Connect(e)),
+            }
+        }
+    }
+}
+
+/// Takes an event token with `event.inject` on the pool, then loads every
+/// cached class with `get_all_records`.
+///
+/// This is the order the Xen Orchestra client uses: a token taken *before*
+/// the load means no change made during the load is lost (it is replayed by
+/// the first `event.from`, and applying it again is harmless).
+pub async fn initial_load(session: &Session) -> xapi::Result<(ConnectionModel, String)> {
+    let pool = xapi::pool::get_all(session)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| xapi::Error::Protocol("the server has no pool object".to_owned()))?;
+    let token = xapi::event::inject(session, "pool", pool.as_str()).await?;
+    let model = load_all(session).await?;
+    Ok((model, token))
+}
+
+/// Loads every cached class concurrently. A class the server does not know
+/// (older XAPI) or does not let this user list is left empty.
+async fn load_all(session: &Session) -> xapi::Result<ConnectionModel> {
+    let permits = Arc::new(Semaphore::new(LOAD_CONCURRENCY));
+    let mut tasks = JoinSet::new();
+    for loader in class_loaders(session) {
+        let permits = permits.clone();
+        tasks.spawn(async move {
+            let _permit = permits.acquire_owned().await;
+            (loader.class, loader.load.await)
+        });
+    }
+    let mut model = ConnectionModel::default();
+    while let Some(joined) = tasks.join_next().await {
+        let (class, result) =
+            joined.map_err(|e| xapi::Error::Protocol(format!("loading task failed: {e}")))?;
+        match result {
+            Ok(apply) => apply(&mut model),
+            Err(e)
+                if e.is_api(codes::MESSAGE_METHOD_UNKNOWN)
+                    || e.is_api(codes::RBAC_PERMISSION_DENIED) =>
+            {
+                tracing::debug!(class, error = %e, "class not loaded");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(model)
 }
 
 async fn vm_action(

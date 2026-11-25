@@ -1,7 +1,8 @@
 //! UI-independent core of the management console.
 //!
-//! * [`model`]: the live object cache of one connection ([`ConnectionModel`])
-//!   and the infrastructure tree derived from it.
+//! * [`model`]: the live object cache of one connection ([`ConnectionModel`],
+//!   one map per XenAPI class the event loop delivers) and the infrastructure
+//!   tree derived from it.
 //! * [`backend`]: the asynchronous backend. It runs on a tokio runtime outside
 //!   the UI thread, takes [`Command`]s over an mpsc channel, publishes an
 //!   immutable [`AppState`] snapshot (an `Arc`, swapped atomically) after each
@@ -16,4 +17,4 @@ pub use backend::{
     AppState, BackendHandle, BackendOptions, CertificatePrompt, Command, ConnectionError,
     ConnectionStatus, Notification, RepaintFn, VmAction,
 };
-pub use model::{ConnectionModel, TreeHost, TreePool, TreeVm};
+pub use model::{ClassMap, ConnectionModel, ModelClass, TreeHost, TreePool, TreeVm};

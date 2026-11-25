@@ -183,3 +183,77 @@ async fn invalid_session_is_reported() {
     let err = xapi::pool::get_all_records(&session).await.unwrap_err();
     assert!(err.is_api(codes::SESSION_INVALID), "{err:?}");
 }
+
+#[tokio::test]
+async fn generated_calls_work_for_any_class() {
+    let server = MockServer::start_with_records(false, xapi_mock::capture_records()).await;
+    let session = login(&server, &TrustStore::new()).await;
+
+    let srs = xapi::sr::get_all(&session).await.unwrap();
+    assert_eq!(srs.len(), 6);
+    let record = xapi::sr::get_record(&session, &srs[0]).await.unwrap();
+    assert_eq!(
+        xapi::sr::get_by_uuid(&session, &record.uuid).await.unwrap(),
+        srs[0]
+    );
+    assert_eq!(
+        xapi::sr::get_name_label(&session, &srs[0]).await.unwrap(),
+        record.name_label
+    );
+    assert_eq!(
+        xapi::sr::get_physical_size(&session, &srs[0])
+            .await
+            .unwrap(),
+        record.physical_size
+    );
+    let err = xapi::vdi::get_record(&session, &Ref::new("OpaqueRef:nope"))
+        .await
+        .unwrap_err();
+    assert!(err.is_api("HANDLE_INVALID"));
+
+    // Every class's get_all_records works, even classes with no objects.
+    let tasks = xapi::task::get_all_records(&session).await.unwrap();
+    assert!(tasks.is_empty());
+    let metrics = xapi::vm_metrics::get_all_records(&session).await.unwrap();
+    assert!(metrics.values().any(|m| m.memory_actual > 0));
+
+    // event.inject returns a token; the injected event follows it.
+    let pools = xapi::pool::get_all(&session).await.unwrap();
+    let token = xapi::event::inject(&session, "pool", pools[0].as_str())
+        .await
+        .unwrap();
+    let batch = session.event_from(&["*"], &token, 1.0).await.unwrap();
+    assert_eq!(batch.events.len(), 1);
+    assert_eq!(batch.events[0].class, "pool");
+    assert_eq!(batch.events[0].operation, EventOperation::Mod);
+
+    // Optional trailing parameters are left out when not set.
+    let login = xapi::session::login_with_password(
+        &client(&server, &TrustStore::new()),
+        xapi_mock::USERNAME,
+        xapi_mock::PASSWORD,
+        Some(xapi::API_VERSION),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!login.is_null());
+    assert_eq!(server.active_sessions(), 2);
+}
+
+#[tokio::test]
+async fn unknown_classes_and_lost_events_surface_as_api_errors() {
+    let server = MockServer::start(false).await;
+    let session = login(&server, &TrustStore::new()).await;
+    server.set_unknown_classes(&["VM_group"]);
+    let err = xapi::vm_group::get_all_records(&session).await.unwrap_err();
+    assert!(err.is_api(codes::MESSAGE_METHOD_UNKNOWN));
+
+    let first = session.event_from(&["*"], "", 0.0).await.unwrap();
+    server.lose_events();
+    let err = session
+        .event_from(&["*"], &first.token, 1.0)
+        .await
+        .unwrap_err();
+    assert!(err.is_api(codes::EVENTS_LOST));
+}

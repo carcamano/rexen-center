@@ -1,0 +1,4 @@
+(executable
+  (modes exe)
+  (name gen_async)
+  (libraries xapi-datamodel yojson))

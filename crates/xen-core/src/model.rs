@@ -1,43 +1,158 @@
 //! Live object cache of one connection and the tree built from it.
+//!
+//! [`ConnectionModel`] has one map per XenAPI class the cache follows: every
+//! class listed by [`xapi::for_each_cached_class!`] (all classes with a record
+//! and a `get_all_records` call, except sessions, users and secrets). The
+//! struct, the event dispatch and the initial-load table are produced from
+//! that list, so a datamodel update adds classes here automatically.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use xapi::{
-    Event, EventOperation, Host, HostRecord, Pool, PoolRecord, Ref, Vm, VmOperations, VmPowerState,
-    VmRecord,
+    Event, EventOperation, Host, HostRecord, Pool, PoolRecord, Ref, Session, Vm, VmOperations,
+    VmPowerState, VmRecord, XapiClass, XapiObject,
 };
 
-/// Classes the F1 cache follows through `event.from`.
-pub const EVENT_CLASSES: &[&str] = &["pool", "host", "vm"];
+/// Classes `event.from` is asked for: everything. Events of classes the
+/// model does not keep (sessions, secrets, removed classes…) are ignored.
+pub const EVENT_CLASSES: &[&str] = &["*"];
 
-/// Snapshot of the objects of one connection.
-///
-/// Records are behind `Arc`, so cloning the model copies pointers only; the
-/// backend clones it to publish a new immutable snapshot after each batch.
-#[derive(Debug, Clone, Default)]
-pub struct ConnectionModel {
-    pub pools: HashMap<Ref<Pool>, Arc<PoolRecord>>,
-    pub hosts: HashMap<Ref<Host>, Arc<HostRecord>>,
-    pub vms: HashMap<Ref<Vm>, Arc<VmRecord>>,
+/// Records of one class, keyed by reference.
+pub type ClassMap<T> = HashMap<Ref<T>, Arc<<T as XapiObject>::Record>>;
+
+/// A class kept by [`ConnectionModel`].
+pub trait ModelClass: XapiObject {
+    /// This class's map in `model`.
+    fn map(model: &ConnectionModel) -> &ClassMap<Self>;
+    /// This class's map in `model`, mutably.
+    fn map_mut(model: &mut ConnectionModel) -> &mut ClassMap<Self>;
 }
 
+/// Applies the records loaded for one class to a model.
+pub type ApplyLoaded = Box<dyn FnOnce(&mut ConnectionModel) + Send>;
+
+/// The `get_all_records` call of one class, ready to run.
+pub struct ClassLoader {
+    /// Class name as the API spells it.
+    pub class: &'static str,
+    /// Fetches the records; the result replaces that class's map.
+    pub load: Pin<Box<dyn Future<Output = xapi::Result<ApplyLoaded>> + Send>>,
+}
+
+fn wrap<K: std::hash::Hash + Eq, V>(m: HashMap<K, V>) -> HashMap<K, Arc<V>> {
+    m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()
+}
+
+macro_rules! define_model {
+    ($( ($marker:ident, $module:ident, $field:ident) ),* $(,)?) => {
+        /// Snapshot of the objects of one connection: one map per cached class.
+        ///
+        /// Records are behind `Arc`, so cloning the model copies pointers only;
+        /// the backend clones it to publish a new immutable snapshot after each
+        /// batch.
+        #[derive(Debug, Clone, Default)]
+        pub struct ConnectionModel {
+            $(
+                #[doc = concat!("`", stringify!($marker), "` objects.")]
+                pub $field: ClassMap<xapi::$marker>,
+            )*
+        }
+
+        $(
+            impl ModelClass for xapi::$marker {
+                fn map(model: &ConnectionModel) -> &ClassMap<Self> {
+                    &model.$field
+                }
+                fn map_mut(model: &mut ConnectionModel) -> &mut ClassMap<Self> {
+                    &mut model.$field
+                }
+            }
+        )*
+
+        impl ConnectionModel {
+            /// Applies one event to the map of its class. `None` if the model
+            /// does not keep that class.
+            fn apply_class_event(&mut self, event: &Event) -> Option<bool> {
+                $(
+                    if <xapi::$marker as XapiClass>::is_class(&event.class) {
+                        return Some(apply(&mut self.$field, event));
+                    }
+                )*
+                None
+            }
+
+            /// Number of objects of each class, in datamodel order.
+            pub fn class_counts(&self) -> Vec<(&'static str, usize)> {
+                vec![$( (<xapi::$marker as XapiClass>::NAME, self.$field.len()), )*]
+            }
+
+            /// Total number of cached objects.
+            pub fn object_count(&self) -> usize {
+                0 $( + self.$field.len() )*
+            }
+        }
+
+        /// One `get_all_records` call per cached class, for the initial load.
+        pub fn class_loaders(session: &Session) -> Vec<ClassLoader> {
+            vec![$(
+                ClassLoader {
+                    class: <xapi::$marker as XapiClass>::NAME,
+                    load: {
+                        let session = session.clone();
+                        Box::pin(async move {
+                            let records = xapi::$module::get_all_records(&session).await?;
+                            let apply: ApplyLoaded = Box::new(move |model: &mut ConnectionModel| {
+                                model.$field = wrap(records);
+                            });
+                            Ok(apply)
+                        })
+                    },
+                },
+            )*]
+        }
+    };
+}
+
+xapi::for_each_cached_class!(define_model);
+
 impl ConnectionModel {
-    /// Builds a model from `get_all_records` results.
-    pub fn from_records(
-        pools: HashMap<Ref<Pool>, PoolRecord>,
-        hosts: HashMap<Ref<Host>, HostRecord>,
-        vms: HashMap<Ref<Vm>, VmRecord>,
-    ) -> Self {
-        fn wrap<K: std::hash::Hash + Eq, V>(m: HashMap<K, V>) -> HashMap<K, Arc<V>> {
-            m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()
+    /// Builds a model from a fixture-style database
+    /// (`{"<class>": {"OpaqueRef:…": record, …}, …}`, class names in any
+    /// case). Unknown classes and undecodable records are skipped.
+    pub fn from_database(db: &serde_json::Value) -> Self {
+        let mut model = Self::default();
+        let Some(classes) = db.as_object() else {
+            return model;
+        };
+        for (class, objects) in classes {
+            let Some(objects) = objects.as_object() else {
+                continue;
+            };
+            for (opaque_ref, record) in objects {
+                model.apply_event(&Event {
+                    id: serde_json::Value::Null,
+                    class: class.clone(),
+                    operation: EventOperation::Add,
+                    opaque_ref: opaque_ref.clone(),
+                    snapshot: Some(record.clone()),
+                });
+            }
         }
-        Self {
-            pools: wrap(pools),
-            hosts: wrap(hosts),
-            vms: wrap(vms),
-        }
+        model
+    }
+
+    /// The record behind `r`, if cached.
+    pub fn get<T: ModelClass>(&self, r: &Ref<T>) -> Option<&Arc<T::Record>> {
+        T::map(self).get(r)
+    }
+
+    /// Every cached object of class `T`.
+    pub fn all<T: ModelClass>(&self) -> &ClassMap<T> {
+        T::map(self)
     }
 
     /// Applies a batch of events; returns whether anything changed.
@@ -49,14 +164,10 @@ impl ConnectionModel {
         changed
     }
 
-    /// Applies one event; returns whether anything changed.
+    /// Applies one event; returns whether anything changed. Events of
+    /// classes the model does not keep are ignored.
     pub fn apply_event(&mut self, event: &Event) -> bool {
-        match event.class.to_ascii_lowercase().as_str() {
-            "pool" => apply(&mut self.pools, event),
-            "host" => apply(&mut self.hosts, event),
-            "vm" => apply(&mut self.vms, event),
-            _ => false,
-        }
+        self.apply_class_event(event).unwrap_or(false)
     }
 
     /// The pool (every XAPI server has exactly one pool object).
@@ -246,12 +357,7 @@ mod tests {
     use super::*;
 
     fn fixture_model() -> ConnectionModel {
-        let db = xapi_mock::fixture_records();
-        ConnectionModel::from_records(
-            serde_json::from_value(db["pool"].clone()).unwrap(),
-            serde_json::from_value(db["host"].clone()).unwrap(),
-            serde_json::from_value(db["vm"].clone()).unwrap(),
-        )
+        ConnectionModel::from_database(&xapi_mock::fixture_records())
     }
 
     fn names(vms: &[TreeVm]) -> Vec<&str> {
@@ -300,10 +406,81 @@ mod tests {
         assert_eq!(names(&model.tree()[0].hosts[1].vms), ["build-runner"]);
 
         let unknown: Event = serde_json::from_value(
-            json!({"class": "sr", "operation": "add", "ref": "OpaqueRef:sr", "snapshot": {}}),
+            json!({"class": "session", "operation": "add", "ref": "OpaqueRef:s", "snapshot": {}}),
         )
         .unwrap();
         assert!(!model.apply_event(&unknown));
+    }
+
+    #[test]
+    fn capture_fills_every_delivered_class() {
+        let db = xapi_mock::capture_records();
+        let model = ConnectionModel::from_database(&db);
+        let counts: HashMap<&str, usize> = model.class_counts().into_iter().collect();
+        for (class, objects) in db.as_object().unwrap() {
+            if class.starts_with('_') {
+                continue;
+            }
+            let expected = objects.as_object().unwrap().len();
+            let cached = counts
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(class))
+                .map(|(_, n)| *n);
+            match class.as_str() {
+                // Classes the datamodel marks removed: still sent, not cached.
+                "vbd_metrics" | "vif_metrics" => assert_eq!(cached, None, "{class}"),
+                _ => assert_eq!(cached, Some(expected), "{class}"),
+            }
+        }
+        assert_eq!(model.srs.len(), 6);
+        assert_eq!(model.roles.len(), 7);
+        // Typed lookups across classes.
+        let (vm_ref, vm) = model
+            .vms
+            .iter()
+            .find(|(_, v)| v.name_label == "guest-01")
+            .unwrap();
+        let metrics = model.get(&vm.metrics).expect("VM_metrics of guest-01");
+        assert_eq!(
+            metrics.memory_actual > 0,
+            vm.power_state == VmPowerState::Running
+        );
+        for vbd_ref in &vm.vbds {
+            let vbd = model.get(vbd_ref).expect("VBD");
+            assert_eq!(&vbd.vm, vm_ref);
+        }
+        let host = model.coordinator().unwrap();
+        assert_eq!(host.name_label, "xcp-host-01");
+        assert!(model.get(&host.metrics).unwrap().memory_total > 0);
+        let tree = model.tree();
+        assert_eq!(tree[0].name, "Lab Pool");
+        let guests: usize =
+            tree[0].hosts.iter().map(|h| h.vms.len()).sum::<usize>() + tree[0].vms.len();
+        assert_eq!(guests, 10);
+    }
+
+    #[test]
+    fn events_of_uncached_classes_are_ignored() {
+        let mut model = fixture_model();
+        for class in ["session", "secret", "user", "vbd_metrics", "no_such_class"] {
+            let event: Event = serde_json::from_value(json!({
+                "class": class, "operation": "add", "ref": "OpaqueRef:x", "snapshot": {"uuid": "u"}
+            }))
+            .unwrap();
+            assert!(!model.apply_event(&event), "{class}");
+        }
+        let sr: Event = serde_json::from_value(json!({
+            "class": "SR", "operation": "add", "ref": "OpaqueRef:sr-new",
+            "snapshot": {"name_label": "NFS", "type": "nfs", "physical_size": "1000"}
+        }))
+        .unwrap();
+        assert!(model.apply_event(&sr));
+        let sr = model
+            .get(&Ref::<xapi::Sr>::new("OpaqueRef:sr-new"))
+            .unwrap();
+        assert_eq!((sr.name_label.as_str(), sr.r#type.as_str()), ("NFS", "nfs"));
+        // Lenient decoding: an integer sent as a string.
+        assert_eq!(sr.physical_size, 1000);
     }
 
     #[test]

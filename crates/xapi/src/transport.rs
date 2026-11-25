@@ -117,6 +117,11 @@ impl JsonRpcClient {
         })
     }
 
+    /// Like [`JsonRpcClient::call`] for calls that return nothing (`void`).
+    pub async fn call_void(&self, method: &str, params: Vec<Value>) -> Result<()> {
+        self.call::<Value>(method, params).await.map(drop)
+    }
+
     fn classify_send_error(&self, e: reqwest::Error) -> Error {
         if let Some(fingerprint) = self.verifier.as_ref().and_then(|v| v.take_rejected()) {
             return Error::UntrustedCertificate {

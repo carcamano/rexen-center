@@ -1,17 +1,17 @@
-//! XAPI sessions.
+//! XAPI sessions (hand-written core).
+//!
+//! The generated `session` module holds the `session.*` calls; this module is
+//! the authenticated handle every generated call takes.
 
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::SessionClass;
 use crate::error::Result;
 use crate::refs::Ref;
 use crate::transport::JsonRpcClient;
-
-/// Marker type for `session` references.
-#[derive(Debug)]
-pub enum SessionClass {}
 
 /// An authenticated session on one server.
 ///
@@ -81,5 +81,10 @@ impl Session {
         all.push(json!(self.session_ref));
         all.extend(params);
         self.client.call(method, all).await
+    }
+
+    /// Like [`Session::call`] for calls that return nothing (`void`).
+    pub async fn call_void(&self, method: &str, params: Vec<Value>) -> Result<()> {
+        self.call::<Value>(method, params).await.map(drop)
     }
 }

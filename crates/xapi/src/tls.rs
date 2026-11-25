@@ -53,7 +53,7 @@ impl fmt::Debug for Fingerprint {
 /// Pinned certificates, keyed by `host:port` ([`crate::Endpoint::authority`]).
 ///
 /// Cheap to clone; clones share the same set. Phase F1 keeps it in memory for
-/// the session; persistence arrives with the settings work in F2.
+/// the session; persistence arrives with the settings work in F2b.
 #[derive(Clone, Default)]
 pub struct TrustStore {
     inner: Arc<Mutex<HashMap<String, Fingerprint>>>,

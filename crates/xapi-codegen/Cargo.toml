@@ -1,0 +1,15 @@
+[package]
+name = "xapi-codegen"
+description = "Generates crates/xapi/src/generated from the pinned XenAPI datamodel (xenapi.json)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ring = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

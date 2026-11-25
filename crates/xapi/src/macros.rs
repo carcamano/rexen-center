@@ -1,8 +1,9 @@
 /// Declares a XenAPI string enum that tolerates values unknown to this build.
 ///
 /// XAPI enums travel as strings; newer servers may add values, so every enum
-/// gets an `Unknown(String)` variant instead of failing to deserialize. The F2
-/// code generator emits enums through this same macro.
+/// gets an `Unknown(String)` variant instead of failing to deserialize. The
+/// code generator (`crates/xapi-codegen`) emits every enum through this macro.
+/// The default value is `Unknown("")` (a missing field).
 #[macro_export]
 macro_rules! xapi_enum {
     (
@@ -20,12 +21,26 @@ macro_rules! xapi_enum {
         }
 
         impl $name {
+            /// Every value known to this build, in datamodel order.
+            pub const VALUES: &'static [Self] = &[ $( Self::$variant, )+ ];
+
+            /// Whether this is a value unknown to this build (or missing).
+            pub fn is_unknown(&self) -> bool {
+                matches!(self, Self::Unknown(_))
+            }
+
             /// The wire (JSON) representation of this value.
             pub fn as_str(&self) -> &str {
                 match self {
                     $( Self::$variant => $wire, )+
                     Self::Unknown(s) => s.as_str(),
                 }
+            }
+        }
+
+        impl ::std::default::Default for $name {
+            fn default() -> Self {
+                Self::Unknown(::std::string::String::new())
             }
         }
 

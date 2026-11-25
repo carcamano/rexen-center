@@ -718,18 +718,19 @@ mod tests {
             .is_some_and(|n| !n.accesskit_node().is_disabled())
     }
 
-    #[test]
-    fn connect_trust_and_operate_through_the_ui() {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
-            .unwrap();
-        let server = runtime.block_on(MockServer::start(true));
+            .unwrap()
+    }
+
+    fn app_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, XenAdminApp> {
         let handle = runtime.handle().clone();
-        let mut harness = Harness::builder()
+        Harness::builder()
             .with_size(egui::vec2(1000.0, 700.0))
-            .build_eframe(|cc| {
+            .build_eframe(move |cc| {
                 let ctx = cc.egui_ctx.clone();
                 let options = BackendOptions {
                     originator: "xenadmin-ui-test".into(),
@@ -741,15 +742,22 @@ mod tests {
                     options,
                     Arc::new(move || ctx.request_repaint()),
                 ))
-            });
-        let s = strings();
+            })
+    }
 
-        // The connect dialog opens on start with the server field focused.
+    /// Fills in and submits the connect dialog that opens on start (user
+    /// `root`, the dialog's default).
+    fn connect_through_dialog(
+        harness: &mut Harness<'_, XenAdminApp>,
+        server: &str,
+        password: &str,
+    ) {
+        let s = strings();
         harness.step();
         harness.get_by_label(s.connect_title);
         let server_field = harness.get_by_label(s.connect_server);
         assert!(server_field.is_focused());
-        server_field.type_text(&server.address());
+        server_field.type_text(server);
         harness.step();
         assert_eq!(
             harness.get_by_label(s.connect_user).value().as_deref(),
@@ -761,9 +769,20 @@ mod tests {
         harness.step();
         harness
             .get_by_role_and_label(Role::PasswordInput, s.connect_password)
-            .type_text(xapi_mock::PASSWORD);
+            .type_text(password);
         harness.step();
         harness.get_by_label(s.connect_button).click();
+    }
+
+    #[test]
+    fn connect_trust_and_operate_through_the_ui() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start(true));
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+
+        // The connect dialog opens on start with the server field focused.
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
 
         // Trust-on-first-use prompt shows the fingerprint.
         step_until(&mut harness, "certificate prompt", |h| {
@@ -845,5 +864,117 @@ mod tests {
         harness.get_by_label(branding::PRODUCT_NAME);
         harness.get_by_label(&fill(s.about_version, &[("version", branding::VERSION)]));
         harness.get_by_label(s.about_credits);
+    }
+
+    /// The full real-shaped database (sanitized XCP-ng 8.3 capture): every
+    /// class is loaded and the tree shows the pool, its host and its 10 guests.
+    #[test]
+    fn real_shaped_database_shows_the_tree() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start_with_records(
+            false,
+            xapi_mock::capture_records(),
+        ));
+        let mut harness = app_harness(&runtime);
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut harness, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+        });
+        harness.get_by_label("xcp-host-01");
+        for i in 1..=10 {
+            harness.get_by_label(&format!("guest-{i:02}"));
+        }
+        let state = harness.state().backend.state();
+        assert_eq!(state.model.srs.len(), 6);
+        assert_eq!(state.model.vm_guest_metrics.len(), 10);
+        assert_eq!(state.model.object_count(), 241);
+    }
+
+    /// Read-only check of the real window code against a real host. Ignored
+    /// unless asked for:
+    ///
+    /// ```text
+    /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
+    /// XENADMIN_REAL_FINGERPRINT=AA:BB:… \
+    ///   cargo test -p xenadmin real_host -- --ignored --nocapture
+    /// ```
+    ///
+    /// It types the address and credentials into the connect dialog, trusts
+    /// the certificate only if it has the expected fingerprint, waits for the
+    /// tree and for live `event.from` polling, and checks the tree against
+    /// the backend's cache. It clicks no operation button and changes nothing
+    /// on the host. Only counts are printed (no names).
+    #[test]
+    #[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables)"]
+    fn real_host_tree_read_only() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("set {name}"));
+        let (host, user, password, fingerprint) = (
+            var("XENADMIN_REAL_HOST"),
+            var("XENADMIN_REAL_USER"),
+            var("XENADMIN_REAL_PASSWORD"),
+            var("XENADMIN_REAL_FINGERPRINT"),
+        );
+        let runtime = runtime();
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+        assert_eq!(
+            user, "root",
+            "the test types only the password; the dialog's user is root"
+        );
+        connect_through_dialog(&mut harness, &host, &password);
+        drop(password);
+
+        step_until(&mut harness, "certificate prompt", |h| {
+            h.query_by_label(s.cert_trust).is_some()
+        });
+        // Trust only the expected certificate.
+        harness.get_by_label(&fingerprint.to_uppercase());
+        harness.get_by_label(s.cert_trust).click();
+
+        step_until(&mut harness, "connected", |h| {
+            h.state().backend.state().status.is_connected()
+                && h.state().backend.state().model.object_count() > 0
+        });
+        let state = harness.state().backend.state();
+        let tree = state.model.tree();
+        assert_eq!(tree.len(), 1);
+        harness.get_by_label(&tree[0].name);
+        let mut guests = 0;
+        for h in &tree[0].hosts {
+            harness.get_by_label(&h.name);
+            for vm in &h.vms {
+                assert!(harness.query_by_label(&vm.name).is_some());
+                guests += 1;
+            }
+        }
+        for vm in &tree[0].vms {
+            assert!(harness.query_by_label(&vm.name).is_some());
+            guests += 1;
+        }
+        // Keep stepping for a while: the event loop must stay connected.
+        let until = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < until {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let state = harness.state().backend.state();
+        assert!(state.status.is_connected(), "{:?}", state.status);
+        println!(
+            "real host: {} pool, {} host(s), {guests} guest VM(s) in the tree; {} cached objects",
+            state.model.pools.len(),
+            state.model.hosts.len(),
+            state.model.object_count()
+        );
+        for (class, count) in state.model.class_counts() {
+            if count > 0 {
+                println!("  {class}: {count}");
+            }
+        }
+        // Log out (the harness does not run `on_exit`).
+        harness
+            .state()
+            .backend
+            .shutdown_blocking(Duration::from_secs(5));
+        println!("logged out");
     }
 }

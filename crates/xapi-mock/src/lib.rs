@@ -2,20 +2,27 @@
 //!
 //! It serves `POST /jsonrpc` over plain HTTP or HTTPS (with the self-signed
 //! certificate in `tests/fixtures/`) and keeps an in-memory object database
-//! loaded from `tests/fixtures/records.json`. It implements just enough of
-//! XAPI for the phase F1 flow:
+//! loaded from a fixture: [`fixture_records`] (`tests/fixtures/records.json`,
+//! a small hand-written lab pool) or [`capture_records`]
+//! (`tests/fixtures/xcp-ng-8.3-capture.json`, a sanitized capture of a real
+//! XCP-ng 8.3 host with every class it delivers through events). It
+//! implements:
 //!
 //! * `session.login_with_password` / `session.logout` (user [`USERNAME`],
 //!   password [`PASSWORD`]; anything else fails with
 //!   `SESSION_AUTHENTICATION_FAILED`);
-//! * `pool.get_all_records`, `host.get_all_records`, `host.get_record`,
-//!   `VM.get_all_records`;
+//! * for every class: `get_all_records`, `get_all`, `get_record`,
+//!   `get_by_uuid` and the field getters `get_<field>` (a class absent from
+//!   the database simply has no objects);
 //! * `VM.start` / `VM.clean_shutdown` with power-state checks;
-//! * `event.from` with tokens and long-polling.
+//! * `event.inject` and `event.from` (tokens, `"*"`, long-polling).
 //!
 //! Tests can also change objects behind the client's back
-//! ([`MockServer::set_vm_power_state`]) to prove that updates arrive through
-//! `event.from` alone.
+//! ([`MockServer::set_vm_power_state`], [`MockServer::add_object`], …) to
+//! prove that updates arrive through `event.from` alone, and inject failures:
+//! [`MockServer::lose_events`] (`EVENTS_LOST`),
+//! [`MockServer::invalidate_sessions`] (`SESSION_INVALID`) and
+//! [`MockServer::set_unknown_classes`] (an older server without some classes).
 
 use std::collections::{BTreeMap, HashSet};
 use std::convert::Infallible;
@@ -42,6 +49,7 @@ pub const USERNAME: &str = "root";
 pub const PASSWORD: &str = "mock-password";
 
 const RECORDS_JSON: &str = include_str!("../../../tests/fixtures/records.json");
+const CAPTURE_JSON: &str = include_str!("../../../tests/fixtures/xcp-ng-8.3-capture.json");
 const CERT_PEM: &str = include_str!("../../../tests/fixtures/mock-server.cert.pem");
 const KEY_PEM: &str = include_str!("../../../tests/fixtures/mock-server.key.pem");
 
@@ -78,6 +86,13 @@ pub fn certificate_der() -> Vec<u8> {
 /// The fixture database (`tests/fixtures/records.json`).
 pub fn fixture_records() -> Value {
     serde_json::from_str(RECORDS_JSON).expect("fixture records")
+}
+
+/// The sanitized real-host database (`tests/fixtures/xcp-ng-8.3-capture.json`):
+/// one XCP-ng 8.3 host with its pool, VMs, storage, networks, metrics,
+/// consoles, PCI devices, certificates, roles and messages.
+pub fn capture_records() -> Value {
+    serde_json::from_str(CAPTURE_JSON).expect("capture fixture")
 }
 
 /// A running mock server. Stops when dropped.
@@ -156,6 +171,62 @@ impl MockServer {
         self.state.db().calls.clone()
     }
 
+    /// How many times `method` was called.
+    pub fn call_count(&self, method: &str) -> usize {
+        self.state
+            .db()
+            .calls
+            .iter()
+            .filter(|c| *c == method)
+            .count()
+    }
+
+    /// Makes the next `event.from` with a token fail with `EVENTS_LOST`, as a
+    /// server does when the client fell too far behind.
+    pub fn lose_events(&self) {
+        self.state.db().lose_events = true;
+        self.state.changed.notify_waiters();
+    }
+
+    /// Forgets every session, as a toolstack restart does: the next call on
+    /// any session fails with `SESSION_INVALID`.
+    pub fn invalidate_sessions(&self) {
+        self.state.db().sessions.clear();
+        self.state.changed.notify_waiters();
+    }
+
+    /// Classes whose calls fail with `MESSAGE_METHOD_UNKNOWN`, like an older
+    /// server that predates them (names as in the API, e.g. `"VM_group"`).
+    pub fn set_unknown_classes(&self, classes: &[&str]) {
+        self.state.db().unknown_classes = classes.iter().map(|c| c.to_lowercase()).collect();
+    }
+
+    /// Creates an object as if someone else did it (emits an `add` event).
+    pub fn add_object(&self, class: &str, opaque_ref: &str, record: Value) {
+        let mut db = self.state.db();
+        let class = class.to_lowercase();
+        db.objects
+            .insert((class.clone(), opaque_ref.to_owned()), record.clone());
+        db.push_event(&class, "add", opaque_ref, Some(record));
+        drop(db);
+        self.state.changed.notify_waiters();
+    }
+
+    /// Destroys an object as if someone else did it (emits a `del` event).
+    pub fn remove_object(&self, class: &str, opaque_ref: &str) {
+        let mut db = self.state.db();
+        let class = class.to_lowercase();
+        if db
+            .objects
+            .remove(&(class.clone(), opaque_ref.to_owned()))
+            .is_some()
+        {
+            db.push_event(&class, "del", opaque_ref, None);
+        }
+        drop(db);
+        self.state.changed.notify_waiters();
+    }
+
     /// Number of sessions currently logged in.
     pub fn active_sessions(&self) -> usize {
         self.state.db().sessions.len()
@@ -166,7 +237,7 @@ impl MockServer {
         self.state
             .db()
             .objects
-            .get(&(class.to_owned(), opaque_ref.to_owned()))
+            .get(&(class.to_lowercase(), opaque_ref.to_owned()))
             .cloned()
     }
 
@@ -181,7 +252,7 @@ impl MockServer {
     /// Renames an object as if someone else did it (emits a `mod` event).
     pub fn set_name_label(&self, class: &str, opaque_ref: &str, name: &str) {
         let mut db = self.state.db();
-        db.modify(class, opaque_ref, |rec| {
+        db.modify(&class.to_lowercase(), opaque_ref, |rec| {
             rec.insert("name_label".into(), json!(name));
         });
         drop(db);
@@ -220,7 +291,11 @@ impl State {
         let mut objects = BTreeMap::new();
         if let Value::Object(classes) = records {
             for (class, objs) in classes {
+                // Keys starting with `_` are comments.
                 let Value::Object(objs) = objs else { continue };
+                if class.starts_with('_') {
+                    continue;
+                }
                 for (opaque_ref, record) in objs {
                     objects.insert((class.to_lowercase(), opaque_ref), record);
                 }
@@ -234,6 +309,8 @@ impl State {
                 sessions: HashSet::new(),
                 calls: Vec::new(),
                 next_session: 1,
+                lose_events: false,
+                unknown_classes: HashSet::new(),
             }),
             changed: Notify::new(),
         }
@@ -259,9 +336,28 @@ struct Db {
     sessions: HashSet<String>,
     calls: Vec<String>,
     next_session: u64,
+    lose_events: bool,
+    unknown_classes: HashSet<String>,
 }
 
 impl Db {
+    fn push_event(
+        &mut self,
+        class: &str,
+        operation: &'static str,
+        opaque_ref: &str,
+        snapshot: Option<Value>,
+    ) {
+        self.seq += 1;
+        self.events.push(StoredEvent {
+            seq: self.seq,
+            class: class.to_owned(),
+            operation,
+            opaque_ref: opaque_ref.to_owned(),
+            snapshot,
+        });
+    }
+
     fn modify(&mut self, class: &str, opaque_ref: &str, f: impl FnOnce(&mut Map<String, Value>)) {
         let key = (class.to_owned(), opaque_ref.to_owned());
         let Some(Value::Object(rec)) = self.objects.get_mut(&key) else {
@@ -269,14 +365,7 @@ impl Db {
         };
         f(rec);
         let snapshot = Value::Object(rec.clone());
-        self.seq += 1;
-        self.events.push(StoredEvent {
-            seq: self.seq,
-            class: class.to_owned(),
-            operation: "mod",
-            opaque_ref: opaque_ref.to_owned(),
-            snapshot: Some(snapshot),
-        });
+        self.push_event(class, "mod", opaque_ref, Some(snapshot));
     }
 
     fn get_str(&self, class: &str, opaque_ref: &str, field: &str) -> Option<String> {
@@ -338,6 +427,52 @@ impl Db {
                 });
             }
         }
+    }
+
+    fn refs_of(&self, class: &str) -> Value {
+        Value::Array(
+            self.objects
+                .keys()
+                .filter(|(c, _)| c == class)
+                .map(|(_, r)| json!(r))
+                .collect(),
+        )
+    }
+
+    /// Generic per-class calls: `get_all_records`, `get_all`, `get_record`,
+    /// `get_by_uuid` and field getters. `None` if `method` is none of these.
+    fn class_call(&self, class: &str, call: &str, params: &[Value]) -> Option<Reply> {
+        let key = |r: &str| (class.to_owned(), r.to_owned());
+        Some(match call {
+            "get_all_records" => Ok(self.all_records(class)),
+            "get_all" => Ok(self.refs_of(class)),
+            "get_record" => {
+                let r = str_param(params, 1);
+                match self.objects.get(&key(r)) {
+                    Some(rec) => Ok(rec.clone()),
+                    None => api_error("HANDLE_INVALID", &[class, r]),
+                }
+            }
+            "get_by_uuid" => {
+                let uuid = str_param(params, 1);
+                match self
+                    .objects
+                    .iter()
+                    .find(|((c, _), rec)| c == class && rec.get("uuid") == Some(&json!(uuid)))
+                {
+                    Some(((_, r), _)) => Ok(json!(r)),
+                    None => api_error("UUID_INVALID", &[class, uuid]),
+                }
+            }
+            _ => {
+                let field = call.strip_prefix("get_")?;
+                let r = str_param(params, 1);
+                match self.objects.get(&key(r)) {
+                    Some(rec) => Ok(rec.get(field)?.clone()),
+                    None => api_error("HANDLE_INVALID", &[class, r]),
+                }
+            }
+        })
     }
 
     fn all_records(&self, class: &str) -> Value {
@@ -425,6 +560,11 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
 
     let session = str_param(params, 0).to_owned();
     let mut db = state.db();
+    let (class, call) = method.split_once('.').unwrap_or((method, ""));
+    let class = class.to_lowercase();
+    if db.unknown_classes.contains(&class) {
+        return api_error("MESSAGE_METHOD_UNKNOWN", &[method]);
+    }
     if !db.sessions.contains(&session) {
         return api_error("SESSION_INVALID", &[&session]);
     }
@@ -433,14 +573,17 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
             db.sessions.remove(&session);
             Ok(json!(""))
         }
-        "pool.get_all_records" => Ok(db.all_records("pool")),
-        "host.get_all_records" => Ok(db.all_records("host")),
-        "VM.get_all_records" => Ok(db.all_records("vm")),
-        "host.get_record" => {
-            let host = str_param(params, 1);
-            match db.objects.get(&("host".into(), host.to_owned())) {
-                Some(rec) => Ok(rec.clone()),
-                None => api_error("HANDLE_INVALID", &["host", host]),
+        "event.inject" => {
+            let (class, r) = (str_param(params, 1).to_lowercase(), str_param(params, 2));
+            match db.objects.get(&(class.clone(), r.to_owned())).cloned() {
+                Some(rec) => {
+                    // The token precedes the injected event, so the first
+                    // event.from from it returns that event.
+                    let token = db.seq.to_string();
+                    db.push_event(&class, "mod", r, Some(rec));
+                    Ok(json!(token))
+                }
+                None => api_error("HANDLE_INVALID", &[&class, r]),
             }
         }
         "VM.start" | "VM.clean_shutdown" => {
@@ -480,7 +623,9 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
                 }
             }
         }
-        _ => api_error("MESSAGE_METHOD_UNKNOWN", &[method]),
+        _ => db
+            .class_call(&class, call, params)
+            .unwrap_or_else(|| api_error("MESSAGE_METHOD_UNKNOWN", &[method])),
     };
     drop(db);
     state.changed.notify_waiters();
@@ -528,9 +673,12 @@ async fn event_from(state: &State, params: &[Value]) -> Reply {
     loop {
         let notified = state.changed.notified();
         {
-            let db = state.db();
+            let mut db = state.db();
             if !db.sessions.contains(&session) {
                 return api_error("SESSION_INVALID", &[&session]);
+            }
+            if std::mem::take(&mut db.lose_events) {
+                return api_error("EVENTS_LOST", &[]);
             }
             let events: Vec<Value> = db
                 .events
