@@ -1,7 +1,8 @@
 //! Main window.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::collapsing_header::CollapsingState;
 use egui::{
@@ -10,18 +11,34 @@ use egui::{
 use xapi::{Host, Pool, Ref, Vm, VmPowerState, VmRecord};
 use xen_core::model::{self, ConnectionModel, TreePool, TreeVm};
 use xen_core::{
-    AppState, BackendHandle, CertificatePrompt, Command, ConnectionStatus, Notification, VmAction,
+    AppState, BackendHandle, CertificatePrompt, Command, ConfigLocation, ConnectionError,
+    ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
+    VmAction,
 };
 
 use crate::branding;
+use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Selection {
-    Pool(Ref<Pool>),
-    Host(Ref<Host>),
-    Vm(Ref<Vm>),
+    /// A connection without a loaded pool (connecting, or failed).
+    Connection(ConnectionId),
+    /// A saved server that is not connected.
+    Saved(String),
+    Pool(ConnectionId, Ref<Pool>),
+    Host(ConnectionId, Ref<Host>),
+    Vm(ConnectionId, Ref<Vm>),
+}
+
+impl Selection {
+    fn connection(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Connection(c) | Self::Pool(c, _) | Self::Host(c, _) | Self::Vm(c, _) => Some(*c),
+            Self::Saved(_) => None,
+        }
+    }
 }
 
 struct ConnectForm {
@@ -29,6 +46,7 @@ struct ConnectForm {
     server: String,
     username: String,
     password: String,
+    remember: bool,
     focus: bool,
 }
 
@@ -39,9 +57,16 @@ impl Default for ConnectForm {
             server: String::new(),
             username: "root".to_owned(),
             password: String::new(),
+            remember: true,
             focus: false,
         }
     }
+}
+
+/// Things the tree and detail views ask for while drawing.
+enum Action {
+    Send(Command),
+    OpenConnect { server: String, username: String },
 }
 
 /// The application: UI state only. All XAPI work happens in the backend.
@@ -49,44 +74,51 @@ pub struct XenAdminApp {
     backend: BackendHandle,
     selection: Option<Selection>,
     connect: ConnectForm,
-    cert_prompt: Option<CertificatePrompt>,
+    cert_prompts: VecDeque<CertificatePrompt>,
     about_open: bool,
+    options_open: bool,
+    events_open: bool,
     errors: Vec<String>,
-    /// Tree derived from the last model snapshot (rebuilt only when it changes).
-    tree_cache: Option<(Arc<ConnectionModel>, Arc<Vec<TreePool>>)>,
+    /// Tree derived from each connection's last model snapshot (rebuilt only
+    /// when it changes).
+    tree_cache: HashMap<ConnectionId, (Arc<ConnectionModel>, Arc<Vec<TreePool>>)>,
+    actions: Vec<Action>,
 }
 
 impl XenAdminApp {
+    /// The connect dialog opens on start unless saved servers are being
+    /// restored.
     pub fn new(backend: BackendHandle) -> Self {
-        Self {
+        let state = backend.state();
+        let restoring = state.settings.preferences.restore_connections
+            && state.settings.servers.iter().any(|s| s.reconnect);
+        let mut app = Self {
             backend,
             selection: None,
-            connect: ConnectForm {
-                open: true,
-                focus: true,
-                ..ConnectForm::default()
-            },
-            cert_prompt: None,
+            connect: ConnectForm::default(),
+            cert_prompts: VecDeque::new(),
             about_open: false,
+            options_open: false,
+            events_open: true,
             errors: Vec::new(),
-            tree_cache: None,
+            tree_cache: HashMap::new(),
+            actions: Vec::new(),
+        };
+        if !restoring {
+            app.open_connect_dialog(&state, None);
         }
+        app
     }
 
     fn drain_notifications(&mut self) {
         while let Some(notification) = self.backend.try_recv() {
             match notification {
-                Notification::CertificatePrompt(prompt) => {
-                    // Only one connection attempt is live at a time; a newer
-                    // prompt supersedes an unanswered one.
-                    if let Some(old) = self.cert_prompt.replace(prompt) {
-                        old.reject();
-                    }
-                }
+                Notification::CertificatePrompt(prompt) => self.cert_prompts.push_back(prompt),
                 Notification::VmActionFailed {
                     vm_name,
                     action,
                     error,
+                    ..
                 } => {
                     self.errors.push(fill(
                         strings().vm_action_failed,
@@ -97,29 +129,73 @@ impl XenAdminApp {
                         ],
                     ));
                 }
+                Notification::ConnectionRefused { server, error } => {
+                    self.errors.push(fill(
+                        strings().err_connection_refused,
+                        &[
+                            ("server", &server),
+                            ("error", &i18n::describe_connection_error(&error)),
+                        ],
+                    ));
+                }
+            }
+        }
+        // Prompts of connections that went away need no answer.
+        self.cert_prompts.retain(|p| !p.is_stale());
+    }
+
+    fn apply_actions(&mut self, state: &AppState) {
+        for action in std::mem::take(&mut self.actions) {
+            match action {
+                Action::Send(command) => {
+                    if let Command::Disconnect { connection } = &command
+                        && self.selection.as_ref().and_then(Selection::connection)
+                            == Some(*connection)
+                    {
+                        self.selection = None;
+                    }
+                    self.backend.send(command);
+                }
+                Action::OpenConnect { server, username } => {
+                    self.open_connect_dialog(state, Some((server, username)));
+                }
             }
         }
     }
 
-    fn tree_for(&mut self, model: &Arc<ConnectionModel>) -> Arc<Vec<TreePool>> {
-        match &self.tree_cache {
-            Some((cached, tree)) if Arc::ptr_eq(cached, model) => tree.clone(),
+    fn tree_for(&mut self, conn: &ConnectionView) -> Arc<Vec<TreePool>> {
+        match self.tree_cache.get(&conn.id) {
+            Some((cached, tree)) if Arc::ptr_eq(cached, &conn.model) => tree.clone(),
             _ => {
-                let tree = Arc::new(model.tree());
-                self.tree_cache = Some((model.clone(), tree.clone()));
+                let tree = Arc::new(conn.model.tree());
+                self.tree_cache
+                    .insert(conn.id, (conn.model.clone(), tree.clone()));
                 tree
             }
         }
     }
 
-    fn open_connect_dialog(&mut self) {
-        self.connect.open = true;
-        self.connect.focus = true;
+    fn open_connect_dialog(&mut self, state: &AppState, prefill: Option<(String, String)>) {
+        let (server, username) = prefill.unwrap_or_else(|| (String::new(), "root".to_owned()));
+        self.connect = ConnectForm {
+            open: true,
+            focus: true,
+            server,
+            username,
+            password: String::new(),
+            remember: state.settings.preferences.save_passwords,
+        };
     }
 
-    fn selected_vm<'a>(&self, state: &'a AppState) -> Option<(Ref<Vm>, &'a Arc<VmRecord>)> {
+    fn selected_vm<'a>(
+        &self,
+        state: &'a AppState,
+    ) -> Option<(&'a ConnectionView, Ref<Vm>, &'a Arc<VmRecord>)> {
         match &self.selection {
-            Some(Selection::Vm(r)) => state.model.vms.get(r).map(|rec| (r.clone(), rec)),
+            Some(Selection::Vm(c, r)) => {
+                let conn = state.connection(*c)?;
+                conn.model.vms.get(r).map(|rec| (&**conn, r.clone(), rec))
+            }
             _ => None,
         }
     }
@@ -128,19 +204,41 @@ impl XenAdminApp {
 
     fn menu_bar(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
+        let selected_conn = self
+            .selection
+            .as_ref()
+            .and_then(Selection::connection)
+            .filter(|c| state.connection(*c).is_some());
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(s.menu_file, |ui| {
                 if ui.button(s.menu_connect).clicked() {
-                    self.open_connect_dialog();
+                    self.actions.push(Action::OpenConnect {
+                        server: String::new(),
+                        username: "root".to_owned(),
+                    });
                     ui.close();
                 }
-                let can_disconnect = !matches!(state.status, ConnectionStatus::Disconnected);
                 if ui
-                    .add_enabled(can_disconnect, Button::new(s.menu_disconnect))
+                    .add_enabled(selected_conn.is_some(), Button::new(s.menu_disconnect))
+                    .clicked()
+                    && let Some(connection) = selected_conn
+                {
+                    self.actions
+                        .push(Action::Send(Command::Disconnect { connection }));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        !state.connections.is_empty(),
+                        Button::new(s.menu_disconnect_all),
+                    )
                     .clicked()
                 {
-                    self.backend.send(Command::Disconnect);
-                    self.selection = None;
+                    for conn in &state.connections {
+                        self.actions.push(Action::Send(Command::Disconnect {
+                            connection: conn.id,
+                        }));
+                    }
                     ui.close();
                 }
                 ui.separator();
@@ -148,10 +246,19 @@ impl XenAdminApp {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            ui.menu_button(s.menu_view, |ui| {
+                ui.checkbox(&mut self.events_open, s.menu_events);
+            });
             ui.menu_button(s.menu_vm, |ui| {
                 let vm = self.selected_vm(state);
-                if self.vm_action_buttons(ui, state, vm.as_ref().map(|(r, rec)| (r, rec.as_ref())))
+                if self.vm_action_buttons(ui, vm.as_ref().map(|(c, r, rec)| (*c, r, rec.as_ref())))
                 {
+                    ui.close();
+                }
+            });
+            ui.menu_button(s.menu_tools, |ui| {
+                if ui.button(s.menu_options).clicked() {
+                    self.options_open = true;
                     ui.close();
                 }
             });
@@ -167,81 +274,81 @@ impl XenAdminApp {
         });
         ui.horizontal(|ui| {
             if ui.button(s.menu_connect).clicked() {
-                self.open_connect_dialog();
+                self.actions.push(Action::OpenConnect {
+                    server: String::new(),
+                    username: "root".to_owned(),
+                });
             }
             ui.separator();
             let vm = self.selected_vm(state);
-            self.vm_action_buttons(ui, state, vm.as_ref().map(|(r, rec)| (r, rec.as_ref())));
+            self.vm_action_buttons(ui, vm.as_ref().map(|(c, r, rec)| (*c, r, rec.as_ref())));
         });
         ui.add_space(2.0);
     }
 
     /// Start / Shut Down buttons for `vm`; returns whether one was clicked.
     fn vm_action_buttons(
-        &self,
+        &mut self,
         ui: &mut Ui,
-        state: &AppState,
-        vm: Option<(&Ref<Vm>, &VmRecord)>,
+        vm: Option<(&ConnectionView, &Ref<Vm>, &VmRecord)>,
     ) -> bool {
         let s = strings();
-        let busy = vm.is_some_and(|(r, _)| state.busy_vms.contains(r));
-        let can_start = !busy && vm.is_some_and(|(_, rec)| model::can_start(rec));
-        let can_stop = !busy && vm.is_some_and(|(_, rec)| model::can_clean_shutdown(rec));
+        let usable = vm.filter(|(c, r, _)| c.status.is_connected() && !c.busy_vms.contains(*r));
+        let can_start = usable.is_some_and(|(_, _, rec)| model::can_start(rec));
+        let can_stop = usable.is_some_and(|(_, _, rec)| model::can_clean_shutdown(rec));
         let mut clicked = false;
-        if ui
-            .add_enabled(can_start, Button::new(s.action_start))
-            .clicked()
-            && let Some((r, _)) = vm
-        {
-            self.backend.send(Command::Vm {
-                vm: r.clone(),
-                action: VmAction::Start,
-            });
-            clicked = true;
-        }
-        if ui
-            .add_enabled(can_stop, Button::new(s.action_clean_shutdown))
-            .clicked()
-            && let Some((r, _)) = vm
-        {
-            self.backend.send(Command::Vm {
-                vm: r.clone(),
-                action: VmAction::CleanShutdown,
-            });
-            clicked = true;
+        for (enabled, label, action) in [
+            (can_start, s.action_start, VmAction::Start),
+            (can_stop, s.action_clean_shutdown, VmAction::CleanShutdown),
+        ] {
+            if ui.add_enabled(enabled, Button::new(label)).clicked()
+                && let Some((c, r, _)) = vm
+            {
+                self.actions.push(Action::Send(Command::Vm {
+                    connection: c.id,
+                    vm: r.clone(),
+                    action,
+                }));
+                clicked = true;
+            }
         }
         clicked
     }
 
     fn status_bar(&self, ui: &mut Ui, state: &AppState) {
         let s = strings();
-        ui.horizontal(|ui| match &state.status {
-            ConnectionStatus::Disconnected => {
+        ui.horizontal_wrapped(|ui| {
+            if state.connections.is_empty() {
                 ui.label(s.status_disconnected);
+                return;
             }
-            ConnectionStatus::Connecting { server } => {
-                ui.spinner();
-                ui.label(fill(s.status_connecting, &[("server", server)]));
-            }
-            ConnectionStatus::Connected {
-                server,
-                api_version,
-            } => {
+            let connected: Vec<&Arc<ConnectionView>> = state
+                .connections
+                .iter()
+                .filter(|c| c.status.is_connected())
+                .collect();
+            if let [only] = connected.as_slice()
+                && state.connections.len() == 1
+                && let ConnectionStatus::Connected { api_version } = &only.status
+            {
                 let version = format!("{}.{}", api_version.0, api_version.1);
                 ui.label(fill(
                     s.status_connected,
-                    &[("server", server), ("version", &version)],
+                    &[("server", &only.server), ("version", &version)],
                 ));
+                return;
             }
-            ConnectionStatus::Failed { server, error } => {
-                let text = fill(
-                    s.status_failed,
-                    &[
-                        ("server", server),
-                        ("error", &i18n::describe_connection_error(error)),
-                    ],
-                );
-                ui.colored_label(ui.visuals().error_fg_color, text);
+            ui.label(fill(
+                s.status_summary,
+                &[("count", &connected.len().to_string())],
+            ));
+            for conn in state
+                .connections
+                .iter()
+                .filter(|c| !c.status.is_connected())
+            {
+                ui.separator();
+                status_line(ui, conn);
             }
         });
     }
@@ -251,43 +358,199 @@ impl XenAdminApp {
         ui.add_space(4.0);
         ui.strong(s.tree_heading);
         ui.separator();
-        if state.model.pools.is_empty() {
+        let saved: Vec<&SavedServer> = state
+            .settings
+            .servers
+            .iter()
+            .filter(|srv| state.connection_to(&srv.address).is_none())
+            .collect();
+        if state.connections.is_empty() && saved.is_empty() {
             ui.label(RichText::new(s.tree_empty).weak());
             return;
         }
-        let tree = self.tree_for(&state.model);
         ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-            for pool in tree.iter() {
-                let id = ui.make_persistent_id(("pool", pool.pool_ref.as_str()));
-                CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                    .show_header(ui, |ui| {
-                        icons::pool(ui);
-                        self.tree_label(ui, Selection::Pool(pool.pool_ref.clone()), &pool.name);
-                    })
-                    .body(|ui| {
-                        for host in &pool.hosts {
-                            let id = ui.make_persistent_id(("host", host.host_ref.as_str()));
-                            CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                                .show_header(ui, |ui| {
-                                    icons::host(ui, host.enabled);
-                                    self.tree_label(
-                                        ui,
-                                        Selection::Host(host.host_ref.clone()),
-                                        &host.name,
-                                    );
-                                })
-                                .body(|ui| {
-                                    for vm in &host.vms {
-                                        self.vm_row(ui, state, vm);
-                                    }
-                                });
-                        }
-                        for vm in &pool.vms {
-                            self.vm_row(ui, state, vm);
-                        }
-                    });
+            for conn in &state.connections {
+                if conn.model.pools.is_empty() {
+                    self.connection_row(ui, conn);
+                } else {
+                    for pool in self.tree_for(conn).iter() {
+                        self.pool_node(ui, state, conn, pool);
+                    }
+                }
+            }
+            for server in saved {
+                self.saved_row(ui, server);
             }
         });
+    }
+
+    fn pool_node(&mut self, ui: &mut Ui, state: &AppState, conn: &ConnectionView, pool: &TreePool) {
+        let id = ui.make_persistent_id(("pool", conn.id, pool.pool_ref.as_str()));
+        CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| {
+                icons::pool(ui);
+                let response = self.tree_label(
+                    ui,
+                    Selection::Pool(conn.id, pool.pool_ref.clone()),
+                    &pool.name,
+                );
+                if !conn.status.is_connected() {
+                    ui.label(
+                        RichText::new(i18n::connection_status_label(&conn.status))
+                            .weak()
+                            .italics(),
+                    );
+                }
+                response.context_menu(|ui| self.connection_menu(ui, conn));
+            })
+            .body(|ui| {
+                for host in &pool.hosts {
+                    let id = ui.make_persistent_id(("host", conn.id, host.host_ref.as_str()));
+                    CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                        .show_header(ui, |ui| {
+                            icons::host(ui, host.enabled && conn.status.is_connected());
+                            self.tree_label(
+                                ui,
+                                Selection::Host(conn.id, host.host_ref.clone()),
+                                &host.name,
+                            );
+                        })
+                        .body(|ui| {
+                            for vm in &host.vms {
+                                self.vm_row(ui, state, conn, vm);
+                            }
+                        });
+                }
+                for vm in &pool.vms {
+                    self.vm_row(ui, state, conn, vm);
+                }
+            });
+    }
+
+    /// A connection with nothing loaded yet (connecting or failed).
+    fn connection_row(&mut self, ui: &mut Ui, conn: &ConnectionView) {
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().indent);
+            icons::host(ui, false);
+            let response = self.tree_label(ui, Selection::Connection(conn.id), &conn.server);
+            if matches!(conn.status, ConnectionStatus::Connecting) {
+                ui.spinner();
+            }
+            ui.label(
+                RichText::new(i18n::connection_status_label(&conn.status))
+                    .weak()
+                    .italics(),
+            );
+            response.context_menu(|ui| self.connection_menu(ui, conn));
+        });
+    }
+
+    /// A saved server that is not connected.
+    fn saved_row(&mut self, ui: &mut Ui, server: &SavedServer) {
+        let s = strings();
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().indent);
+            icons::host(ui, false);
+            let response = self.tree_label(
+                ui,
+                Selection::Saved(server.address.clone()),
+                &server.address,
+            );
+            ui.label(RichText::new(s.server_disconnected).weak().italics());
+            if response.double_clicked() {
+                self.actions.push(Action::Send(connect_saved(server)));
+            }
+            response.context_menu(|ui| {
+                self.saved_buttons(ui, server);
+            });
+        });
+    }
+
+    fn connection_menu(&mut self, ui: &mut Ui, conn: &ConnectionView) {
+        if self.connection_buttons(ui, conn) {
+            ui.close();
+        }
+    }
+
+    /// Buttons for a connection's state; returns whether one was clicked.
+    fn connection_buttons(&mut self, ui: &mut Ui, conn: &ConnectionView) -> bool {
+        let s = strings();
+        let mut clicked = false;
+        match &conn.status {
+            ConnectionStatus::Reconnecting { .. } => {
+                if ui.button(s.server_retry_now).clicked() {
+                    self.actions.push(Action::Send(Command::RetryNow {
+                        connection: conn.id,
+                    }));
+                    clicked = true;
+                }
+            }
+            ConnectionStatus::Failed { error } => {
+                let needs_password = matches!(
+                    **error,
+                    ConnectionError::PasswordRequired | ConnectionError::PasswordUnavailable(_)
+                ) || error
+                    .xapi_error()
+                    .is_some_and(|e| e.is_api(xapi::error::codes::SESSION_AUTHENTICATION_FAILED));
+                if !needs_password && ui.button(s.server_connect).clicked() {
+                    self.actions.push(Action::Send(Command::Connect {
+                        server: conn.server.clone(),
+                        username: conn.username.clone(),
+                        password: None,
+                        remember_password: true,
+                    }));
+                    clicked = true;
+                }
+                if ui.button(s.server_enter_password).clicked() {
+                    self.actions.push(Action::OpenConnect {
+                        server: conn.server.clone(),
+                        username: conn.username.clone(),
+                    });
+                    clicked = true;
+                }
+            }
+            _ => {}
+        }
+        let close_label = if conn.status.is_failed() {
+            s.server_dismiss
+        } else {
+            s.server_disconnect
+        };
+        if ui.button(close_label).clicked() {
+            self.actions.push(Action::Send(Command::Disconnect {
+                connection: conn.id,
+            }));
+            clicked = true;
+        }
+        clicked
+    }
+
+    /// Buttons for a saved, disconnected server; returns whether one was
+    /// clicked.
+    fn saved_buttons(&mut self, ui: &mut Ui, server: &SavedServer) -> bool {
+        let s = strings();
+        let mut clicked = false;
+        if ui.button(s.server_connect).clicked() {
+            self.actions.push(Action::Send(connect_saved(server)));
+            clicked = true;
+        }
+        if ui.button(s.server_enter_password).clicked() {
+            self.actions.push(Action::OpenConnect {
+                server: server.address.clone(),
+                username: server.username.clone(),
+            });
+            clicked = true;
+        }
+        if ui.button(s.server_forget).clicked() {
+            self.actions.push(Action::Send(Command::Forget {
+                address: server.address.clone(),
+            }));
+            clicked = true;
+        }
+        if clicked {
+            ui.close();
+        }
+        clicked
     }
 
     fn tree_label(&mut self, ui: &mut Ui, selection: Selection, name: &str) -> egui::Response {
@@ -295,19 +558,21 @@ impl XenAdminApp {
         let response = ui.selectable_label(selected, name);
         if response.clicked() {
             self.selection = Some(selection);
+            // The toolbar above was drawn with the old selection.
+            ui.ctx().request_repaint();
         }
         response
     }
 
-    fn vm_row(&mut self, ui: &mut Ui, state: &AppState, vm: &TreeVm) {
+    fn vm_row(&mut self, ui: &mut Ui, _state: &AppState, conn: &ConnectionView, vm: &TreeVm) {
         ui.horizontal(|ui| {
             // Leaves line up with the labels of collapsible siblings.
             ui.add_space(ui.spacing().indent);
             icons::vm(ui, &vm.power_state);
-            let response = self.tree_label(ui, Selection::Vm(vm.vm_ref.clone()), &vm.name);
-            if let Some(record) = state.model.vms.get(&vm.vm_ref) {
+            let response = self.tree_label(ui, Selection::Vm(conn.id, vm.vm_ref.clone()), &vm.name);
+            if let Some(record) = conn.model.vms.get(&vm.vm_ref) {
                 response.context_menu(|ui| {
-                    if self.vm_action_buttons(ui, state, Some((&vm.vm_ref, record))) {
+                    if self.vm_action_buttons(ui, Some((conn, &vm.vm_ref, record))) {
                         ui.close();
                     }
                 });
@@ -315,12 +580,25 @@ impl XenAdminApp {
         });
     }
 
-    fn details(&self, ui: &mut Ui, state: &AppState) {
+    fn details(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
-        let model = &state.model;
-        match &self.selection {
-            Some(Selection::Vm(r)) if model.vms.contains_key(r) => {
-                let vm = &model.vms[r];
+        let selection = self.selection.clone();
+        let conn = selection
+            .as_ref()
+            .and_then(Selection::connection)
+            .and_then(|c| state.connection(c));
+        if let (Some(conn), Some(Selection::Pool(..) | Selection::Host(..) | Selection::Vm(..))) =
+            (conn, &selection)
+            && !conn.status.is_connected()
+        {
+            ui.horizontal(|ui| {
+                status_line(ui, conn);
+            });
+            ui.separator();
+        }
+        match (&selection, conn) {
+            (Some(Selection::Vm(_, r)), Some(conn)) if conn.model.vms.contains_key(r) => {
+                let vm = &conn.model.vms[r];
                 ui.horizontal(|ui| {
                     icons::vm(ui, &vm.power_state);
                     ui.heading(&vm.name_label);
@@ -337,7 +615,7 @@ impl XenAdminApp {
                             power_label(&vm.power_state),
                         );
                         ui.end_row();
-                        if let Some(host) = model.hosts.get(&vm.resident_on) {
+                        if let Some(host) = conn.model.hosts.get(&vm.resident_on) {
                             ui.label(s.details_type_host);
                             ui.label(&host.name_label);
                             ui.end_row();
@@ -347,103 +625,109 @@ impl XenAdminApp {
                     });
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    self.vm_action_buttons(ui, state, Some((r, vm)));
-                    if state.busy_vms.contains(r) {
+                    self.vm_action_buttons(ui, Some((conn, r, vm)));
+                    if conn.busy_vms.contains(r) {
                         ui.spinner();
                         ui.label(s.details_busy);
                     }
                 });
             }
-            Some(Selection::Host(r)) if model.hosts.contains_key(r) => {
-                let host = &model.hosts[r];
+            (Some(Selection::Host(_, r)), Some(conn)) if conn.model.hosts.contains_key(r) => {
+                host_details(ui, &conn.model, &conn.model.hosts[r]);
+            }
+            (Some(Selection::Pool(_, r)), Some(conn)) if conn.model.pools.contains_key(r) => {
+                pool_details(ui, &conn.model, &conn.model.pools[r]);
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    icons::host(ui, host.enabled);
-                    ui.heading(&host.name_label);
+                    self.connection_buttons(ui, conn);
                 });
-                ui.label(RichText::new(s.details_type_host).weak());
-                ui.separator();
-                let resident = host
-                    .resident_vms
+            }
+            (Some(Selection::Connection(_)), Some(conn)) => self.connection_details(ui, conn),
+            (Some(Selection::Saved(address)), _) => {
+                match state
+                    .settings
+                    .servers
                     .iter()
-                    .filter(|v| model.vms.get(*v).is_some_and(|rec| model::is_guest(rec)))
-                    .count();
-                Grid::new("host-details")
-                    .num_columns(2)
-                    .spacing([16.0, 6.0])
-                    .show(ui, |ui| {
-                        row(ui, s.details_address, &host.address);
-                        row(
-                            ui,
-                            s.details_enabled,
-                            if host.enabled {
-                                s.details_enabled
-                            } else {
-                                s.details_disabled
-                            },
-                        );
-                        let version = [
-                            host.software_version.get("product_brand"),
-                            host.software_version.get("product_version"),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                        row(ui, s.details_version, &version);
-                        row(ui, s.details_vms, &resident.to_string());
-                        row(ui, s.details_description, &host.name_description);
-                        row(ui, s.details_uuid, &host.uuid);
-                    });
+                    .find(|x| &x.address == address)
+                {
+                    Some(server) => {
+                        let server = server.clone();
+                        ui.horizontal(|ui| {
+                            icons::host(ui, false);
+                            ui.heading(&server.address);
+                        });
+                        ui.label(RichText::new(s.server_heading).weak());
+                        ui.separator();
+                        Grid::new("saved-details")
+                            .num_columns(2)
+                            .spacing([16.0, 6.0])
+                            .show(ui, |ui| {
+                                row(ui, s.server_status, s.server_disconnected);
+                                row(ui, s.server_user, &server.username);
+                            });
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            self.saved_buttons(ui, &server);
+                        });
+                    }
+                    None => no_selection(ui, state),
+                }
             }
-            Some(Selection::Pool(r)) if model.pools.contains_key(r) => {
-                let pool = &model.pools[r];
-                let name = model
-                    .coordinator()
-                    .map(|h| h.name_label.as_str())
-                    .unwrap_or_default();
-                ui.horizontal(|ui| {
-                    icons::pool(ui);
-                    ui.heading(if pool.name_label.is_empty() {
-                        name
-                    } else {
-                        &pool.name_label
-                    });
-                });
-                ui.label(RichText::new(s.details_type_pool).weak());
-                ui.separator();
-                let guests = model.vms.values().filter(|v| model::is_guest(v)).count();
-                Grid::new("pool-details")
-                    .num_columns(2)
-                    .spacing([16.0, 6.0])
-                    .show(ui, |ui| {
-                        row(ui, s.details_coordinator, name);
-                        row(ui, s.details_hosts, &model.hosts.len().to_string());
-                        row(ui, s.details_vms, &guests.to_string());
-                        row(ui, s.details_description, &pool.name_description);
-                        row(ui, s.details_uuid, &pool.uuid);
-                    });
-            }
-            _ => {
-                ui.centered_and_justified(|ui| {
-                    let hint = if model.pools.is_empty() {
-                        s.tree_empty
-                    } else {
-                        s.tree_no_selection
-                    };
-                    ui.label(RichText::new(hint).weak());
-                });
-            }
+            _ => no_selection(ui, state),
         }
+    }
+
+    fn connection_details(&mut self, ui: &mut Ui, conn: &ConnectionView) {
+        let s = strings();
+        ui.horizontal(|ui| {
+            icons::host(ui, conn.status.is_connected());
+            ui.heading(&conn.server);
+        });
+        ui.label(RichText::new(s.server_heading).weak());
+        ui.separator();
+        Grid::new("server-details")
+            .num_columns(2)
+            .spacing([16.0, 6.0])
+            .show(ui, |ui| {
+                row(
+                    ui,
+                    s.server_status,
+                    i18n::connection_status_label(&conn.status),
+                );
+                row(ui, s.server_user, &conn.username);
+                match &conn.status {
+                    ConnectionStatus::Failed { error }
+                    | ConnectionStatus::Reconnecting { error, .. } => {
+                        ui.label(s.server_error);
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            i18n::describe_connection_error(error),
+                        );
+                        ui.end_row();
+                    }
+                    _ => {}
+                }
+            });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if matches!(conn.status, ConnectionStatus::Connecting) {
+                ui.spinner();
+            }
+            self.connection_buttons(ui, conn);
+        });
     }
 
     // ---- windows ----------------------------------------------------------
 
-    fn connect_window(&mut self, ctx: &Context) {
+    fn connect_window(&mut self, ctx: &Context, state: &AppState) {
         if !self.connect.open {
             return;
         }
         let s = strings();
+        let saved = state
+            .settings
+            .server(self.connect.server.trim())
+            .is_some_and(|srv| srv.username == self.connect.username.trim());
         let mut open = true;
         let mut submit = false;
         let mut cancel = false;
@@ -476,16 +760,19 @@ impl XenAdminApp {
                         .labelled_by(label.id);
                         ui.end_row();
                         let label = ui.label(s.connect_password);
-                        let password = ui
-                            .add(
-                                TextEdit::singleline(&mut self.connect.password)
-                                    .password(true)
-                                    .desired_width(240.0),
-                            )
-                            .labelled_by(label.id);
+                        let mut field = TextEdit::singleline(&mut self.connect.password)
+                            .password(true)
+                            .desired_width(240.0);
+                        if saved {
+                            field = field.hint_text(s.connect_password_saved_hint);
+                        }
+                        let password = ui.add(field).labelled_by(label.id);
                         if password.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                             submit = true;
                         }
+                        ui.end_row();
+                        ui.label("");
+                        ui.checkbox(&mut self.connect.remember, s.connect_remember);
                         ui.end_row();
                     });
                 ui.add_space(8.0);
@@ -506,12 +793,18 @@ impl XenAdminApp {
         let ready =
             !self.connect.server.trim().is_empty() && !self.connect.username.trim().is_empty();
         if submit && ready {
+            let password = std::mem::take(&mut self.connect.password);
+            let password = if password.is_empty() && saved {
+                None
+            } else {
+                Some(password.into())
+            };
             self.backend.send(Command::Connect {
                 server: self.connect.server.trim().to_owned(),
                 username: self.connect.username.trim().to_owned(),
-                password: std::mem::take(&mut self.connect.password),
+                password,
+                remember_password: self.connect.remember,
             });
-            self.selection = None;
             self.connect.open = false;
         } else if cancel || !open {
             self.connect.password.clear();
@@ -520,7 +813,7 @@ impl XenAdminApp {
     }
 
     fn certificate_window(&mut self, ctx: &Context) {
-        let Some(prompt) = &self.cert_prompt else {
+        let Some(prompt) = self.cert_prompts.front() else {
             return;
         };
         let s = strings();
@@ -563,13 +856,76 @@ impl XenAdminApp {
                 });
             });
         if let Some(accept) = decision
-            && let Some(prompt) = self.cert_prompt.take()
+            && let Some(prompt) = self.cert_prompts.pop_front()
         {
             if accept {
                 prompt.accept();
             } else {
                 prompt.reject();
             }
+        }
+    }
+
+    fn options_window(&mut self, ctx: &Context, state: &AppState) {
+        if !self.options_open {
+            return;
+        }
+        let s = strings();
+        let mut open = true;
+        let mut close = false;
+        let mut preferences = state.settings.preferences.clone();
+        egui::Window::new(s.options_title)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.checkbox(&mut preferences.save_passwords, s.options_save_passwords);
+                ui.checkbox(&mut preferences.restore_connections, s.options_restore);
+                ui.add_space(8.0);
+                ui.separator();
+                match &state.config {
+                    Some(paths) => {
+                        let mode = match paths.location {
+                            ConfigLocation::User => s.options_mode_user,
+                            ConfigLocation::Portable => s.options_mode_portable,
+                            ConfigLocation::Override => s.options_mode_override,
+                        };
+                        Grid::new("options-paths")
+                            .num_columns(2)
+                            .spacing([12.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label(s.options_settings_dir);
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new(paths.dir.display().to_string()).monospace(),
+                                    );
+                                    ui.label(RichText::new(mode).weak());
+                                });
+                                ui.end_row();
+                                ui.label(s.options_log_dir);
+                                ui.label(
+                                    RichText::new(paths.log_dir().display().to_string())
+                                        .monospace(),
+                                );
+                                ui.end_row();
+                            });
+                    }
+                    None => {
+                        ui.label(RichText::new(s.options_mode_memory).weak());
+                    }
+                }
+                ui.add_space(8.0);
+                if ui.button(s.close).clicked() {
+                    close = true;
+                }
+            });
+        if preferences != state.settings.preferences {
+            self.backend
+                .send(Command::SetPreferences(Preferences { ..preferences }));
+        }
+        if close || !open {
+            self.options_open = false;
         }
     }
 
@@ -612,7 +968,7 @@ impl XenAdminApp {
         egui::Window::new(s.errors_title)
             .collapsible(true)
             .resizable(true)
-            .anchor(Align2::RIGHT_BOTTOM, [-12.0, -36.0])
+            .anchor(Align2::RIGHT_TOP, [-12.0, 60.0])
             .show(ctx, |ui| {
                 ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
                     for error in &self.errors {
@@ -633,27 +989,196 @@ impl eframe::App for XenAdminApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.drain_notifications();
         let state = self.backend.state();
+        self.tree_cache
+            .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
         Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &state));
         Panel::bottom("status").show(ui, |ui| self.status_bar(ui, &state));
+        let mut moving = false;
+        if self.events_open {
+            Panel::bottom("events")
+                .resizable(true)
+                .default_size(190.0)
+                .min_size(80.0)
+                .show(ui, |ui| moving = events::show(ui, &state, &self.backend));
+        }
         Panel::left("tree")
             .resizable(true)
             .default_size(280.0)
             .min_size(180.0)
             .show(ui, |ui| self.tree(ui, &state));
         CentralPanel::default().show(ui, |ui| self.details(ui, &state));
-        self.connect_window(&ctx);
+        self.connect_window(&ctx, &state);
         self.certificate_window(&ctx);
+        self.options_window(&ctx, &state);
         self.about_window(&ctx);
         self.errors_window(&ctx);
+        self.apply_actions(&state);
+
+        // Countdowns and relative times move without backend updates.
+        let reconnecting = state
+            .connections
+            .iter()
+            .any(|c| matches!(c.status, ConnectionStatus::Reconnecting { .. }));
+        if moving || reconnecting {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(prompt) = self.cert_prompt.take() {
+        for prompt in self.cert_prompts.drain(..) {
             prompt.reject();
         }
         self.backend.shutdown_blocking(Duration::from_secs(3));
     }
+}
+
+/// Connects to a saved server with its saved password.
+fn connect_saved(server: &SavedServer) -> Command {
+    Command::Connect {
+        server: server.address.clone(),
+        username: server.username.clone(),
+        password: None,
+        remember_password: true,
+    }
+}
+
+/// One line describing a connection that is not (fully) connected.
+fn status_line(ui: &mut Ui, conn: &ConnectionView) {
+    let s = strings();
+    match &conn.status {
+        ConnectionStatus::Connecting => {
+            ui.spinner();
+            ui.label(fill(s.status_connecting, &[("server", &conn.server)]));
+        }
+        ConnectionStatus::Connected { api_version } => {
+            let version = format!("{}.{}", api_version.0, api_version.1);
+            ui.label(fill(
+                s.status_connected,
+                &[("server", &conn.server), ("version", &version)],
+            ));
+        }
+        ConnectionStatus::Reconnecting {
+            attempt, retry_at, ..
+        } => {
+            let attempt = attempt.to_string();
+            let text = match retry_at {
+                Some(at) => {
+                    let left = at.saturating_duration_since(Instant::now());
+                    fill(
+                        s.status_reconnect_wait,
+                        &[
+                            ("server", &conn.server),
+                            ("seconds", &left.as_secs().max(1).to_string()),
+                            ("attempt", &attempt),
+                        ],
+                    )
+                }
+                None => {
+                    ui.spinner();
+                    fill(
+                        s.status_reconnecting,
+                        &[("server", &conn.server), ("attempt", &attempt)],
+                    )
+                }
+            };
+            ui.colored_label(ui.visuals().warn_fg_color, text);
+        }
+        ConnectionStatus::Failed { error } => {
+            let text = fill(
+                s.status_failed,
+                &[
+                    ("server", &conn.server),
+                    ("error", &i18n::describe_connection_error(error)),
+                ],
+            );
+            ui.colored_label(ui.visuals().error_fg_color, text);
+        }
+    }
+}
+
+fn no_selection(ui: &mut Ui, state: &AppState) {
+    let s = strings();
+    ui.centered_and_justified(|ui| {
+        let hint = if state.connections.is_empty() && state.settings.servers.is_empty() {
+            s.tree_empty
+        } else {
+            s.tree_no_selection
+        };
+        ui.label(RichText::new(hint).weak());
+    });
+}
+
+fn host_details(ui: &mut Ui, model: &ConnectionModel, host: &xapi::HostRecord) {
+    let s = strings();
+    ui.horizontal(|ui| {
+        icons::host(ui, host.enabled);
+        ui.heading(&host.name_label);
+    });
+    ui.label(RichText::new(s.details_type_host).weak());
+    ui.separator();
+    let resident = host
+        .resident_vms
+        .iter()
+        .filter(|v| model.vms.get(*v).is_some_and(|rec| model::is_guest(rec)))
+        .count();
+    Grid::new("host-details")
+        .num_columns(2)
+        .spacing([16.0, 6.0])
+        .show(ui, |ui| {
+            row(ui, s.details_address, &host.address);
+            row(
+                ui,
+                s.details_enabled,
+                if host.enabled {
+                    s.details_enabled
+                } else {
+                    s.details_disabled
+                },
+            );
+            let version = [
+                host.software_version.get("product_brand"),
+                host.software_version.get("product_version"),
+            ]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+            row(ui, s.details_version, &version);
+            row(ui, s.details_vms, &resident.to_string());
+            row(ui, s.details_description, &host.name_description);
+            row(ui, s.details_uuid, &host.uuid);
+        });
+}
+
+fn pool_details(ui: &mut Ui, model: &ConnectionModel, pool: &xapi::PoolRecord) {
+    let s = strings();
+    let name = model
+        .coordinator()
+        .map(|h| h.name_label.as_str())
+        .unwrap_or_default();
+    ui.horizontal(|ui| {
+        icons::pool(ui);
+        ui.heading(if pool.name_label.is_empty() {
+            name
+        } else {
+            &pool.name_label
+        });
+    });
+    ui.label(RichText::new(s.details_type_pool).weak());
+    ui.separator();
+    let guests = model.vms.values().filter(|v| model::is_guest(v)).count();
+    Grid::new("pool-details")
+        .num_columns(2)
+        .spacing([16.0, 6.0])
+        .show(ui, |ui| {
+            row(ui, s.details_coordinator, name);
+            row(ui, s.details_hosts, &model.hosts.len().to_string());
+            row(ui, s.details_vms, &guests.to_string());
+            row(ui, s.details_description, &pool.name_description);
+            row(ui, s.details_uuid, &pool.uuid);
+        });
 }
 
 fn row(ui: &mut Ui, label: &str, value: &str) {
@@ -688,7 +1213,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
     use xapi_mock::MockServer;
-    use xen_core::BackendOptions;
+    use xen_core::{BackendOptions, MemorySecretStore, SecretStore, Settings, Store};
 
     use super::*;
 
@@ -727,14 +1252,29 @@ mod tests {
     }
 
     fn app_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, XenAdminApp> {
+        app_harness_with(runtime, Arc::new(Store::default()))
+    }
+
+    /// The app over an in-memory store (no files, no OS keyring), with short
+    /// timeouts.
+    fn app_harness_with(
+        runtime: &tokio::runtime::Runtime,
+        store: Arc<Store>,
+    ) -> Harness<'static, XenAdminApp> {
         let handle = runtime.handle().clone();
         Harness::builder()
-            .with_size(egui::vec2(1000.0, 700.0))
+            .with_size(egui::vec2(1100.0, 800.0))
             .build_eframe(move |cc| {
                 let ctx = cc.egui_ctx.clone();
                 let options = BackendOptions {
                     originator: "xenadmin-ui-test".into(),
+                    store,
                     event_timeout: 5.0,
+                    heartbeat_interval: Duration::from_millis(300),
+                    heartbeat_timeout: Duration::from_millis(800),
+                    reconnect_delay: Duration::from_millis(200),
+                    max_reconnect_delay: Duration::from_millis(500),
+                    task_poll_interval: Duration::from_millis(50),
                     ..Default::default()
                 };
                 XenAdminApp::new(BackendHandle::spawn(
@@ -885,9 +1425,10 @@ mod tests {
             harness.get_by_label(&format!("guest-{i:02}"));
         }
         let state = harness.state().backend.state();
-        assert_eq!(state.model.srs.len(), 6);
-        assert_eq!(state.model.vm_guest_metrics.len(), 10);
-        assert_eq!(state.model.object_count(), 241);
+        let model = &state.connections[0].model;
+        assert_eq!(model.srs.len(), 6);
+        assert_eq!(model.vm_guest_metrics.len(), 10);
+        assert_eq!(model.object_count(), 241);
     }
 
     /// Read-only check of the real window code against a real host. Ignored
@@ -915,7 +1456,22 @@ mod tests {
             var("XENADMIN_REAL_FINGERPRINT"),
         );
         let runtime = runtime();
-        let mut harness = app_harness(&runtime);
+        // Production timings (heartbeat every 15 s, event.from 60 s).
+        let handle = runtime.handle().clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1100.0, 800.0))
+            .build_eframe(move |cc| {
+                let ctx = cc.egui_ctx.clone();
+                let options = BackendOptions {
+                    originator: "xenadmin-ui-test".into(),
+                    ..Default::default()
+                };
+                XenAdminApp::new(BackendHandle::spawn(
+                    &handle,
+                    options,
+                    Arc::new(move || ctx.request_repaint()),
+                ))
+            });
         let s = strings();
         assert_eq!(
             user, "root",
@@ -932,11 +1488,15 @@ mod tests {
         harness.get_by_label(s.cert_trust).click();
 
         step_until(&mut harness, "connected", |h| {
-            h.state().backend.state().status.is_connected()
-                && h.state().backend.state().model.object_count() > 0
+            h.state()
+                .backend
+                .state()
+                .connections
+                .first()
+                .is_some_and(|c| c.status.is_connected() && c.model.object_count() > 0)
         });
         let state = harness.state().backend.state();
-        let tree = state.model.tree();
+        let tree = state.connections[0].model.tree();
         assert_eq!(tree.len(), 1);
         harness.get_by_label(&tree[0].name);
         let mut guests = 0;
@@ -951,21 +1511,31 @@ mod tests {
             assert!(harness.query_by_label(&vm.name).is_some());
             guests += 1;
         }
-        // Keep stepping for a while: the event loop must stay connected.
-        let until = Instant::now() + Duration::from_secs(8);
+        // Keep stepping for a while: the event loop must stay connected and
+        // the heartbeat (host.get_servertime, every 15 s) must succeed.
+        let until = Instant::now() + Duration::from_secs(20);
         while Instant::now() < until {
             harness.step();
             std::thread::sleep(Duration::from_millis(50));
         }
         let state = harness.state().backend.state();
-        assert!(state.status.is_connected(), "{:?}", state.status);
-        println!(
-            "real host: {} pool, {} host(s), {guests} guest VM(s) in the tree; {} cached objects",
-            state.model.pools.len(),
-            state.model.hosts.len(),
-            state.model.object_count()
+        let conn = &state.connections[0];
+        assert!(conn.status.is_connected(), "{:?}", conn.status);
+        assert!(
+            !state
+                .operations
+                .iter()
+                .any(|o| o.kind == xen_core::OperationKind::Reconnect),
+            "the connection dropped during the run"
         );
-        for (class, count) in state.model.class_counts() {
+        let tasks = conn.model.tasks.len();
+        println!(
+            "real host: {} pool, {} host(s), {guests} guest VM(s) in the tree; {} cached objects; {tasks} server task(s) listed in Events; stayed connected 20 s (heartbeat included)",
+            conn.model.pools.len(),
+            conn.model.hosts.len(),
+            conn.model.object_count()
+        );
+        for (class, count) in conn.model.class_counts() {
             if count > 0 {
                 println!("  {class}: {count}");
             }
@@ -976,5 +1546,159 @@ mod tests {
             .backend
             .shutdown_blocking(Duration::from_secs(5));
         println!("logged out");
+    }
+
+    fn first_conn(h: &Harness<'_, XenAdminApp>) -> Option<Arc<xen_core::ConnectionView>> {
+        h.state().backend.state().connections.first().cloned()
+    }
+
+    /// A slow VM start shows in the Events panel with its progress and is
+    /// cancelled from there; a server task of another client shows too.
+    #[test]
+    fn events_panel_follows_and_cancels_operations() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start(false));
+        server.set_task_timing(100, Duration::from_millis(100));
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut harness, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+        });
+        harness.get_by_label(s.events_title);
+        harness.get_by_label(&fill(s.op_connect, &[("server", &server.address())]));
+
+        harness.get_by_label("db-01").click();
+        harness.step();
+        harness
+            .get_all_by_label(s.action_start)
+            .next()
+            .unwrap()
+            .click();
+        let title = fill(
+            s.op_vm_action,
+            &[("action", s.action_start), ("vm", "db-01")],
+        );
+        step_until(&mut harness, "operation with cancel", |h| {
+            h.query_by_label(&title).is_some() && h.query_by_label(s.events_cancel).is_some()
+        });
+        harness.get_by_label(s.events_cancel).click();
+        step_until(&mut harness, "cancelled", |h| {
+            h.query_by_label(s.op_cancelled).is_some()
+        });
+        assert_eq!(
+            server.record("vm", "OpaqueRef:vm-db").unwrap()["power_state"],
+            "Halted"
+        );
+
+        // Another client's task: listed with a Cancel button.
+        let task = server.start_task("Async.VM.export");
+        step_until(&mut harness, "server task", |h| {
+            h.query_by_label("Async.VM.export").is_some()
+                && h.query_by_label(s.events_server_tasks).is_some()
+        });
+        harness.get_by_label(s.events_cancel).click();
+        step_until(&mut harness, "task cancelled", |h| {
+            h.query_by_label(s.task_cancelled).is_some()
+        });
+        assert_eq!(server.record("task", &task).unwrap()["status"], "cancelled");
+
+        // Clear Finished empties the operation list.
+        harness.get_by_label(s.events_clear).click();
+        step_until(&mut harness, "cleared", |h| {
+            h.state().backend.state().operations.is_empty()
+        });
+    }
+
+    /// The server restarts: the window shows the reconnection and then the
+    /// live tree again, without any user action.
+    #[test]
+    fn reconnection_after_a_server_restart_shows_in_the_window() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start(false));
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+        connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut harness, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+        });
+
+        server.stop();
+        step_until(&mut harness, "reconnecting", |h| {
+            first_conn(h).is_some_and(|c| {
+                matches!(c.status, xen_core::ConnectionStatus::Reconnecting { .. })
+            }) && h.query_by_label(s.server_reconnecting).is_some()
+        });
+        // The last tree stays visible meanwhile.
+        harness.get_by_label("Lab Pool");
+        harness.get_by_label(&fill(s.op_reconnect, &[("server", &server.address())]));
+
+        runtime.block_on(server.restart());
+        step_until(&mut harness, "reconnected", |h| {
+            first_conn(h).is_some_and(|c| c.status.is_connected())
+                && h.query_by_label(s.server_reconnecting).is_none()
+        });
+        server.set_name_label("vm", "OpaqueRef:vm-build", "after-restart");
+        step_until(&mut harness, "live again", |h| {
+            h.query_by_label("after-restart").is_some()
+        });
+    }
+
+    /// A saved server with a saved password reconnects on start: no connect
+    /// dialog, no password typed. Options change the preferences.
+    #[test]
+    fn saved_servers_reconnect_on_start_without_a_password() {
+        let runtime = runtime();
+        let server = runtime.block_on(MockServer::start(false));
+        let secrets = Arc::new(MemorySecretStore::new());
+        secrets
+            .set(&format!("root@{}", server.address()), xapi_mock::PASSWORD)
+            .unwrap();
+        let settings = Settings {
+            servers: vec![xen_core::SavedServer {
+                address: server.address(),
+                username: "root".into(),
+                reconnect: true,
+            }],
+            ..Settings::default()
+        };
+        let store = Arc::new(Store::in_memory_with(settings, secrets));
+        let mut harness = app_harness_with(&runtime, store);
+        let s = strings();
+        harness.step();
+        assert!(harness.query_by_label(s.connect_title).is_none());
+        step_until(&mut harness, "restored", |h| {
+            h.query_by_label("Lab Pool").is_some()
+        });
+
+        // Disconnect: the server stays in the tree as a saved server.
+        harness.get_by_label("Lab Pool").click();
+        harness.step();
+        harness.get_by_label(s.server_disconnect).click();
+        step_until(&mut harness, "saved row", |h| {
+            h.query_by_label(s.server_disconnected).is_some()
+                && h.state().backend.state().connections.is_empty()
+        });
+        assert!(!harness.state().backend.state().settings.servers[0].reconnect);
+
+        // Options: the preference is saved through the backend.
+        harness.get_by_label(s.menu_tools).click();
+        step_until(&mut harness, "tools menu", |h| {
+            h.query_by_label(s.menu_options).is_some()
+        });
+        harness.get_by_label(s.menu_options).click();
+        step_until(&mut harness, "options", |h| {
+            h.query_by_label(s.options_restore).is_some()
+        });
+        harness.get_by_label(s.options_restore).click();
+        step_until(&mut harness, "preference saved", |h| {
+            !h.state()
+                .backend
+                .state()
+                .settings
+                .preferences
+                .restore_connections
+        });
+        harness.get_by_label(s.options_mode_memory);
     }
 }

@@ -29,6 +29,31 @@ impl Fingerprint {
         out.copy_from_slice(digest.as_ref());
         Self(out)
     }
+
+    /// Parses the colon-separated hex form written by [`fmt::Display`]
+    /// (`AB:CD:…`, any case; colons and spaces are optional).
+    pub fn parse(text: &str) -> Option<Self> {
+        let hex: String = text
+            .chars()
+            .filter(|c| *c != ':' && !c.is_whitespace())
+            .collect();
+        if hex.len() != 64 || !hex.is_ascii() {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        Some(Self(out))
+    }
+}
+
+impl std::str::FromStr for Fingerprint {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("not a SHA-256 fingerprint: {s}"))
+    }
 }
 
 impl fmt::Display for Fingerprint {
@@ -52,8 +77,9 @@ impl fmt::Debug for Fingerprint {
 
 /// Pinned certificates, keyed by `host:port` ([`crate::Endpoint::authority`]).
 ///
-/// Cheap to clone; clones share the same set. Phase F1 keeps it in memory for
-/// the session; persistence arrives with the settings work in F2b.
+/// Cheap to clone; clones share the same set. It lives in memory; the
+/// application persists it (`xen-core`'s known-servers file) and loads it back
+/// with [`TrustStore::trust`] on start.
 #[derive(Clone, Default)]
 pub struct TrustStore {
     inner: Arc<Mutex<HashMap<String, Fingerprint>>>,
@@ -72,6 +98,18 @@ impl TrustStore {
     /// The pinned fingerprint for `authority`, if any.
     pub fn get(&self, authority: &str) -> Option<Fingerprint> {
         self.lock().get(authority).copied()
+    }
+
+    /// Forgets the pin for `authority`; returns whether there was one.
+    pub fn remove(&self, authority: &str) -> bool {
+        self.lock().remove(authority).is_some()
+    }
+
+    /// Every pin, sorted by authority.
+    pub fn entries(&self) -> Vec<(String, Fingerprint)> {
+        let mut all: Vec<_> = self.lock().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        all.sort_by(|a, b| a.0.cmp(&b.0));
+        all
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Fingerprint>> {
@@ -160,6 +198,13 @@ mod tests {
         // SHA-256("abc") = ba7816bf…
         assert!(s.starts_with("BA:78:16:BF:"), "{s}");
         assert_eq!(s.len(), 32 * 3 - 1);
+        assert_eq!(Fingerprint::parse(&s), Some(fp));
+        assert_eq!(
+            Fingerprint::parse(&s.to_lowercase().replace(':', "")),
+            Some(fp)
+        );
+        assert_eq!(Fingerprint::parse("AB:CD"), None);
+        assert_eq!(Fingerprint::parse(&"zz".repeat(32)), None);
     }
 
     #[test]
@@ -170,5 +215,8 @@ mod tests {
         a.trust("h:443", fp);
         assert_eq!(b.get("h:443"), Some(fp));
         assert_eq!(b.get("other:443"), None);
+        assert_eq!(b.entries(), vec![("h:443".to_owned(), fp)]);
+        assert!(b.remove("h:443"));
+        assert_eq!(a.get("h:443"), None);
     }
 }

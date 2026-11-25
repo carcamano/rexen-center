@@ -14,15 +14,26 @@
 //! * for every class: `get_all_records`, `get_all`, `get_record`,
 //!   `get_by_uuid` and the field getters `get_<field>` (a class absent from
 //!   the database simply has no objects);
-//! * `VM.start` / `VM.clean_shutdown` with power-state checks;
+//! * `VM.start` / `VM.clean_shutdown` with power-state checks, and their
+//!   `Async.VM.*` forms, which return a `task` that advances its `progress`
+//!   in steps ([`MockServer::set_task_timing`]) and can be cancelled
+//!   (`task.cancel`) and destroyed (`task.destroy`);
+//! * `host.get_servertime` (the client heartbeat);
 //! * `event.inject` and `event.from` (tokens, `"*"`, long-polling).
 //!
 //! Tests can also change objects behind the client's back
-//! ([`MockServer::set_vm_power_state`], [`MockServer::add_object`], …) to
-//! prove that updates arrive through `event.from` alone, and inject failures:
+//! ([`MockServer::set_vm_power_state`], [`MockServer::add_object`],
+//! [`MockServer::start_task`], …) to prove that updates arrive through
+//! `event.from` alone, and inject failures:
 //! [`MockServer::lose_events`] (`EVENTS_LOST`),
-//! [`MockServer::invalidate_sessions`] (`SESSION_INVALID`) and
-//! [`MockServer::set_unknown_classes`] (an older server without some classes).
+//! [`MockServer::invalidate_sessions`] (`SESSION_INVALID`),
+//! [`MockServer::set_unknown_classes`] (an older server without some classes),
+//! [`MockServer::stop`] / [`MockServer::restart`] (the server goes away and
+//! comes back on the same port with every session forgotten, like a toolstack
+//! restart), [`MockServer::set_certificate`] (a renewed certificate),
+//! [`MockServer::redirect_logins_to`] (a pool member answering
+//! `HOST_IS_SLAVE`) and [`MockServer::set_unresponsive`] (requests hang, as
+//! behind a dead network link).
 
 use std::collections::{BTreeMap, HashSet};
 use std::convert::Infallible;
@@ -40,8 +51,8 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde_json::{Map, Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
+use tokio::sync::{Notify, watch};
+use tokio::task::{AbortHandle, JoinHandle};
 
 /// Login user accepted by the mock.
 pub const USERNAME: &str = "root";
@@ -52,6 +63,8 @@ const RECORDS_JSON: &str = include_str!("../../../tests/fixtures/records.json");
 const CAPTURE_JSON: &str = include_str!("../../../tests/fixtures/xcp-ng-8.3-capture.json");
 const CERT_PEM: &str = include_str!("../../../tests/fixtures/mock-server.cert.pem");
 const KEY_PEM: &str = include_str!("../../../tests/fixtures/mock-server.key.pem");
+const RENEWED_CERT_PEM: &str = include_str!("../../../tests/fixtures/mock-server-renewed.cert.pem");
+const RENEWED_KEY_PEM: &str = include_str!("../../../tests/fixtures/mock-server-renewed.key.pem");
 
 const NULL_REF: &str = "OpaqueRef:NULL";
 const ALLOWED_HALTED: &[&str] = &[
@@ -75,12 +88,36 @@ const ALLOWED_RUNNING: &[&str] = &[
     "pool_migrate",
 ];
 
-/// DER bytes of the certificate the HTTPS mock presents.
+/// The certificates the HTTPS mock can present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MockCertificate {
+    /// `tests/fixtures/mock-server.cert.pem` (the default).
+    Original,
+    /// `tests/fixtures/mock-server-renewed.cert.pem`: another self-signed
+    /// certificate, as after a host reinstall or certificate renewal.
+    Renewed,
+}
+
+impl MockCertificate {
+    fn pem(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Original => (CERT_PEM, KEY_PEM),
+            Self::Renewed => (RENEWED_CERT_PEM, RENEWED_KEY_PEM),
+        }
+    }
+
+    /// DER bytes of this certificate.
+    pub fn der(self) -> Vec<u8> {
+        CertificateDer::from_pem_slice(self.pem().0.as_bytes())
+            .expect("fixture certificate")
+            .as_ref()
+            .to_vec()
+    }
+}
+
+/// DER bytes of the certificate the HTTPS mock presents by default.
 pub fn certificate_der() -> Vec<u8> {
-    CertificateDer::from_pem_slice(CERT_PEM.as_bytes())
-        .expect("fixture certificate")
-        .as_ref()
-        .to_vec()
+    MockCertificate::Original.der()
 }
 
 /// The fixture database (`tests/fixtures/records.json`).
@@ -100,7 +137,29 @@ pub struct MockServer {
     addr: SocketAddr,
     tls: bool,
     state: Arc<State>,
+    running: Mutex<Option<Running>>,
+}
+
+/// The accept loop and the live client connections of a started server.
+struct Running {
     accept_task: JoinHandle<()>,
+    connections: Arc<Mutex<Vec<AbortHandle>>>,
+}
+
+impl Running {
+    /// Stops accepting and drops every connection; the returned handle
+    /// completes once the listening socket is closed.
+    fn stop(self) -> JoinHandle<()> {
+        self.accept_task.abort();
+        for conn in lock(&self.connections).drain(..) {
+            conn.abort();
+        }
+        self.accept_task
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl MockServer {
@@ -111,45 +170,107 @@ impl MockServer {
 
     /// Starts a mock with a custom database (`{"pool": {ref: record}, "host": …, "vm": …}`).
     pub async fn start_with_records(tls: bool, records: Value) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", 0))
+        Self::start_on(0, tls, records).await
+    }
+
+    /// Like [`MockServer::start_with_records`] on a given localhost port
+    /// (`0` picks a free one).
+    pub async fn start_on(port: u16, tls: bool, records: Value) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", port))
             .await
             .expect("bind mock server");
         let addr = listener.local_addr().expect("local addr");
         let state = Arc::new(State::new(records));
-        let acceptor = tls.then(tls_acceptor);
-        let accept_state = state.clone();
-        let accept_task = tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    continue;
-                };
-                let state = accept_state.clone();
-                let acceptor = acceptor.clone();
-                tokio::spawn(async move {
-                    let service = service_fn(move |req| handle(state.clone(), req));
-                    match acceptor {
-                        Some(acceptor) => {
-                            if let Ok(tls) = acceptor.accept(stream).await {
-                                let _ = http1::Builder::new()
-                                    .serve_connection(TokioIo::new(tls), service)
-                                    .await;
-                            }
-                        }
-                        None => {
-                            let _ = http1::Builder::new()
-                                .serve_connection(TokioIo::new(stream), service)
-                                .await;
-                        }
-                    }
-                });
-            }
-        });
+        let running = serve(listener, tls, state.clone());
         Self {
             addr,
             tls,
             state,
-            accept_task,
+            running: Mutex::new(Some(running)),
         }
+    }
+
+    /// Stops listening and drops every client connection (requests in flight,
+    /// such as an `event.from` long-poll, fail). The database is kept.
+    pub fn stop(&self) {
+        if let Some(running) = lock(&self.running).take() {
+            running.stop();
+        }
+    }
+
+    /// Starts again on the same port after [`MockServer::stop`] (or stops
+    /// first if running). Like a toolstack restart, every session is
+    /// forgotten; objects are kept.
+    pub async fn restart(&self) {
+        let running = lock(&self.running).take();
+        if let Some(running) = running {
+            let _ = running.stop().await;
+        }
+        self.state.db().sessions.clear();
+        let mut tries = 0;
+        let listener = loop {
+            match TcpListener::bind(self.addr).await {
+                Ok(l) => break l,
+                Err(e) if tries < 100 => {
+                    tries += 1;
+                    let _ = e;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(e) => panic!("rebind mock server: {e}"),
+            }
+        };
+        *lock(&self.running) = Some(serve(listener, self.tls, self.state.clone()));
+        self.state.changed.notify_waiters();
+    }
+
+    /// Whether the server is listening.
+    pub fn is_running(&self) -> bool {
+        lock(&self.running).is_some()
+    }
+
+    /// The certificate presented on new TLS connections. Existing connections
+    /// keep the old one; [`MockServer::restart`] drops them.
+    pub fn set_certificate(&self, certificate: MockCertificate) {
+        *lock(&self.state.certificate) = certificate;
+    }
+
+    /// Makes this server act as a pool member: logins fail with
+    /// `HOST_IS_SLAVE` naming `coordinator` (an address such as another mock's
+    /// [`MockServer::authority`]). `None` makes it a coordinator again.
+    pub fn redirect_logins_to(&self, coordinator: Option<&str>) {
+        self.state.db().coordinator = coordinator.map(str::to_owned);
+    }
+
+    /// While set, requests are accepted but never answered (a dead link or a
+    /// hung toolstack). Clearing it releases the held requests.
+    pub fn set_unresponsive(&self, unresponsive: bool) {
+        self.state.unresponsive.send_replace(unresponsive);
+    }
+
+    /// How `Async.*` tasks advance: `steps` progress updates, `step` apart.
+    /// The default is 4 steps of 100 ms.
+    pub fn set_task_timing(&self, steps: u32, step: Duration) {
+        let mut db = self.state.db();
+        db.task_steps = steps.max(1);
+        db.task_step = step;
+    }
+
+    /// Starts a server task as if another client did it (`name_label`
+    /// `name`). It advances like `Async.*` tasks and then succeeds, unless
+    /// cancelled. Returns its reference.
+    pub fn start_task(&self, name: &str) -> String {
+        spawn_task(&self.state, name, TaskWork::Nothing)
+    }
+
+    /// The references of every `task` object.
+    pub fn tasks(&self) -> Vec<String> {
+        self.state
+            .db()
+            .objects
+            .keys()
+            .filter(|(c, _)| c == "task")
+            .map(|(_, r)| r.clone())
+            .collect()
     }
 
     /// Address to type in a connect dialog, e.g. `https://127.0.0.1:41234`.
@@ -262,14 +383,53 @@ impl MockServer {
 
 impl Drop for MockServer {
     fn drop(&mut self) {
-        self.accept_task.abort();
+        self.stop();
     }
 }
 
-fn tls_acceptor() -> tokio_rustls::TlsAcceptor {
+fn serve(listener: TcpListener, tls: bool, state: Arc<State>) -> Running {
+    let connections: Arc<Mutex<Vec<AbortHandle>>> = Arc::default();
+    let conns = connections.clone();
+    let accept_task = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let state = state.clone();
+            let acceptor = tls.then(|| tls_acceptor(*lock(&state.certificate)));
+            let task = tokio::spawn(async move {
+                let service = service_fn(move |req| handle(state.clone(), req));
+                match acceptor {
+                    Some(acceptor) => {
+                        if let Ok(tls) = acceptor.accept(stream).await {
+                            let _ = http1::Builder::new()
+                                .serve_connection(TokioIo::new(tls), service)
+                                .await;
+                        }
+                    }
+                    None => {
+                        let _ = http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), service)
+                            .await;
+                    }
+                }
+            });
+            let mut list = lock(&conns);
+            list.retain(|c| !c.is_finished());
+            list.push(task.abort_handle());
+        }
+    });
+    Running {
+        accept_task,
+        connections,
+    }
+}
+
+fn tls_acceptor(certificate: MockCertificate) -> tokio_rustls::TlsAcceptor {
+    let (cert_pem, key_pem) = certificate.pem();
     let certs =
-        vec![CertificateDer::from_pem_slice(CERT_PEM.as_bytes()).expect("fixture certificate")];
-    let key = PrivateKeyDer::from_pem_slice(KEY_PEM.as_bytes()).expect("fixture key");
+        vec![CertificateDer::from_pem_slice(cert_pem.as_bytes()).expect("fixture certificate")];
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).expect("fixture key");
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -284,6 +444,10 @@ fn tls_acceptor() -> tokio_rustls::TlsAcceptor {
 struct State {
     db: Mutex<Db>,
     changed: Notify,
+    certificate: Mutex<MockCertificate>,
+    unresponsive: watch::Sender<bool>,
+    /// Runs background task progress (tests may call in from plain threads).
+    runtime: tokio::runtime::Handle,
 }
 
 impl State {
@@ -311,8 +475,15 @@ impl State {
                 next_session: 1,
                 lose_events: false,
                 unknown_classes: HashSet::new(),
+                coordinator: None,
+                task_steps: 4,
+                task_step: Duration::from_millis(100),
+                next_task: 1,
             }),
             changed: Notify::new(),
+            certificate: Mutex::new(MockCertificate::Original),
+            unresponsive: watch::Sender::new(false),
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
@@ -338,6 +509,11 @@ struct Db {
     next_session: u64,
     lose_events: bool,
     unknown_classes: HashSet<String>,
+    /// Set when acting as a pool member: where logins are redirected.
+    coordinator: Option<String>,
+    task_steps: u32,
+    task_step: Duration,
+    next_task: u64,
 }
 
 impl Db {
@@ -429,6 +605,55 @@ impl Db {
         }
     }
 
+    /// Validates `VM.start` / `VM.clean_shutdown` on `vm`; returns the
+    /// power state it leads to.
+    fn check_power_op(
+        &self,
+        method: &str,
+        vm: &str,
+    ) -> Result<&'static str, (String, Vec<String>)> {
+        let (required, op, target) = if method == "VM.start" {
+            ("Halted", "start", "Running")
+        } else {
+            ("Running", "clean_shutdown", "Halted")
+        };
+        let Some(rec) = self.objects.get(&("vm".into(), vm.to_owned())) else {
+            return api_error("HANDLE_INVALID", &["VM", vm]).map(|_| target);
+        };
+        let current = rec
+            .get("power_state")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let flag = |name: &str| rec.get(name).and_then(Value::as_bool).unwrap_or(false);
+        if flag("is_a_template") || flag("is_control_domain") {
+            api_error("OPERATION_NOT_ALLOWED", &[op]).map(|_| target)
+        } else if current != required {
+            api_error(
+                "VM_BAD_POWER_STATE",
+                &[vm, &required.to_lowercase(), &current.to_lowercase()],
+            )
+            .map(|_| target)
+        } else {
+            Ok(target)
+        }
+    }
+
+    /// Ends a pending task.
+    fn finish_task(&mut self, task: &str, status: &str, result: &str, error_info: &[&str]) {
+        let progress = if status == "success" { 1.0 } else { -1.0 };
+        self.modify("task", task, |rec| {
+            rec.insert("status".into(), json!(status));
+            if progress >= 0.0 {
+                rec.insert("progress".into(), json!(progress));
+            }
+            rec.insert("result".into(), json!(result));
+            rec.insert("error_info".into(), json!(error_info));
+            rec.insert("allowed_operations".into(), json!([]));
+            rec.insert("finished".into(), json!("20261125T12:00:01Z"));
+        });
+    }
+
     fn refs_of(&self, class: &str) -> Value {
         Value::Array(
             self.objects
@@ -509,6 +734,9 @@ async fn handle(
         Ok(b) => b.to_bytes(),
         Err(_) => Bytes::new(),
     };
+    // A hung server: hold the request until released.
+    let mut unresponsive = state.unresponsive.subscribe();
+    let _ = unresponsive.wait_for(|hung| !hung).await;
     let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request
@@ -538,7 +766,7 @@ fn str_param(params: &[Value], i: usize) -> &str {
     params.get(i).and_then(Value::as_str).unwrap_or_default()
 }
 
-async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
+async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     state.db().calls.push(method.to_owned());
     match method {
         "session.login_with_password" => {
@@ -549,6 +777,9 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
                 );
             }
             let mut db = state.db();
+            if let Some(coordinator) = db.coordinator.clone() {
+                return api_error("HOST_IS_SLAVE", &[&coordinator]);
+            }
             let session = format!("OpaqueRef:mock-session-{}", db.next_session);
             db.next_session += 1;
             db.sessions.insert(session.clone());
@@ -588,39 +819,55 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
         }
         "VM.start" | "VM.clean_shutdown" => {
             let vm = str_param(params, 1).to_owned();
-            let (required, op, target) = if method == "VM.start" {
-                ("Halted", "start", "Running")
-            } else {
-                ("Running", "clean_shutdown", "Halted")
+            db.check_power_op(method, &vm).map(|target| {
+                db.set_power_state(&vm, target);
+                json!("")
+            })
+        }
+        "Async.VM.start" | "Async.VM.clean_shutdown" => {
+            let vm = str_param(params, 1).to_owned();
+            let sync = method.trim_start_matches("Async.");
+            let work = match db.check_power_op(sync, &vm) {
+                Ok(target) => TaskWork::PowerState { vm, target },
+                Err(error) => TaskWork::Fail(error),
             };
-            match db.objects.get(&("vm".into(), vm.clone())) {
-                None => api_error("HANDLE_INVALID", &["VM", &vm]),
-                Some(rec) => {
-                    let current = rec
-                        .get("power_state")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned();
-                    let is_guest = !rec
-                        .get("is_a_template")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                        && !rec
-                            .get("is_control_domain")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false);
-                    if !is_guest {
-                        api_error("OPERATION_NOT_ALLOWED", &[op])
-                    } else if current != required {
-                        api_error(
-                            "VM_BAD_POWER_STATE",
-                            &[&vm, &required.to_lowercase(), &current.to_lowercase()],
-                        )
-                    } else {
-                        db.set_power_state(&vm, target);
-                        Ok(json!(""))
-                    }
+            drop(db);
+            let task = spawn_task(state, method, work);
+            return Ok(json!(task));
+        }
+        "host.get_servertime" => {
+            let host = str_param(params, 1);
+            if db
+                .objects
+                .contains_key(&("host".to_owned(), host.to_owned()))
+            {
+                Ok(json!("20261125T12:00:00Z"))
+            } else {
+                api_error("HANDLE_INVALID", &["host", host])
+            }
+        }
+        "task.cancel" => {
+            let task = str_param(params, 1).to_owned();
+            match db.get_str("task", &task, "status").as_deref() {
+                None => api_error("HANDLE_INVALID", &["task", &task]),
+                Some("pending") => {
+                    db.finish_task(&task, "cancelled", "", &["TASK_CANCELLED", &task]);
+                    Ok(json!(""))
                 }
+                Some(_) => api_error("OPERATION_NOT_ALLOWED", &["task is not pending"]),
+            }
+        }
+        "task.destroy" => {
+            let task = str_param(params, 1).to_owned();
+            if db
+                .objects
+                .remove(&("task".to_owned(), task.clone()))
+                .is_some()
+            {
+                db.push_event("task", "del", &task, None);
+                Ok(json!(""))
+            } else {
+                api_error("HANDLE_INVALID", &["task", &task])
             }
         }
         _ => db
@@ -630,6 +877,77 @@ async fn dispatch(state: &State, method: &str, params: &[Value]) -> Reply {
     drop(db);
     state.changed.notify_waiters();
     reply
+}
+
+/// What a task does when its progress reaches the end.
+enum TaskWork {
+    Nothing,
+    PowerState { vm: String, target: &'static str },
+    Fail((String, Vec<String>)),
+}
+
+/// Creates a pending `task` object named `name` and advances it in the
+/// background; returns its reference.
+fn spawn_task(state: &Arc<State>, name: &str, work: TaskWork) -> String {
+    let (task, steps, step) = {
+        let mut db = state.db();
+        let task = format!("OpaqueRef:mock-task-{}", db.next_task);
+        let uuid = format!("7a5c0000-0000-4000-8000-{:012}", db.next_task);
+        db.next_task += 1;
+        let resident_on = db
+            .objects
+            .keys()
+            .find(|(c, _)| c == "host")
+            .map(|(_, r)| r.clone())
+            .unwrap_or_else(|| NULL_REF.into());
+        let record = json!({
+            "uuid": uuid, "name_label": name, "name_description": "",
+            "allowed_operations": ["cancel"], "current_operations": {},
+            "created": "20261125T12:00:00Z", "finished": "19700101T00:00:00Z",
+            "status": "pending", "resident_on": resident_on, "progress": 0.0,
+            "type": "", "result": "", "error_info": [], "other_config": {},
+            "subtask_of": NULL_REF, "subtasks": [], "backtrace": "()"
+        });
+        db.objects
+            .insert(("task".to_owned(), task.clone()), record.clone());
+        db.push_event("task", "add", &task, Some(record));
+        (task, db.task_steps, db.task_step)
+    };
+    state.changed.notify_waiters();
+    let state = state.clone();
+    let task_ref = task.clone();
+    let runtime = state.runtime.clone();
+    runtime.spawn(async move {
+        for i in 1..=steps {
+            tokio::time::sleep(step).await;
+            let mut db = state.db();
+            if db.get_str("task", &task_ref, "status").as_deref() != Some("pending") {
+                return; // cancelled or destroyed
+            }
+            if i < steps {
+                let progress = f64::from(i) / f64::from(steps);
+                db.modify("task", &task_ref, |rec| {
+                    rec.insert("progress".into(), json!(progress));
+                });
+            } else {
+                match &work {
+                    TaskWork::Nothing => db.finish_task(&task_ref, "success", "", &[]),
+                    TaskWork::PowerState { vm, target } => {
+                        db.set_power_state(vm, target);
+                        db.finish_task(&task_ref, "success", "", &[]);
+                    }
+                    TaskWork::Fail((code, params)) => {
+                        let mut info = vec![code.as_str()];
+                        info.extend(params.iter().map(String::as_str));
+                        db.finish_task(&task_ref, "failure", "", &info);
+                    }
+                }
+            }
+            drop(db);
+            state.changed.notify_waiters();
+        }
+    });
+    task
 }
 
 async fn event_from(state: &State, params: &[Value]) -> Reply {

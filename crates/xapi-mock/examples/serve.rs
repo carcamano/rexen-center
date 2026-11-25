@@ -4,8 +4,11 @@
 //! cargo run -p xapi-mock --example serve                     # HTTPS (self-signed), lab fixture
 //! cargo run -p xapi-mock --example serve -- http             # plain HTTP
 //! cargo run -p xapi-mock --example serve -- capture          # sanitized real XCP-ng 8.3 host
-//! cargo run -p xapi-mock --example serve -- http capture
+//! cargo run -p xapi-mock --example serve -- --port 47123     # a fixed port (to restart it)
+//! cargo run -p xapi-mock --example serve -- renewed          # present the "renewed" certificate
 //! ```
+
+use xapi_mock::{MockCertificate, MockServer};
 
 #[tokio::main]
 async fn main() {
@@ -16,7 +19,18 @@ async fn main() {
     } else {
         xapi_mock::fixture_records()
     };
-    let server = xapi_mock::MockServer::start_with_records(tls, records).await;
+    let port = args
+        .iter()
+        .position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1))
+        .map(|p| p.parse::<u16>().expect("--port takes a port number"));
+    let server = match port {
+        Some(port) => MockServer::start_on(port, tls, records).await,
+        None => MockServer::start_with_records(tls, records).await,
+    };
+    if args.iter().any(|a| a == "renewed") {
+        server.set_certificate(MockCertificate::Renewed);
+    }
     println!("mock XAPI server listening on {}", server.address());
     println!(
         "log in as {} / {}",

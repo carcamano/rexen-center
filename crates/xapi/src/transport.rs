@@ -133,6 +133,22 @@ impl JsonRpcClient {
     }
 }
 
+/// What replaces a session reference in error parameters.
+pub const REDACTED_SESSION: &str = "OpaqueRef:(session)";
+
+/// Builds an API error. `SESSION_INVALID` names the session reference, a
+/// secret that must not reach logs or the screen, so it is redacted here.
+fn api_error(code: String, mut params: Vec<String>) -> Error {
+    if code == crate::error::codes::SESSION_INVALID {
+        for p in &mut params {
+            if p.starts_with("OpaqueRef:") {
+                REDACTED_SESSION.clone_into(p);
+            }
+        }
+    }
+    Error::Api { code, params }
+}
+
 /// Extracts `result` from a JSON-RPC response or turns `error` into
 /// [`Error::Api`]. Handles both v2 (`{message: code, data: [params]}`) and v1
 /// (`["CODE", params…]`) error shapes.
@@ -146,10 +162,7 @@ pub(crate) fn parse_response(mut value: Value) -> Result<Value> {
         Value::Array(items) => {
             let mut strings = items.into_iter().map(value_to_string);
             let code = strings.next().unwrap_or_else(|| "UNKNOWN_ERROR".to_owned());
-            return Err(Error::Api {
-                code,
-                params: strings.collect(),
-            });
+            return Err(api_error(code, strings.collect()));
         }
         Value::Object(mut obj) => {
             let code = obj
@@ -161,7 +174,7 @@ pub(crate) fn parse_response(mut value: Value) -> Result<Value> {
                 Some(Value::Null) | None => Vec::new(),
                 Some(other) => vec![value_to_string(other)],
             };
-            return Err(Error::Api { code, params });
+            return Err(api_error(code, params));
         }
         other => return Err(Error::Protocol(format!("unexpected error member: {other}"))),
     }
@@ -212,7 +225,8 @@ mod tests {
             parse_response(json!({"id":1,"result":null,"error":["SESSION_INVALID","OpaqueRef:s"]}))
                 .unwrap_err();
         assert!(e.is_api("SESSION_INVALID"));
-        assert_eq!(e.to_string(), "SESSION_INVALID (OpaqueRef:s)");
+        // The session reference is a secret: redacted.
+        assert_eq!(e.to_string(), "SESSION_INVALID (OpaqueRef:(session))");
     }
 
     #[test]

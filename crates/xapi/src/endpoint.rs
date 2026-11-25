@@ -75,6 +75,26 @@ impl Endpoint {
         )
     }
 
+    /// Where to go when this server answers `HOST_IS_SLAVE` with `address`
+    /// (the pool coordinator). XAPI sends a bare IP address or host name; the
+    /// scheme and port of this endpoint are kept. An explicit port in
+    /// `address` (test servers) wins.
+    pub fn redirect(&self, address: &str) -> Result<Self> {
+        let address = address.trim();
+        let explicit_port = if let Some(v6) = address.strip_prefix('[') {
+            v6.split_once(']')
+                .is_some_and(|(_, after)| after.starts_with(':'))
+        } else {
+            address.matches(':').count() == 1
+        };
+        let mut target = Self::parse(address)?;
+        target.tls = self.tls;
+        if !explicit_port {
+            target.port = self.port;
+        }
+        Ok(target)
+    }
+
     /// URL of the JSON-RPC endpoint.
     pub fn jsonrpc_url(&self) -> String {
         format!("{}/jsonrpc", self.base_url())
@@ -126,6 +146,20 @@ mod tests {
 
         let e = Endpoint::parse("fe80::1").unwrap();
         assert_eq!((e.host.as_str(), e.port), ("fe80::1", 443));
+    }
+
+    #[test]
+    fn redirect_keeps_scheme_and_port() {
+        let member = Endpoint::parse("https://10.0.0.2:8443").unwrap();
+        let c = member.redirect("10.0.0.1").unwrap();
+        assert_eq!((c.tls, c.host.as_str(), c.port), (true, "10.0.0.1", 8443));
+        let c = member.redirect("127.0.0.1:5000").unwrap();
+        assert_eq!((c.tls, c.host.as_str(), c.port), (true, "127.0.0.1", 5000));
+        let c = member.redirect("fe80::1").unwrap();
+        assert_eq!((c.host.as_str(), c.port), ("fe80::1", 8443));
+        let plain = Endpoint::parse("http://127.0.0.1:80").unwrap();
+        assert!(!plain.redirect("10.0.0.1").unwrap().tls);
+        assert!(member.redirect("").is_err());
     }
 
     #[test]

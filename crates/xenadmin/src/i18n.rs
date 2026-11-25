@@ -5,15 +5,24 @@
 //! Only English exists today. Templates use `{name}` placeholders filled by
 //! [`fill`].
 
+use std::time::Duration;
+
 use xapi::error::codes;
-use xen_core::{ConnectionError, VmAction};
+use xen_core::{
+    ConnectionError, ConnectionStatus, OperationFailure, OperationKind, OperationStatus, VmAction,
+};
 
 /// One language's UI strings.
 pub struct Strings {
     pub menu_file: &'static str,
     pub menu_connect: &'static str,
     pub menu_disconnect: &'static str,
+    pub menu_disconnect_all: &'static str,
     pub menu_quit: &'static str,
+    pub menu_view: &'static str,
+    pub menu_events: &'static str,
+    pub menu_tools: &'static str,
+    pub menu_options: &'static str,
     pub menu_vm: &'static str,
     pub menu_help: &'static str,
     pub menu_about: &'static str,
@@ -51,6 +60,8 @@ pub struct Strings {
     pub connect_server_hint: &'static str,
     pub connect_user: &'static str,
     pub connect_password: &'static str,
+    pub connect_password_saved_hint: &'static str,
+    pub connect_remember: &'static str,
     pub connect_button: &'static str,
     pub cancel: &'static str,
 
@@ -83,11 +94,86 @@ pub struct Strings {
     pub status_connected: &'static str,
     /// `{server}`, `{error}`
     pub status_failed: &'static str,
+    /// `{server}`, `{seconds}`, `{attempt}`
+    pub status_reconnect_wait: &'static str,
+    /// `{server}`, `{attempt}`
+    pub status_reconnecting: &'static str,
+    /// `{count}`
+    pub status_summary: &'static str,
+
+    pub server_connecting: &'static str,
+    pub server_connected: &'static str,
+    pub server_reconnecting: &'static str,
+    pub server_failed: &'static str,
+    pub server_disconnected: &'static str,
+    pub server_heading: &'static str,
+    pub server_status: &'static str,
+    pub server_user: &'static str,
+    pub server_error: &'static str,
+    pub server_connect: &'static str,
+    pub server_enter_password: &'static str,
+    pub server_retry_now: &'static str,
+    pub server_disconnect: &'static str,
+    pub server_forget: &'static str,
+    pub server_dismiss: &'static str,
+
+    pub events_title: &'static str,
+    pub events_clear: &'static str,
+    pub events_empty: &'static str,
+    pub events_server_tasks: &'static str,
+    pub events_cancel: &'static str,
+    pub events_col_status: &'static str,
+    pub events_col_description: &'static str,
+    pub events_col_server: &'static str,
+    pub events_col_progress: &'static str,
+    pub events_col_time: &'static str,
+    pub op_running: &'static str,
+    pub op_succeeded: &'static str,
+    pub op_cancelled: &'static str,
+    pub op_failed: &'static str,
+    /// `{server}`
+    pub op_connect: &'static str,
+    /// `{server}`
+    pub op_reconnect: &'static str,
+    /// `{action}`, `{vm}`
+    pub op_vm_action: &'static str,
+    /// `{task}`
+    pub op_cancel_task: &'static str,
+    pub op_not_connected: &'static str,
+    pub op_disconnected: &'static str,
+    /// `{time}`
+    pub time_ago: &'static str,
+    /// `{time}`
+    pub time_took: &'static str,
+    pub task_pending: &'static str,
+    pub task_success: &'static str,
+    pub task_failure: &'static str,
+    pub task_cancelling: &'static str,
+    pub task_cancelled: &'static str,
+
+    pub options_title: &'static str,
+    pub options_save_passwords: &'static str,
+    pub options_restore: &'static str,
+    pub options_settings_dir: &'static str,
+    pub options_log_dir: &'static str,
+    pub options_mode_user: &'static str,
+    pub options_mode_portable: &'static str,
+    pub options_mode_override: &'static str,
+    pub options_mode_memory: &'static str,
+    pub close: &'static str,
 
     /// `{action}`, `{vm}`, `{error}`
     pub vm_action_failed: &'static str,
 
     pub err_cert_rejected: &'static str,
+    pub err_password_required: &'static str,
+    /// `{error}`
+    pub err_password_unavailable: &'static str,
+    /// `{existing}`
+    pub err_already_connected: &'static str,
+    pub err_too_many_redirects: &'static str,
+    /// `{server}`, `{error}`
+    pub err_connection_refused: &'static str,
     /// `{error}`
     pub err_connect: &'static str,
     /// `{error}`
@@ -108,7 +194,12 @@ pub static EN: Strings = Strings {
     menu_file: "File",
     menu_connect: "Connect…",
     menu_disconnect: "Disconnect",
+    menu_disconnect_all: "Disconnect All",
     menu_quit: "Quit",
+    menu_view: "View",
+    menu_events: "Events",
+    menu_tools: "Tools",
+    menu_options: "Options…",
     menu_vm: "VM",
     menu_help: "Help",
     menu_about: "About",
@@ -146,6 +237,8 @@ pub static EN: Strings = Strings {
     connect_server_hint: "host name or IP address",
     connect_user: "User name:",
     connect_password: "Password:",
+    connect_password_saved_hint: "leave empty to use the saved password",
+    connect_remember: "Remember password",
     connect_button: "Connect",
     cancel: "Cancel",
 
@@ -177,10 +270,73 @@ pub static EN: Strings = Strings {
     status_connecting: "Connecting to {server}…",
     status_connected: "Connected to {server} (API {version})",
     status_failed: "{server}: {error}",
+    status_reconnect_wait: "{server}: connection lost; retrying in {seconds} s (attempt {attempt})",
+    status_reconnecting: "{server}: reconnecting (attempt {attempt})…",
+    status_summary: "{count} connected",
+
+    server_connecting: "Connecting…",
+    server_connected: "Connected",
+    server_reconnecting: "Reconnecting…",
+    server_failed: "Not connected",
+    server_disconnected: "Disconnected",
+    server_heading: "Server",
+    server_status: "Status",
+    server_user: "User name",
+    server_error: "Last error",
+    server_connect: "Connect",
+    server_enter_password: "Enter Password…",
+    server_retry_now: "Retry Now",
+    server_disconnect: "Disconnect",
+    server_forget: "Forget Server",
+    server_dismiss: "Dismiss",
+
+    events_title: "Events",
+    events_clear: "Clear Finished",
+    events_empty: "No events yet.",
+    events_server_tasks: "Server tasks",
+    events_cancel: "Cancel",
+    events_col_status: "Status",
+    events_col_description: "Description",
+    events_col_server: "Server",
+    events_col_progress: "Progress",
+    events_col_time: "Time",
+    op_running: "In progress",
+    op_succeeded: "Completed",
+    op_cancelled: "Cancelled",
+    op_failed: "Failed",
+    op_connect: "Connect to {server}",
+    op_reconnect: "Reconnect to {server}",
+    op_vm_action: "{action} VM '{vm}'",
+    op_cancel_task: "Cancel task '{task}'",
+    op_not_connected: "the server is not connected",
+    op_disconnected: "disconnected while running",
+    time_ago: "{time} ago",
+    time_took: "took {time}",
+    task_pending: "In progress",
+    task_success: "Completed",
+    task_failure: "Failed",
+    task_cancelling: "Cancelling…",
+    task_cancelled: "Cancelled",
+
+    options_title: "Options",
+    options_save_passwords: "Remember passwords in the system keyring by default",
+    options_restore: "Reconnect to the servers that were connected when the app last closed",
+    options_settings_dir: "Settings folder",
+    options_log_dir: "Log folder",
+    options_mode_user: "per-user settings",
+    options_mode_portable: "portable mode (next to the program)",
+    options_mode_override: "set by XENADMIN_CONFIG_DIR",
+    options_mode_memory: "Settings are kept in memory only (no configuration folder).",
+    close: "Close",
 
     vm_action_failed: "{action} of {vm} failed: {error}",
 
     err_cert_rejected: "Connection cancelled: certificate not trusted.",
+    err_password_required: "No saved password for this server. Enter the password to connect.",
+    err_password_unavailable: "Could not read the saved password from the system keyring: {error}",
+    err_already_connected: "Already connected to this server or pool (as {existing}).",
+    err_too_many_redirects: "The pool members kept redirecting to each other; no pool coordinator was found.",
+    err_connection_refused: "{server}: {error}",
     err_connect: "Could not connect: {error}",
     err_lost: "Connection lost: {error}",
     err_auth_failed: "Authentication failed. Check the user name and password.",
@@ -243,10 +399,89 @@ pub fn describe_connection_error(error: &ConnectionError) -> String {
     let s = strings();
     match error {
         ConnectionError::CertificateRejected => s.err_cert_rejected.to_owned(),
+        ConnectionError::PasswordRequired => s.err_password_required.to_owned(),
+        ConnectionError::PasswordUnavailable(e) => {
+            fill(s.err_password_unavailable, &[("error", &e.to_string())])
+        }
+        ConnectionError::AlreadyConnected { existing } => {
+            fill(s.err_already_connected, &[("existing", existing)])
+        }
+        ConnectionError::TooManyRedirects => s.err_too_many_redirects.to_owned(),
         ConnectionError::Connect(e) | ConnectionError::Unsupported(e) => {
             fill(s.err_connect, &[("error", &describe_xapi_error(e))])
         }
         ConnectionError::Lost(e) => fill(s.err_lost, &[("error", &describe_xapi_error(e))]),
+    }
+}
+
+/// Short status word for a connection.
+pub fn connection_status_label(status: &ConnectionStatus) -> &'static str {
+    let s = strings();
+    match status {
+        ConnectionStatus::Connecting => s.server_connecting,
+        ConnectionStatus::Connected { .. } => s.server_connected,
+        ConnectionStatus::Reconnecting { .. } => s.server_reconnecting,
+        ConnectionStatus::Failed { .. } => s.server_failed,
+    }
+}
+
+/// Description of an entry of the operation history.
+pub fn operation_title(kind: &OperationKind, server: &str) -> String {
+    let s = strings();
+    match kind {
+        OperationKind::Connect => fill(s.op_connect, &[("server", server)]),
+        OperationKind::Reconnect => fill(s.op_reconnect, &[("server", server)]),
+        OperationKind::VmAction { vm_name, action } => fill(
+            s.op_vm_action,
+            &[("action", action_label(*action)), ("vm", vm_name)],
+        ),
+        OperationKind::CancelTask { task_name } => fill(s.op_cancel_task, &[("task", task_name)]),
+    }
+}
+
+/// Status word of an operation.
+pub fn operation_status_label(status: &OperationStatus) -> &'static str {
+    let s = strings();
+    match status {
+        OperationStatus::Running => s.op_running,
+        OperationStatus::Succeeded => s.op_succeeded,
+        OperationStatus::Cancelled => s.op_cancelled,
+        OperationStatus::Failed(_) => s.op_failed,
+    }
+}
+
+/// Why an operation failed.
+pub fn describe_operation_failure(failure: &OperationFailure) -> String {
+    let s = strings();
+    match failure {
+        OperationFailure::Xapi(e) => describe_xapi_error(e),
+        OperationFailure::Connection(e) => describe_connection_error(e),
+        OperationFailure::NotConnected => s.op_not_connected.to_owned(),
+        OperationFailure::Disconnected => s.op_disconnected.to_owned(),
+    }
+}
+
+/// Status word of a XAPI task.
+pub fn task_status_label(status: &xapi::TaskStatusType) -> &str {
+    let s = strings();
+    match status {
+        xapi::TaskStatusType::Pending => s.task_pending,
+        xapi::TaskStatusType::Success => s.task_success,
+        xapi::TaskStatusType::Failure => s.task_failure,
+        xapi::TaskStatusType::Cancelling => s.task_cancelling,
+        xapi::TaskStatusType::Cancelled => s.task_cancelled,
+        xapi::TaskStatusType::Unknown(other) => other,
+    }
+}
+
+/// A short duration: `5 s`, `3 min`, `2 h`, `4 d`.
+pub fn short_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        0..60 => format!("{secs} s"),
+        60..3600 => format!("{} min", secs / 60),
+        3600..86400 => format!("{} h", secs / 3600),
+        _ => format!("{} d", secs / 86400),
     }
 }
 
@@ -282,5 +517,23 @@ mod tests {
             params: vec!["p".into()],
         };
         assert_eq!(describe_xapi_error(&e), "SOMETHING_NEW (p)");
+    }
+
+    #[test]
+    fn durations_and_titles() {
+        assert_eq!(short_duration(Duration::from_secs(5)), "5 s");
+        assert_eq!(short_duration(Duration::from_secs(185)), "3 min");
+        assert_eq!(short_duration(Duration::from_secs(7300)), "2 h");
+        let kind = OperationKind::VmAction {
+            vm_name: "web".into(),
+            action: VmAction::Start,
+        };
+        assert_eq!(operation_title(&kind, "h"), "Start VM 'web'");
+        assert!(
+            describe_connection_error(&ConnectionError::AlreadyConnected {
+                existing: "10.0.0.1".into()
+            })
+            .contains("10.0.0.1")
+        );
     }
 }

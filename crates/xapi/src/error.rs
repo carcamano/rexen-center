@@ -15,6 +15,8 @@ pub mod codes {
     pub const VM_BAD_POWER_STATE: &str = "VM_BAD_POWER_STATE";
     pub const EVENTS_LOST: &str = "EVENTS_LOST";
     pub const MESSAGE_METHOD_UNKNOWN: &str = "MESSAGE_METHOD_UNKNOWN";
+    pub const HOST_UNKNOWN_TO_MASTER: &str = "HOST_UNKNOWN_TO_MASTER";
+    pub const TASK_CANCELLED: &str = "TASK_CANCELLED";
 }
 
 /// Everything that can go wrong talking to a XAPI server.
@@ -74,6 +76,18 @@ impl Error {
     /// Whether this is the API failure `code`.
     pub fn is_api(&self, code: &str) -> bool {
         self.api_code() == Some(code)
+    }
+
+    /// Whether the server could not be reached or stopped answering
+    /// (connection refused or reset, timeout, garbled HTTP): the kind of
+    /// failure a later retry can cure. API failures, certificate problems and
+    /// bad addresses are not.
+    pub fn is_unreachable(&self) -> bool {
+        match self {
+            Error::Transport(_) | Error::Protocol(_) => true,
+            Error::Api { code, .. } => code == codes::HOST_STILL_BOOTING,
+            _ => false,
+        }
     }
 }
 
