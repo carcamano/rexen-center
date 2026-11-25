@@ -17,6 +17,7 @@ pub mod codes {
     pub const MESSAGE_METHOD_UNKNOWN: &str = "MESSAGE_METHOD_UNKNOWN";
     pub const HOST_UNKNOWN_TO_MASTER: &str = "HOST_UNKNOWN_TO_MASTER";
     pub const TASK_CANCELLED: &str = "TASK_CANCELLED";
+    pub const HANDLE_INVALID: &str = "HANDLE_INVALID";
 }
 
 /// Everything that can go wrong talking to a XAPI server.

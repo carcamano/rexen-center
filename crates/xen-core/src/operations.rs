@@ -38,7 +38,7 @@ use std::time::SystemTime;
 use xapi::error::codes;
 use xapi::{Host, Ref, Session, Task, TaskStatusType, Vm, VmOperations};
 
-use crate::actions::{self, ActionRequest, HostAction, VmAction};
+use crate::actions::{self, ActionRequest, HostAction, PerfmonObjectRef, VmAction};
 use crate::backend::{ConnectionError, ConnectionId, Notification, OperationId, Shared};
 use crate::model::ConnectionModel;
 use crate::objects;
@@ -70,6 +70,10 @@ pub enum OperationKind {
     },
     /// Cancelling a task (`task_name` is its `name_label`).
     CancelTask { task_name: String },
+    /// Dismissing `count` alerts (`title`: the alert's, when only one).
+    DismissAlerts { count: usize, title: Option<String> },
+    /// Saving the performance alerts of `object_name`.
+    SavePerfmon { object_name: String },
 }
 
 /// What a running operation is doing now (the original's action
@@ -193,6 +197,21 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
             host_name: host_name(host),
             action: *action,
         },
+        ActionRequest::DismissAlerts { messages } => OperationKind::DismissAlerts {
+            count: messages.len(),
+            title: match messages.as_slice() {
+                [one] => model.messages.get(one).map(|m| m.name.clone()),
+                _ => None,
+            },
+        },
+        ActionRequest::SetPerfmon { object, .. } => OperationKind::SavePerfmon {
+            object_name: match object {
+                PerfmonObjectRef::Vm(r) => model.vms.get(r).map(|v| v.name_label.clone()),
+                PerfmonObjectRef::Host(r) => model.hosts.get(r).map(|h| h.name_label.clone()),
+                PerfmonObjectRef::Sr(r) => model.srs.get(r).map(|x| x.name_label.clone()),
+            }
+            .unwrap_or_default(),
+        },
     }
 }
 
@@ -222,13 +241,14 @@ pub(crate) fn start_action(
         .unwrap_or_default();
     let kind = kind_of(shared, connection, &request);
     let object = match &request {
-        ActionRequest::Vm { vm, .. } => OperationObject::Vm(vm.clone()),
-        ActionRequest::Host { host, .. } => OperationObject::Host(host.clone()),
+        ActionRequest::Vm { vm, .. } => Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::Host { host, .. } => Some(OperationObject::Host(host.clone())),
+        ActionRequest::DismissAlerts { .. } | ActionRequest::SetPerfmon { .. } => None,
     };
     let op = shared.start_operation(Some(connection), &server, kind.clone());
     let elevated = elevated_as.is_some();
     shared.update_operation(op, |o| {
-        o.object = Some(object.clone());
+        o.object = object.clone();
         o.elevated_as = elevated_as;
     });
     let Some(session) = session else {
@@ -237,7 +257,9 @@ pub(crate) fn start_action(
     };
     let shared = shared.clone();
     tokio::spawn(async move {
-        set_busy(&shared, connection, &object, true);
+        if let Some(object) = &object {
+            set_busy(&shared, connection, object, true);
+        }
         let outcome = match &request {
             ActionRequest::Vm { vm, action } => {
                 run_vm_action(&shared, connection, op, &session, vm, action).await
@@ -245,8 +267,16 @@ pub(crate) fn start_action(
             ActionRequest::Host { host, action } => {
                 run_host_action(&shared, connection, op, &session, host, *action).await
             }
+            ActionRequest::DismissAlerts { messages } => {
+                dismiss_alerts(&shared, op, &session, messages).await
+            }
+            ActionRequest::SetPerfmon { object, config } => {
+                set_perfmon(&shared, connection, &session, object, config.as_deref()).await
+            }
         };
-        set_busy(&shared, connection, &object, false);
+        if let Some(object) = &object {
+            set_busy(&shared, connection, object, false);
+        }
         shared.update_operation(op, |o| o.step = None);
         if elevated {
             crate::backend::logout_later(session);
@@ -308,6 +338,123 @@ async fn run_vm_action(
         }
     };
     run_task(shared, op, session, start, Span::FULL, false).await
+}
+
+/// `DismissAlertsAction`: destroys each message; one already gone
+/// (`HANDLE_INVALID`, dismissed elsewhere) is fine.
+async fn dismiss_alerts(
+    shared: &Shared,
+    op: OperationId,
+    session: &Session,
+    messages: &[Ref<xapi::Message>],
+) -> TaskOutcome {
+    let count = messages.len().max(1) as f64;
+    for (i, message) in messages.iter().enumerate() {
+        match xapi::message::destroy(session, message).await {
+            Ok(()) => {}
+            Err(e) if e.is_api(codes::HANDLE_INVALID) => {
+                tracing::debug!("alert already dismissed");
+            }
+            Err(e) => return TaskOutcome::Failed(e),
+        }
+        shared.update_operation(op, |o| o.progress = Some((i + 1) as f64 / count));
+    }
+    TaskOutcome::Succeeded
+}
+
+/// `PerfmonDefinitionAction`: replaces (or removes) `other_config["perfmon"]`,
+/// then asks perfmon on the hosts concerned to read it again (the host
+/// itself, the VM's home, the SR's hosts); without that refresh perfmon
+/// picks the change up within half an hour. A failed refresh is logged
+/// only, as in the original.
+async fn set_perfmon(
+    shared: &Shared,
+    connection: ConnectionId,
+    session: &Session,
+    object: &PerfmonObjectRef,
+    config: Option<&str>,
+) -> TaskOutcome {
+    use crate::perfmon::PERFMON_KEY;
+    let s = session;
+    let written = async {
+        match object {
+            PerfmonObjectRef::Vm(r) => {
+                xapi::vm::remove_from_other_config(s, r, PERFMON_KEY).await?;
+                if let Some(xml) = config {
+                    xapi::vm::add_to_other_config(s, r, PERFMON_KEY, xml).await?;
+                }
+            }
+            PerfmonObjectRef::Host(r) => {
+                xapi::host::remove_from_other_config(s, r, PERFMON_KEY).await?;
+                if let Some(xml) = config {
+                    xapi::host::add_to_other_config(s, r, PERFMON_KEY, xml).await?;
+                }
+            }
+            PerfmonObjectRef::Sr(r) => {
+                xapi::sr::remove_from_other_config(s, r, PERFMON_KEY).await?;
+                if let Some(xml) = config {
+                    xapi::sr::add_to_other_config(s, r, PERFMON_KEY, xml).await?;
+                }
+            }
+        }
+        Ok::<(), xapi::Error>(())
+    }
+    .await;
+    if let Err(e) = written {
+        return TaskOutcome::Failed(e);
+    }
+    if !shared.options.perfmon_refresh {
+        return TaskOutcome::Succeeded;
+    }
+    let hosts: Vec<Ref<Host>> = {
+        let state = shared.state();
+        let model = state
+            .connection(connection)
+            .map(|v| v.model.clone())
+            .unwrap_or_default();
+        match object {
+            PerfmonObjectRef::Host(h) => vec![h.clone()],
+            PerfmonObjectRef::Vm(v) => model
+                .vms
+                .get(v)
+                .and_then(|vm| objects::vm_home(&model, vm))
+                .cloned()
+                .into_iter()
+                .collect(),
+            PerfmonObjectRef::Sr(sr) => model
+                .srs
+                .get(sr)
+                .map(|rec| {
+                    rec.pbds
+                        .iter()
+                        .filter_map(|p| model.get(p))
+                        .map(|p| p.host.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    };
+    let none = HashMap::new();
+    for host in hosts {
+        let refresh = xapi::host::call_plugin(s, &host, "perfmon", "refresh", &none).await;
+        if let Err(e) = refresh {
+            let not_running = matches!(&e, xapi::Error::Api { params, .. }
+                if params.iter().any(|p| p.contains("not running")));
+            if not_running {
+                let started = async {
+                    xapi::host::call_plugin(s, &host, "perfmon", "start", &none).await?;
+                    xapi::host::call_plugin(s, &host, "perfmon", "refresh", &none).await
+                }
+                .await;
+                if let Err(e) = started {
+                    tracing::debug!(error = %e, "perfmon refresh failed; alerts start within half an hour");
+                }
+            } else {
+                tracing::debug!(error = %e, "perfmon refresh failed; alerts start within half an hour");
+            }
+        }
+    }
+    TaskOutcome::Succeeded
 }
 
 /// Cancels the tasks of this client's other running operations on `vm`.

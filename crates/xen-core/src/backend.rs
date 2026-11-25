@@ -114,6 +114,12 @@ pub enum Command {
         host: Ref<Host>,
         action: HostAction,
     },
+    /// Run any operation (VM, host, dismissing alerts, saving performance
+    /// alerts).
+    Action {
+        connection: ConnectionId,
+        request: ActionRequest,
+    },
     /// Run an operation as another user (role elevation): log in with
     /// `username`/`password`, check that this user may run it, and run it
     /// with that session (logged out afterwards). The outcome of the check
@@ -146,6 +152,14 @@ pub enum Command {
         connection: ConnectionId,
         target: crate::console::ConsoleTarget,
         link: crate::console::ConsoleLink,
+    },
+    /// Follow the performance data of a host or VM until the
+    /// [`PerfHandle`](crate::performance::PerfHandle) paired with `link` is
+    /// dropped or the connection is removed.
+    OpenPerformance {
+        connection: ConnectionId,
+        target: crate::performance::PerfTarget,
+        link: crate::performance::PerfLink,
     },
     /// Drop finished entries from the operation history.
     ClearFinishedOperations,
@@ -390,6 +404,13 @@ pub struct BackendOptions {
     /// Reconnect the saved servers marked to reconnect when the backend
     /// starts (and the preference allows it).
     pub restore_connections: bool,
+    /// Interval between two `rrd_updates` requests of an open Performance
+    /// tab (the original's 5 s).
+    pub perf_interval: Duration,
+    /// After saving performance alerts, ask perfmon on the hosts concerned
+    /// to read its configuration again (`host.call_plugin perfmon
+    /// refresh`), as the original does.
+    pub perfmon_refresh: bool,
 }
 
 impl Default for BackendOptions {
@@ -406,6 +427,8 @@ impl Default for BackendOptions {
             max_reconnect_delay: Duration::from_secs(60),
             task_poll_interval: Duration::from_millis(500),
             restore_connections: true,
+            perf_interval: Duration::from_secs(5),
+            perfmon_refresh: true,
         }
     }
 }
@@ -781,6 +804,13 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 let request = ActionRequest::Host { host, action };
                 operations::start_action(&shared, connection, session, request, None);
             }
+            Command::Action {
+                connection,
+                request,
+            } => {
+                let session = active.get(&connection).and_then(|c| slot_get(&c.session));
+                operations::start_action(&shared, connection, session, request, None);
+            }
             Command::RunElevated {
                 connection,
                 request,
@@ -835,6 +865,21 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                     tokio::spawn(crate::console::run(env, target, link));
                 }
                 None => tracing::debug!("console ignored: no such connection"),
+            },
+            Command::OpenPerformance {
+                connection,
+                target,
+                link,
+            } => match active.get(&connection) {
+                Some(c) => {
+                    let env = crate::performance::PerfEnv {
+                        shared: shared.clone(),
+                        connection,
+                        session: c.session.clone(),
+                    };
+                    tokio::spawn(crate::performance::run(env, target, link));
+                }
+                None => tracing::debug!("performance ignored: no such connection"),
             },
             Command::ClearFinishedOperations => shared.update(|s| {
                 Arc::make_mut(&mut s.operations).retain(|o| o.is_running());

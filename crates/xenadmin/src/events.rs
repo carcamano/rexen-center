@@ -43,8 +43,8 @@ pub fn show(ui: &mut Ui, state: &AppState, backend: &BackendHandle) -> bool {
             .then_with(|| a.1.cmp(b.1))
     });
 
+    // The title is the notifications area's tab (see `XenAdminApp`).
     ui.horizontal(|ui| {
-        ui.strong(s.events_title);
         let finished = state.operations.iter().any(|o| !o.is_running());
         if ui
             .add_enabled(finished, egui::Button::new(s.events_clear))

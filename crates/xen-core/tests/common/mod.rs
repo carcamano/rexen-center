@@ -25,6 +25,7 @@ pub fn fast_options(store: Arc<Store>) -> BackendOptions {
         reconnect_delay: Duration::from_millis(100),
         max_reconnect_delay: Duration::from_millis(400),
         task_poll_interval: Duration::from_millis(50),
+        perf_interval: Duration::from_millis(150),
         ..BackendOptions::default()
     }
 }

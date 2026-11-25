@@ -35,6 +35,9 @@ pub enum Tab {
     Nics,
     /// The VM's or host's console (`TabPageConsole`).
     Console,
+    /// Performance graphs (`PerformancePage`), drawn by
+    /// [`crate::perf_view`].
+    Performance,
 }
 
 impl Tab {
@@ -47,6 +50,7 @@ impl Tab {
             Self::Networking => t.tab_networking,
             Self::Nics => t.tab_nics,
             Self::Console => t.tab_console,
+            Self::Performance => crate::perf_strings::perf_strings().tab_performance,
         }
     }
 }
@@ -86,6 +90,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             Tab::Networking,
             Tab::Nics,
             Tab::Console,
+            Tab::Performance,
         ],
         Subject::Host(..) => vec![Tab::General],
         Subject::Vm(_, vm) => {
@@ -99,6 +104,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             // A real VM has a console (not templates or snapshots).
             if objects::vm_kind(vm) == VmKind::Guest {
                 tabs.push(Tab::Console);
+                tabs.push(Tab::Performance);
             }
             tabs
         }
@@ -127,6 +133,7 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Networking, _) => t.hdr_pool_networks,
         (Tab::Nics, _) => t.hdr_nics,
         (Tab::Console, _) => t.tab_console,
+        (Tab::Performance, _) => crate::perf_strings::perf_strings().hdr_performance,
     }
 }
 
@@ -303,8 +310,8 @@ mod tests {
         );
         let hr = Ref::new("OpaqueRef:host-0001");
         let host_tabs = tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr]));
-        assert_eq!(host_tabs.len(), 6);
-        assert_eq!(host_tabs.last(), Some(&Tab::Console));
+        assert_eq!(host_tabs.len(), 7);
+        assert_eq!(host_tabs[5..], [Tab::Console, Tab::Performance]);
         let vr = Ref::new("OpaqueRef:vm-web");
         assert_eq!(
             tabs_for(&m, Subject::Vm(&vr, &m.vms[&vr])),
@@ -313,7 +320,8 @@ mod tests {
                 Tab::Memory,
                 Tab::VmStorage,
                 Tab::Networking,
-                Tab::Console
+                Tab::Console,
+                Tab::Performance
             ]
         );
         // A built-in template still to be provisioned has no Storage tab,
@@ -322,6 +330,7 @@ mod tests {
         let template_tabs = tabs_for(&m, Subject::Vm(&tr, &m.vms[&tr]));
         assert!(!template_tabs.contains(&Tab::VmStorage));
         assert!(!template_tabs.contains(&Tab::Console));
+        assert!(!template_tabs.contains(&Tab::Performance));
         let sr = Ref::new("OpaqueRef:sr-nfs");
         assert_eq!(
             tabs_for(&m, Subject::Sr(&sr, &m.srs[&sr])),

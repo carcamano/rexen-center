@@ -16,6 +16,10 @@
 //!   [`rbac`]: what the logged-in user may do.
 //! * [`console`]: the VM and host consoles (VNC through the XAPI tunnel,
 //!   reconnecting while the VM runs).
+//! * [`performance`]: the performance data of a host or VM (XAPI's RRDs,
+//!   through [`xen_rrd`]) and the default graphs; [`alerts`]: the XAPI
+//!   messages shown as alerts; [`perfmon`]: the performance alert
+//!   configuration (`other_config["perfmon"]`).
 //! * [`operations`]: the operation history behind the Events panel, and the
 //!   operations themselves (run as XAPI tasks).
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
@@ -25,6 +29,7 @@
 //! This crate does not depend on any UI toolkit.
 
 pub mod actions;
+pub mod alerts;
 pub mod backend;
 pub mod connection;
 pub mod console;
@@ -32,12 +37,14 @@ pub mod format;
 pub mod model;
 pub mod objects;
 pub mod operations;
+pub mod perfmon;
+pub mod performance;
 pub mod rbac;
 pub mod secrets;
 pub mod settings;
 pub mod store;
 
-pub use actions::{ActionRequest, HostAction, HostMenu, VmAction};
+pub use actions::{ActionRequest, HostAction, HostMenu, PerfmonObjectRef, VmAction};
 pub use backend::{
     AppState, BackendHandle, BackendOptions, CertificatePrompt, Command, ConnectionError,
     ConnectionId, ConnectionStatus, ConnectionView, ElevationOutcome, Notification, OperationId,
@@ -51,6 +58,7 @@ pub use operations::{
     Operation, OperationFailure, OperationKind, OperationObject, OperationStatus, OperationStep,
     Precheck, PrecheckResult,
 };
+pub use performance::{PerfData, PerfHandle, PerfLink, PerfStatus, PerfTarget};
 pub use rbac::{RbacCheck, SessionRbac};
 pub use secrets::{KeyringSecretStore, MemorySecretStore, SecretStore};
 pub use settings::{ConfigLocation, ConfigPaths, Preferences, SavedServer, Settings};

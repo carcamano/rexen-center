@@ -14,12 +14,14 @@ path = "src/main.rs"
 [dependencies]
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_plot = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 xapi = { workspace = true }
 xen-core = { workspace = true }
+xen-rrd = { workspace = true }
 xen-vnc = { workspace = true }
 
 [dev-dependencies]

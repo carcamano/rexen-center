@@ -17,6 +17,7 @@ use xen_core::{
     ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
 };
 
+use crate::alerts_view::{AlertAction, AlertsView};
 use crate::branding;
 use crate::console_view::{ConsoleKey, Consoles, TabAction};
 use crate::events;
@@ -24,6 +25,9 @@ use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
 use crate::ops_strings::ops_strings;
 use crate::ops_ui::{self, Entry, OpsUi};
+use crate::perf_strings::perf_strings;
+use crate::perf_view::{PerfAction, PerfKey, Performance};
+use crate::perfmon_ui::{self, PerfmonDialog};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
 
@@ -106,6 +110,21 @@ pub struct XenAdminApp {
     /// VMs started or resumed from this window: the Console tab is shown
     /// once they run, if still selected.
     console_on_start: Vec<(ConnectionId, Ref<Vm>)>,
+    /// Open performance feeds and the graphs' zoom.
+    performance: Performance,
+    /// The Alerts view of the notifications area.
+    alerts: AlertsView,
+    /// Which view the notifications area shows.
+    notifications: Notifications,
+    /// The performance alert settings window.
+    perfmon: Option<PerfmonDialog>,
+}
+
+/// The views of the notifications area (the original's Alerts and Events).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Notifications {
+    Alerts,
+    Events,
 }
 
 type TreeCacheEntry = (Arc<ConnectionModel>, TreeOptions, Arc<Vec<TreePool>>);
@@ -133,6 +152,10 @@ impl XenAdminApp {
             ops: OpsUi::default(),
             consoles: Consoles::new(),
             console_on_start: Vec::new(),
+            performance: Performance::default(),
+            alerts: AlertsView::default(),
+            notifications: Notifications::Events,
+            perfmon: None,
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -223,6 +246,68 @@ impl XenAdminApp {
         });
         if switch {
             self.tab = Tab::Console;
+        }
+    }
+
+    /// The performance feed of the selected host or VM, if it can have one.
+    fn selected_perf(&self, state: &AppState) -> Option<PerfKey> {
+        match self.selection.as_ref()? {
+            Selection::Vm(c, r) => {
+                let vm = state.connection(*c)?.model.get(r)?;
+                (objects::vm_kind(vm) == VmKind::Guest)
+                    .then(|| (*c, xen_core::PerfTarget::Vm(r.clone())))
+            }
+            Selection::Host(c, r) => Some((*c, xen_core::PerfTarget::Host(r.clone()))),
+            _ => None,
+        }
+    }
+
+    /// Opens the performance alert settings of `object`.
+    fn edit_alerts(
+        &mut self,
+        state: &AppState,
+        connection: ConnectionId,
+        object: xen_core::PerfmonObjectRef,
+    ) {
+        if let Some(conn) = state.connection(connection) {
+            self.perfmon = PerfmonDialog::open(conn, object);
+        }
+    }
+
+    /// The notifications area: Alerts and Events.
+    fn notifications(&mut self, ui: &mut Ui, state: &AppState) -> bool {
+        let p = perf_strings();
+        let count = AlertsView::count(state);
+        let alerts_title = if count > 0 {
+            fill(p.alerts_unread, &[("count", &count.to_string())])
+        } else {
+            p.alerts_title.to_owned()
+        };
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.notifications == Notifications::Alerts, alerts_title)
+                .clicked()
+            {
+                self.notifications = Notifications::Alerts;
+            }
+            if ui
+                .selectable_label(
+                    self.notifications == Notifications::Events,
+                    strings().events_title,
+                )
+                .clicked()
+            {
+                self.notifications = Notifications::Events;
+            }
+        });
+        match self.notifications {
+            Notifications::Events => events::show(ui, state, &self.backend),
+            Notifications::Alerts => {
+                if let Some(AlertAction::EditAlerts(c, object)) = self.alerts.show(ui, state) {
+                    self.edit_alerts(state, c, object);
+                }
+                false
+            }
         }
     }
 
@@ -989,6 +1074,10 @@ impl XenAdminApp {
                 Subject::Pool(..) => {
                     self.connection_buttons(ui, conn);
                 }
+                Subject::Sr(r, _) if ui.button(perf_strings().alert_settings).clicked() => {
+                    self.perfmon =
+                        PerfmonDialog::open(conn, xen_core::PerfmonObjectRef::Sr(r.clone()));
+                }
                 _ => {}
             }
         });
@@ -1006,6 +1095,23 @@ impl XenAdminApp {
             }
         });
         ui.separator();
+        if self.tab == Tab::Performance {
+            let key = match subject {
+                Subject::Vm(r, _) => (conn.id, xen_core::PerfTarget::Vm(r.clone())),
+                Subject::Host(r, _) => (conn.id, xen_core::PerfTarget::Host(r.clone())),
+                _ => return,
+            };
+            if let Some(PerfAction::EditAlerts) =
+                self.performance.tab(ui, &self.backend, conn, &key)
+            {
+                let object = match &key.1 {
+                    xen_core::PerfTarget::Vm(r) => xen_core::PerfmonObjectRef::Vm(r.clone()),
+                    xen_core::PerfTarget::Host(r) => xen_core::PerfmonObjectRef::Host(r.clone()),
+                };
+                self.perfmon = PerfmonDialog::open(conn, object);
+            }
+            return;
+        }
         if self.tab == Tab::Console {
             let (key, title) = match subject {
                 Subject::Vm(r, vm) => (
@@ -1423,6 +1529,9 @@ impl eframe::App for XenAdminApp {
             .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
         self.update_consoles(&state);
+        let shown_perf = self.selected_perf(&state);
+        self.performance
+            .retain(shown_perf.as_ref(), |c| state.connection(c).is_some());
         let titles = |key: &ConsoleKey| console_title(&state, key);
         self.consoles.windows(&ctx, titles);
         if self.consoles.fullscreen_ui(ui) {
@@ -1438,7 +1547,7 @@ impl eframe::App for XenAdminApp {
                 .resizable(true)
                 .default_size(190.0)
                 .min_size(80.0)
-                .show(ui, |ui| moving = events::show(ui, &state, &self.backend));
+                .show(ui, |ui| moving = self.notifications(ui, &state));
         }
         Panel::left("tree")
             .resizable(true)
@@ -1452,6 +1561,15 @@ impl eframe::App for XenAdminApp {
         self.certificate_window(&ctx);
         self.options_window(&ctx, &state);
         self.about_window(&ctx);
+        self.alerts
+            .window(&ctx, &state, &mut self.ops, &self.backend);
+        perfmon_ui::window(
+            &mut self.perfmon,
+            &ctx,
+            &state,
+            &mut self.ops,
+            &self.backend,
+        );
         self.ops.windows(&ctx, &state, &self.backend);
         self.errors_window(&ctx);
         self.apply_actions(&state);
@@ -1609,6 +1727,9 @@ mod tests {
 
     // F5: the Console tab (`app/tests/console.rs`).
     mod console;
+    // F6: the Performance tab, the Alerts view and the alert settings
+    // (`app/tests/performance.rs`).
+    mod performance;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -1668,6 +1789,7 @@ mod tests {
                     reconnect_delay: Duration::from_millis(200),
                     max_reconnect_delay: Duration::from_millis(500),
                     task_poll_interval: Duration::from_millis(50),
+                    perf_interval: Duration::from_millis(200),
                     ..Default::default()
                 };
                 XenAdminApp::new(BackendHandle::spawn(
@@ -1836,6 +1958,14 @@ mod tests {
     /// cache to load. Production timings (heartbeat every 15 s, event.from
     /// 60 s).
     fn real_host_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, XenAdminApp> {
+        real_host_harness_with(runtime, |o| o)
+    }
+
+    /// [`real_host_harness`] with changed backend options.
+    fn real_host_harness_with(
+        runtime: &tokio::runtime::Runtime,
+        tweak: impl FnOnce(BackendOptions) -> BackendOptions + Send + 'static,
+    ) -> Harness<'static, XenAdminApp> {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("set {name}"));
         let (host, user, password, fingerprint) = (
             var("XENADMIN_REAL_HOST"),
@@ -1848,10 +1978,10 @@ mod tests {
             .with_size(egui::vec2(1100.0, 800.0))
             .build_eframe(move |cc| {
                 let ctx = cc.egui_ctx.clone();
-                let options = BackendOptions {
+                let options = tweak(BackendOptions {
                     originator: "xenadmin-ui-test".into(),
                     ..Default::default()
-                };
+                });
                 XenAdminApp::new(BackendHandle::spawn(
                     &handle,
                     options,

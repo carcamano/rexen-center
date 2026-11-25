@@ -68,6 +68,16 @@ async fn logs_never_contain_passwords_or_session_refs() {
     })
     .await;
     drop(console);
+    // Performance data: the RRD requests carry the session reference in
+    // their query string.
+    let (perf, link) = xen_core::performance::pair();
+    h.backend.send(Command::OpenPerformance {
+        connection: conn,
+        target: xen_core::PerfTarget::Vm(Ref::new("OpaqueRef:vm-db")),
+        link,
+    });
+    wait_until("performance updates", || perf.data().updates >= 2).await;
+    drop(perf);
     // An operation run as another user (role elevation).
     h.backend.send(Command::RunElevated {
         connection: conn,
@@ -114,6 +124,10 @@ async fn logs_never_contain_passwords_or_session_refs() {
     assert!(log.contains("connected"), "nothing captured");
     assert!(log.contains("xapi call"), "call tracing not captured");
     assert!(log.contains("console"), "console tracing not captured");
+    assert!(
+        log.contains("rrd request"),
+        "performance tracing not captured"
+    );
     assert!(log.len() > 10_000, "too little captured: {}", log.len());
     assert!(!log.contains(xapi_mock::PASSWORD), "password in the log");
     assert!(

@@ -595,6 +595,20 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
             fill(template, &[("host", host_name)])
         }
         OperationKind::CancelTask { task_name } => fill(s.op_cancel_task, &[("task", task_name)]),
+        OperationKind::DismissAlerts { count, title } => {
+            let p = crate::perf_strings::perf_strings();
+            match title {
+                Some(t) if *count == 1 => fill(
+                    p.op_dismiss_one,
+                    &[("title", &crate::alerts_view::message_title(t))],
+                ),
+                _ => fill(p.op_dismiss_many, &[("count", &count.to_string())]),
+            }
+        }
+        OperationKind::SavePerfmon { object_name } => fill(
+            crate::perf_strings::perf_strings().op_save_alerts,
+            &[("object", object_name)],
+        ),
     }
 }
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xapi-mock", "crates/xenadmin"]
+members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xen-rrd", "crates/xapi-mock", "crates/xenadmin"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,16 +14,19 @@ xapi = { path = "crates/xapi" }
 xen-core = { path = "crates/xen-core" }
 xapi-mock = { path = "crates/xapi-mock" }
 xen-vnc = { path = "crates/xen-vnc" }
+xen-rrd = { path = "crates/xen-rrd" }
 
 arc-swap = "1.7"
 directories = "6"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.37"
+egui_plot = "0.38"
 flate2 = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
+quick-xml = "0.41"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "http2"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

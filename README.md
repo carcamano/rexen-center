@@ -8,8 +8,9 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F5 (VNC console) on top of F1–F4 (base, connection and
-model, detail tabs, VM and host operations).** What works:
+**Status: phase F6 (performance graphs, alerts and notifications) on top
+of F1–F5 (base, connection and model, detail tabs, VM and host
+operations, VNC console).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -88,6 +89,36 @@ model, detail tabs, VM and host operations).** What works:
   down, suspended or paused (with "Click here to start it" / "resume it"),
   and the window **switches to the Console tab** when a VM started or
   resumed from it begins to run;
+- the **Performance tab** of a server and of a VM, as the original's: the
+  default graphs (CPU per CPU or vCPU, used memory, network send/receive
+  per NIC or interface, and disk read/write per disk for VMs) drawn from
+  XAPI's round-robin databases, with a key beside each graph, the
+  original's data source names and units, and the VM lifecycle events
+  (started, shut down…) as markers. **Zoom** shows the last 10 minutes,
+  1 hour, 2 hours, 1 day, 1 week, 1 month or 1 year; as in the original
+  the range picks the archive (5-second rows for 10 minutes, minute rows
+  for 2 hours, hourly rows for a week, daily rows for a year) and the
+  newest finer rows are averaged in so the line reaches the present. The
+  whole RRD is read when the tab opens (`/host_rrds`, `/vm_rrds`), then
+  `/rrd_updates` every 5 seconds (and every minute, hour and day for the
+  coarser archives), asking for **JSON** (`json=true`, which XCP-ng 8.3
+  serves) and reading XML when a server answers in XML. A VM that is not
+  running shows its archived data;
+- **alerts** in the notifications area (Alerts next to Events): the XAPI
+  messages of every connected server, newest first, with severity,
+  title and description (perfmon alarms and failed logins in words, other
+  messages with the original's friendly texts), server or pool and date;
+  **Dismiss**, **Dismiss Selected** and **Dismiss All** ask first and
+  destroy the messages on the server (with the RBAC check and role
+  elevation of other operations). VM lifecycle messages are not alerts
+  (they go on the graphs), as in the original;
+- **performance alert settings** (the original's "Alerts" properties
+  page) for a VM (CPU, network, disk), a server (CPU, network, free
+  memory) or an SR (storage throughput), from the Performance tab, an
+  SR's header or an alarm's "Alarm Settings": thresholds, durations and
+  the repeat interval, saved to `other_config["perfmon"]` in the
+  original's XML (other perfmon variables are kept), followed by the
+  perfmon plugin's `refresh` on the hosts concerned;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -95,9 +126,9 @@ model, detail tabs, VM and host operations).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs, performance graphs, VM creation and cross-pool
-migration come in later phases (RDP is not embedded). See the port plan for
-the full roadmap.
+Editing from the tabs, custom graphs (New/Edit Graph), VM creation and
+cross-pool migration come in later phases (RDP is not embedded). See the
+port plan for the full roadmap.
 
 Console limitations: shortcuts the operating system keeps (Alt+Tab, the
 Windows key, Ctrl+Alt+Del) never reach the console, as in the original
@@ -246,6 +277,19 @@ end to end:
   guest pixel under it while scaled, Ctrl+Alt+Del, paste, undock, full
   screen, reconnection after a reboot, the switch to the Console tab on
   Start, and the server console sending nothing;
+- performance data: `rrd_updates` and whole RRDs in JSON and XML, read
+  from sanitized answers of a real XCP-ng 8.3 host
+  (`tests/fixtures/rrd/`) and served by the mock (made-up values that
+  move with the clock); the archives, the finer rows averaged in, a VM
+  that stops (its graphs kept) and starts again, a server without JSON,
+  data sources listed without units, the requests stopping when the tab
+  closes, and the session reference never reaching the log;
+- alerts from messages (perfmon alarms, failed logins, friendly titles),
+  dismissing them (one already gone is fine), the RBAC check, and the
+  performance alert settings (units, other variables kept, the key
+  removed when nothing is on, the perfmon refresh); in the window: the
+  Performance tab's graphs, zoom and feeds, the Alerts view with its
+  questions, and the settings window;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -279,6 +323,19 @@ framebuffer snapshots, both outside the repository):
 ```sh
 cargo test -p xenadmin real_console_dom0 -- --ignored --nocapture
 ```
+
+`real_performance_host` (same variables plus `XENADMIN_REAL_LOG`) only
+reads: it follows the server's Performance tab for a minute.
+
+The performance graphs, alerts and alert settings on a real host
+(`real_performance_fluxer`, same variables plus `XENADMIN_REAL_LOG`): it
+reads the server's graphs, then acts on the VM named exactly "09 - Ubuntu
+Fluxer" only (refused unless exactly one VM has that name and it is
+halted): starts it and watches its graphs move during the boot, creates a
+test message on it and dismisses that one alert alone from the Alerts
+view (checking every other message is still there), turns its CPU alert
+on and off again (the `perfmon` key ends as found; the perfmon refresh is
+not called), and shuts it down.
 
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
@@ -315,12 +372,13 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding and TLS certificate pinning. `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the consoles (finding a VM's console, opening it, reconnecting), the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
-`xapi`, `xen-vnc` and `xen-core` do not depend on egui. The app runs a tokio runtime on
+`xapi`, `xen-rrd`, `xen-vnc` and `xen-core` do not depend on egui. The app runs a tokio runtime on
 background threads and keeps eframe on the main thread. It sends `Command`s to
 the backend over an mpsc channel and reads an immutable `Arc<AppState>`
 snapshot each frame (every connection, the operation history and the

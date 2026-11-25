@@ -8,7 +8,8 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Host, HostAllowedOperations, HostRecord, Ref, Vm, VmOperations, VmPowerState, VmRecord,
+    Host, HostAllowedOperations, HostRecord, Message, Ref, Sr, Vm, VmOperations, VmPowerState,
+    VmRecord,
 };
 
 use crate::model::{ConnectionModel, is_guest};
@@ -87,11 +88,37 @@ pub enum HostAction {
     RestartToolstack,
 }
 
-/// One operation on one object.
+/// An object that can have performance alerts (`other_config["perfmon"]`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PerfmonObjectRef {
+    Vm(Ref<Vm>),
+    Host(Ref<Host>),
+    Sr(Ref<Sr>),
+}
+
+/// One operation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ActionRequest {
-    Vm { vm: Ref<Vm>, action: VmAction },
-    Host { host: Ref<Host>, action: HostAction },
+    Vm {
+        vm: Ref<Vm>,
+        action: VmAction,
+    },
+    Host {
+        host: Ref<Host>,
+        action: HostAction,
+    },
+    /// Dismiss alerts: destroy their messages on the server
+    /// (`DismissAlertsAction`).
+    DismissAlerts {
+        messages: Vec<Ref<Message>>,
+    },
+    /// Save the performance alerts of an object: `config` is the new
+    /// `other_config["perfmon"]` XML, `None` removes the key
+    /// (`PerfmonDefinitionAction`).
+    SetPerfmon {
+        object: PerfmonObjectRef,
+        config: Option<String>,
+    },
 }
 
 /// `task.destroy`, called once a task has been followed to its end.
@@ -103,6 +130,27 @@ impl ActionRequest {
     /// same calls in each action's `ApiMethodsToRoleCheck`.
     pub fn rbac_methods(&self) -> Vec<&'static str> {
         let own: &[&str] = match self {
+            Self::DismissAlerts { .. } => return vec!["message.destroy"],
+            Self::SetPerfmon { object, config } => {
+                let (remove, add) = match object {
+                    PerfmonObjectRef::Vm(_) => (
+                        "vm.remove_from_other_config/key:perfmon",
+                        "vm.add_to_other_config/key:perfmon",
+                    ),
+                    PerfmonObjectRef::Host(_) => (
+                        "host.remove_from_other_config/key:perfmon",
+                        "host.add_to_other_config/key:perfmon",
+                    ),
+                    PerfmonObjectRef::Sr(_) => (
+                        "sr.remove_from_other_config/key:perfmon",
+                        "sr.add_to_other_config/key:perfmon",
+                    ),
+                };
+                return match config {
+                    Some(_) => vec![remove, add],
+                    None => vec![remove],
+                };
+            }
             Self::Vm { action, .. } => match action {
                 VmAction::Start => &["vm.start"],
                 VmAction::CleanShutdown => &["vm.clean_shutdown"],

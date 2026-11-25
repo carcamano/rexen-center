@@ -78,6 +78,10 @@ async fn run(h: &common::Harness, conn: ConnectionId, request: ActionRequest) ->
             host,
             action,
         },
+        request => Command::Action {
+            connection: conn,
+            request,
+        },
     });
     let state = h
         .wait_for("operation ended", |s| {

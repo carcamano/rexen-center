@@ -28,6 +28,12 @@
 //!   sessions drop when it reboots, stops, suspends or migrates, as QEMU's
 //!   do.
 //!
+//! * performance data: `GET /rrd_updates`, `/host_rrds` and `/vm_rrds`
+//!   (JSON with `json=true`, else XML) and `host.get_data_sources` /
+//!   `VM.get_data_sources`, made up from the time (see [`rrd`]);
+//! * messages: `message.create` and `message.destroy` (with their events),
+//!   and `host.call_plugin` for perfmon's `refresh` / `start`.
+//!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
 //! [`MockServer::add_object`],
@@ -45,6 +51,7 @@
 //! its task fails with a given XAPI error).
 
 pub mod ops;
+pub mod rrd;
 
 pub use ops::RBAC_USERS;
 
@@ -330,6 +337,79 @@ impl MockServer {
         self.addr.to_string()
     }
 
+    /// Answer RRD requests in XML even when JSON is asked for, like a
+    /// server without JSON support.
+    pub fn set_rrd_json(&self, json: bool) {
+        self.state.db().rrd_json = json;
+    }
+
+    /// Whether `get_data_sources` lists units (off: empty units, as a VM
+    /// that just started may report).
+    pub fn set_data_source_units(&self, units: bool) {
+        self.state.db().rrd_units = units;
+    }
+
+    /// Moves the clock of the performance data `seconds` forward, so new
+    /// rows show up without waiting.
+    pub fn advance_rrd_clock(&self, seconds: i64) {
+        self.state.db().rrd_clock_offset += seconds;
+    }
+
+    /// The `host.call_plugin` calls so far, `(plugin, function)`.
+    pub fn plugin_calls(&self) -> Vec<(String, String)> {
+        self.state.db().plugin_calls.clone()
+    }
+
+    /// Creates a message as XAPI would (e.g. a perfmon `ALARM`); returns
+    /// its reference.
+    pub fn create_message(
+        &self,
+        name: &str,
+        priority: i64,
+        cls: &str,
+        obj_uuid: &str,
+        body: &str,
+    ) -> String {
+        let reply = {
+            let mut db = self.state.db();
+            let n = db.next_message;
+            db.next_message += 1;
+            let r = format!("OpaqueRef:mock-message-{n}");
+            let record = json!({
+                "uuid": format!("3e55a9e0-0000-4000-8000-{n:012}"), "name": name,
+                "priority": priority, "cls": cls, "obj_uuid": obj_uuid,
+                "timestamp": "20261125T12:00:00Z", "body": body,
+            });
+            db.objects
+                .insert(("message".to_owned(), r.clone()), record.clone());
+            db.push_event("message", "add", &r, Some(record));
+            r
+        };
+        self.state.changed.notify_waiters();
+        reply
+    }
+
+    /// A field of an object, if it exists.
+    pub fn field(&self, class: &str, opaque_ref: &str, field: &str) -> Option<Value> {
+        self.state
+            .db()
+            .objects
+            .get(&(class.to_lowercase(), opaque_ref.to_owned()))
+            .and_then(|r| r.get(field))
+            .cloned()
+    }
+
+    /// The references of every object of `class`.
+    pub fn refs(&self, class: &str) -> Vec<String> {
+        self.state
+            .db()
+            .objects
+            .keys()
+            .filter(|(c, _)| *c == class.to_lowercase())
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
     /// Methods called so far, in order (parameters are not recorded).
     pub fn calls(&self) -> Vec<String> {
         self.state.db().calls.clone()
@@ -549,6 +629,11 @@ impl State {
                 failures: HashMap::new(),
                 console_base: String::new(),
                 next_console: 1,
+                rrd_json: true,
+                rrd_units: true,
+                rrd_clock_offset: 0,
+                next_message: 1,
+                plugin_calls: Vec::new(),
             }),
             consoles: Mutex::new(HashMap::new()),
             changed: Notify::new(),
@@ -626,6 +711,15 @@ struct Db {
     /// `scheme://host:port` of this server, for new console records.
     console_base: String,
     next_console: u64,
+    /// RRD answers in JSON when asked (else always XML).
+    rrd_json: bool,
+    /// Data sources list their units (a VM that just started may not).
+    rrd_units: bool,
+    /// Seconds added to the clock of the RRD data.
+    rrd_clock_offset: i64,
+    next_message: u64,
+    /// `host.call_plugin` calls: `(plugin, function)`.
+    plugin_calls: Vec<(String, String)>,
 }
 
 impl Db {
@@ -875,6 +969,11 @@ async fn handle(
     if req.method() == Method::CONNECT {
         return Ok(console_connect(&state, req));
     }
+    if req.method() == Method::GET
+        && matches!(req.uri().path(), "/rrd_updates" | "/host_rrds" | "/vm_rrds")
+    {
+        return Ok(rrd_get(&state, &req));
+    }
     if req.method() != Method::POST || req.uri().path() != "/jsonrpc" {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -976,6 +1075,34 @@ fn console_connect(state: &Arc<State>, mut req: Request<Incoming>) -> Response<F
         }
     });
     Response::new(Full::new(Bytes::new()))
+}
+
+/// `GET /rrd_updates`, `/host_rrds`, `/vm_rrds` with `session_id=`.
+fn rrd_get(state: &Arc<State>, req: &Request<Incoming>) -> Response<Full<Bytes>> {
+    let path = req.uri().path().to_owned();
+    let query = rrd::Query::parse(req.uri().query().unwrap_or_default());
+    let mut db = state.db();
+    db.calls.push(format!("http{path}"));
+    if !query
+        .get("session_id")
+        .is_some_and(|s| db.sessions.contains_key(s))
+    {
+        return plain(StatusCode::UNAUTHORIZED, "session invalid");
+    }
+    let json = query.get("json") == Some("true");
+    let (status, content_type, body) = match path.as_str() {
+        "/rrd_updates" => db.rrd_updates(&query),
+        "/host_rrds" => db.full_rrd(None, json),
+        _ => match query.get("uuid") {
+            Some(uuid) => db.full_rrd(Some(uuid), json),
+            None => (400, "text/plain", "uuid missing".to_owned()),
+        },
+    };
+    Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .body(Full::new(Bytes::from(body)))
+        .expect("response")
 }
 
 fn str_param(params: &[Value], i: usize) -> &str {
@@ -1104,6 +1231,52 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 }
                 json!("")
             })
+        }
+        "host.get_data_sources" | "VM.get_data_sources" => {
+            let r = str_param(params, 1);
+            db.data_sources(&class, r)
+                .ok_or(())
+                .or_else(|()| api_error("HANDLE_INVALID", &[&class, r]))
+        }
+        "message.create" => {
+            let n = db.next_message;
+            db.next_message += 1;
+            let r = format!("OpaqueRef:mock-message-{n}");
+            let record = json!({
+                "uuid": format!("3e55a9e0-0000-4000-8000-{n:012}"),
+                "name": str_param(params, 1),
+                "priority": params.get(2).cloned().unwrap_or(json!(5)),
+                "cls": str_param(params, 3),
+                "obj_uuid": str_param(params, 4),
+                "timestamp": "20261125T12:00:00Z",
+                "body": str_param(params, 5),
+            });
+            db.objects
+                .insert(("message".to_owned(), r.clone()), record.clone());
+            db.push_event("message", "add", &r, Some(record));
+            Ok(json!(r))
+        }
+        "message.destroy" => {
+            let r = str_param(params, 1).to_owned();
+            if db
+                .objects
+                .remove(&("message".to_owned(), r.clone()))
+                .is_some()
+            {
+                db.push_event("message", "del", &r, None);
+                Ok(json!(""))
+            } else {
+                api_error("HANDLE_INVALID", &["message", &r])
+            }
+        }
+        "host.call_plugin" => {
+            let (plugin, function) = (str_param(params, 2), str_param(params, 3));
+            db.plugin_calls
+                .push((plugin.to_owned(), function.to_owned()));
+            match (plugin, function) {
+                ("perfmon", "refresh" | "start" | "stop") => Ok(json!("")),
+                _ => api_error("XENAPI_MISSING_PLUGIN", &[plugin]),
+            }
         }
         "host.get_servertime" => {
             let host = str_param(params, 1);

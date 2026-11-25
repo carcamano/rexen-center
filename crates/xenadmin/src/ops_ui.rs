@@ -240,6 +240,8 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => return None,
             })
         }
+        // Asked by the Alerts view itself; saving alerts is not confirmed.
+        ActionRequest::DismissAlerts { .. } | ActionRequest::SetPerfmon { .. } => None,
         ActionRequest::Host { host, action } => {
             let record = model.hosts.get(host)?;
             let name = ("host", record.name_label.as_str());
@@ -412,6 +414,10 @@ impl OpsUi {
                     connection: conn.id,
                     host,
                     action,
+                },
+                request => Command::Action {
+                    connection: conn.id,
+                    request,
                 },
             }),
             RbacCheck::Denied { authorized } => {

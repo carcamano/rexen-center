@@ -98,7 +98,11 @@ impl JsonRpcClient {
         };
         let status = response.status();
         let bytes = response.bytes().await?;
-        let value: Value = match serde_json::from_slice(&bytes) {
+        // XAPI writes non-finite floats as bare `Infinity` / `NaN` (e.g. a
+        // data source's `max`), which JSON does not allow: quote them.
+        let parsed = serde_json::from_slice(&bytes)
+            .or_else(|e| quote_non_finite(&bytes).map_or(Err(e), |b| serde_json::from_slice(&b)));
+        let value: Value = match parsed {
             Ok(v) => v,
             Err(_) if !status.is_success() => {
                 return Err(Error::Protocol(format!("HTTP {status} from {method}")));
@@ -131,6 +135,47 @@ impl JsonRpcClient {
         }
         Error::Transport(e)
     }
+}
+
+/// Quotes the bare `Infinity`, `-Infinity` and `NaN` tokens outside
+/// strings (`None` if there are none), so they decode as strings, which
+/// the lenient float decoder reads.
+pub(crate) fn quote_non_finite(body: &[u8]) -> Option<Vec<u8>> {
+    const TOKENS: [&[u8]; 3] = [b"-Infinity", b"Infinity", b"NaN"];
+    let mut out = Vec::with_capacity(body.len() + 16);
+    let (mut in_string, mut escaped, mut changed) = (false, false, false);
+    let mut i = 0;
+    while i < body.len() {
+        let b = body[i];
+        if in_string {
+            out.push(b);
+            match (escaped, b) {
+                (true, _) => escaped = false,
+                (false, b'\\') => escaped = true,
+                (false, b'"') => in_string = false,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+            out.push(b);
+            i += 1;
+            continue;
+        }
+        if let Some(t) = TOKENS.iter().find(|t| body[i..].starts_with(t)) {
+            out.push(b'"');
+            out.extend_from_slice(t);
+            out.push(b'"');
+            i += t.len();
+            changed = true;
+            continue;
+        }
+        out.push(b);
+        i += 1;
+    }
+    changed.then_some(out)
 }
 
 /// What replaces a session reference in error parameters.
@@ -196,6 +241,23 @@ fn value_to_string(v: Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_finite_floats_are_quoted_outside_strings() {
+        let body =
+            br#"{"result":[{"max":Infinity,"min":-Infinity,"v":NaN,"s":"NaN \" Infinity"}]}"#;
+        let fixed = quote_non_finite(body).unwrap();
+        let v: Value = serde_json::from_slice(&fixed).unwrap();
+        assert_eq!(v["result"][0]["max"], json!("Infinity"));
+        assert_eq!(v["result"][0]["min"], json!("-Infinity"));
+        assert_eq!(v["result"][0]["v"], json!("NaN"));
+        assert_eq!(v["result"][0]["s"], json!("NaN \" Infinity"));
+        assert!(quote_non_finite(br#"{"a":"Infinity"}"#).is_none());
+        let record: crate::DataSourceRecord =
+            serde_json::from_value(v["result"][0].clone()).unwrap();
+        assert_eq!(record.max, f64::INFINITY);
+        assert_eq!(record.min, f64::NEG_INFINITY);
+    }
 
     #[test]
     fn parses_result() {

@@ -134,6 +134,24 @@ pub fn datetime_utc(unix_seconds: i64, with_seconds: bool) -> String {
     }
 }
 
+/// The UTC time of day, `HH:MM` (`HH:MM:SS` with seconds), for graph
+/// axes.
+pub fn clock_utc(unix_seconds: i64, with_seconds: bool) -> String {
+    let secs = unix_seconds.rem_euclid(86_400);
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if with_seconds {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{h:02}:{m:02}")
+    }
+}
+
+/// The UTC day, `MMM d`, for graph axes.
+pub fn day_utc(unix_seconds: i64) -> String {
+    let (_, month, day) = civil_from_days(unix_seconds.div_euclid(86_400));
+    format!("{} {day}", MONTHS[(month - 1) as usize])
+}
+
 /// A date only (`MMM d, yyyy`).
 pub fn date(year: i64, month: u32, day: u32) -> Option<String> {
     let name = MONTHS.get(month.checked_sub(1)? as usize)?;
@@ -187,6 +205,9 @@ mod tests {
             "Feb 29, 2000 12:00 AM UTC"
         );
         assert_eq!(date(2026, 1, 15).as_deref(), Some("Jan 15, 2026"));
+        assert_eq!(clock_utc(1_795_628_969, false), "17:49");
+        assert_eq!(clock_utc(1_795_628_969, true), "17:49:29");
+        assert_eq!(day_utc(1_795_628_969), "Nov 25");
         assert_eq!(date(2026, 13, 1), None);
     }
 }

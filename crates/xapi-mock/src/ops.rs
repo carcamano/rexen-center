@@ -84,6 +84,14 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("host.restart_agent", "pool-operator"),
     ("host.add_to_other_config", "pool-operator"),
     ("host.remove_from_other_config", "pool-operator"),
+    ("message.destroy", "pool-operator"),
+    ("message.create", "pool-operator"),
+    ("vm.add_to_other_config/key:perfmon", "pool-operator"),
+    ("vm.remove_from_other_config/key:perfmon", "pool-operator"),
+    ("host.add_to_other_config/key:perfmon", "pool-operator"),
+    ("host.remove_from_other_config/key:perfmon", "pool-operator"),
+    ("sr.add_to_other_config/key:perfmon", "pool-operator"),
+    ("sr.remove_from_other_config/key:perfmon", "pool-operator"),
 ];
 
 fn rank(role: &str) -> usize {

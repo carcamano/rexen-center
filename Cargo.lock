@@ -1014,6 +1014,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_plot"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c34f8fe086d7e69ce558dcc85f7c7be593092525d01cb30caa560044bc2bbaa"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
+ "nohash-hasher",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4925,6 +4937,7 @@ dependencies = [
  "arc-swap",
  "directories",
  "keyring",
+ "quick-xml",
  "rustls",
  "serde",
  "serde_json",
@@ -4934,7 +4947,21 @@ dependencies = [
  "tracing-subscriber",
  "xapi",
  "xapi-mock",
+ "xen-rrd",
  "xen-vnc",
+]
+
+[[package]]
+name = "xen-rrd"
+version = "0.1.0"
+dependencies = [
+ "quick-xml",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4956,6 +4983,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_kittest",
+ "egui_plot",
  "serde_json",
  "tokio",
  "tracing",
@@ -4964,6 +4992,7 @@ dependencies = [
  "xapi",
  "xapi-mock",
  "xen-core",
+ "xen-rrd",
  "xen-vnc",
 ]
 
