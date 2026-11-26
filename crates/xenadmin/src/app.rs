@@ -39,7 +39,7 @@ use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Selection {
+pub(crate) enum Selection {
     /// A connection without a loaded pool (connecting, or failed).
     Connection(ConnectionId),
     /// A saved server that is not connected.
@@ -48,6 +48,18 @@ enum Selection {
     Host(ConnectionId, Ref<Host>),
     Vm(ConnectionId, Ref<Vm>),
     Sr(ConnectionId, Ref<Sr>),
+    /// F13: objects only the organization views show.
+    Network(ConnectionId, Ref<xapi::Network>),
+    Vdi(ConnectionId, Ref<xapi::Vdi>),
+    VApp(ConnectionId, Ref<xapi::VmAppliance>),
+    /// A folder, by path (folders are shared by every connection).
+    Folder(String),
+    /// A group of a view or saved search (a tag, a custom field value…).
+    Group(Box<xen_core::search_eval::GroupTag>),
+    /// The root of an organization view.
+    ViewRoot(xen_core::search_eval::OrgView),
+    /// The root of a saved search, by UUID.
+    SavedSearch(String),
 }
 
 impl Selection {
@@ -57,8 +69,15 @@ impl Selection {
             | Self::Pool(c, _)
             | Self::Host(c, _)
             | Self::Vm(c, _)
-            | Self::Sr(c, _) => Some(*c),
-            Self::Saved(_) => None,
+            | Self::Sr(c, _)
+            | Self::Network(c, _)
+            | Self::Vdi(c, _)
+            | Self::VApp(c, _) => Some(*c),
+            Self::Saved(_)
+            | Self::Folder(_)
+            | Self::Group(_)
+            | Self::ViewRoot(_)
+            | Self::SavedSearch(_) => None,
         }
     }
 }
@@ -145,6 +164,12 @@ pub struct XenAdminApp {
     vapp: crate::vapp_ui::VAppUi,
     vmss: crate::vmss_ui::VmssUi,
     dr: crate::dr_ui::DrUi,
+    /// Navigation views, the Search tab, folders, tags, custom fields and
+    /// saved searches (F13).
+    org: crate::org_ui::OrgUi,
+    /// The selection of the last frame (an imported search is dropped when
+    /// it changes).
+    last_selection: Option<Selection>,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -193,6 +218,8 @@ impl XenAdminApp {
             vapp: crate::vapp_ui::VAppUi::default(),
             vmss: crate::vmss_ui::VmssUi::default(),
             dr: crate::dr_ui::DrUi::default(),
+            org: crate::org_ui::OrgUi::default(),
+            last_selection: None,
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -666,6 +693,12 @@ impl XenAdminApp {
 
     fn status_bar(&self, ui: &mut Ui, state: &AppState) {
         let s = strings();
+        if let Some(hint) = &self.org.drop_hint
+            && ui.ctx().dragged_id().is_some()
+        {
+            ui.label(hint);
+            return;
+        }
         ui.horizontal_wrapped(|ui| {
             if state.connections.is_empty() {
                 ui.label(s.status_disconnected);
@@ -705,6 +738,12 @@ impl XenAdminApp {
     fn tree(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
         let t = tab_strings();
+        Panel::bottom("nav-buttons").show(ui, |ui| {
+            if self.org.nav_buttons(ui, state) {
+                self.selection = None;
+                self.org.imported = None;
+            }
+        });
         ui.add_space(4.0);
         ui.strong(s.tree_heading);
         ui.horizontal(|ui| {
@@ -735,6 +774,20 @@ impl XenAdminApp {
             .collect();
         if state.connections.is_empty() && saved.is_empty() {
             ui.label(RichText::new(s.tree_empty).weak());
+            return;
+        }
+        if self.org.mode != crate::org_ui::NavMode::Infrastructure {
+            let filter = self.tree_filter.clone();
+            ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                self.org.tree(
+                    ui,
+                    state,
+                    &mut self.selection,
+                    &filter,
+                    &mut self.ops,
+                    &self.backend,
+                );
+            });
             return;
         }
         let options = state.settings.preferences.tree_options(&self.tree_filter);
@@ -852,6 +905,7 @@ impl XenAdminApp {
                 ui.add_space(ui.spacing().indent);
                 icons::host_state(ui, icon);
                 let response = self.tree_label(ui, selection, &host.name);
+                self.host_drop(ui, &response, state, conn, &host.host_ref);
                 self.host_context_menu(&response, conn, &host.host_ref);
             });
             return;
@@ -864,6 +918,7 @@ impl XenAdminApp {
         node.show_header(ui, |ui| {
             icons::host_state(ui, icon);
             let response = self.tree_label(ui, selection, &host.name);
+            self.host_drop(ui, &response, state, conn, &host.host_ref);
             self.host_context_menu(&response, conn, &host.host_ref);
         })
         .body(|ui| {
@@ -911,6 +966,7 @@ impl XenAdminApp {
         node.show_header(ui, |ui| {
             icons::vm_state(ui, vm.icon);
             let response = self.tree_label(ui, Selection::Vm(conn.id, vm.vm_ref.clone()), &vm.name);
+            self.vm_drag(ui, &response, state, conn, vm);
             self.vm_context_menu(&response, conn, vm);
         })
         .body(|ui| {
@@ -1057,14 +1113,59 @@ impl XenAdminApp {
         response
     }
 
-    fn vm_row(&mut self, ui: &mut Ui, _state: &AppState, conn: &ConnectionView, vm: &TreeVm) {
+    fn vm_row(&mut self, ui: &mut Ui, state: &AppState, conn: &ConnectionView, vm: &TreeVm) {
         ui.horizontal(|ui| {
             // Leaves line up with the labels of collapsible siblings.
             ui.add_space(ui.spacing().indent);
             icons::vm_state(ui, vm.icon);
             let response = self.tree_label(ui, Selection::Vm(conn.id, vm.vm_ref.clone()), &vm.name);
+            self.vm_drag(ui, &response, state, conn, vm);
             self.vm_context_menu(&response, conn, vm);
         });
+    }
+
+    /// A VM row can be dragged onto a server (`DragDropMigrateVMCommand`).
+    fn vm_drag(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        state: &AppState,
+        conn: &ConnectionView,
+        vm: &TreeVm,
+    ) {
+        let dragged = xen_core::search_eval::ObjKey::Vm(conn.id, vm.vm_ref.clone());
+        crate::org_ui::dnd(
+            ui,
+            response,
+            state,
+            Some(dragged),
+            None,
+            &mut self.ops,
+            &self.backend,
+            &mut self.org.drop_hint,
+        );
+    }
+
+    /// A server row takes VMs dropped on it (live migration in the pool).
+    fn host_drop(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        state: &AppState,
+        conn: &ConnectionView,
+        host: &Ref<Host>,
+    ) {
+        let target = crate::org_ui::DropTarget::Host(conn.id, host.clone());
+        crate::org_ui::dnd(
+            ui,
+            response,
+            state,
+            None,
+            Some(target),
+            &mut self.ops,
+            &self.backend,
+            &mut self.org.drop_hint,
+        );
     }
 
     /// The operations a guest offers now, on its tree row.
@@ -1092,6 +1193,15 @@ impl XenAdminApp {
                     true,
                     &self.backend,
                 );
+                ui.separator();
+                if ui
+                    .button(crate::org_strings::org_strings().properties)
+                    .clicked()
+                {
+                    self.org.vm_properties =
+                        crate::org_ui::VmPropertiesDialog::open(conn, vm.vm_ref.clone());
+                    ui.close();
+                }
             });
         }
     }
@@ -1153,6 +1263,24 @@ impl XenAdminApp {
             (Some(Selection::Sr(_, r)), Some(m)) => m.srs.get(r).map(|x| Subject::Sr(r, x)),
             _ => None,
         };
+        if let Some(sel) = &selection
+            && matches!(
+                sel,
+                Selection::Network(..)
+                    | Selection::Vdi(..)
+                    | Selection::VApp(..)
+                    | Selection::Folder(_)
+                    | Selection::Group(_)
+                    | Selection::ViewRoot(_)
+                    | Selection::SavedSearch(_)
+            )
+        {
+            if let Some(next) = self.org.details(ui, state, sel, &self.backend) {
+                self.tab = Tab::General;
+                self.selection = Some(next);
+            }
+            return;
+        }
         match (&selection, conn, subject) {
             (_, Some(conn), Some(subject)) => self.object_details(ui, state, conn, subject),
             (Some(Selection::Connection(_)), Some(conn), _) => self.connection_details(ui, conn),
@@ -1260,6 +1388,13 @@ impl XenAdminApp {
                 Subject::Vm(r, vm) if model::is_guest(vm) => {
                     let entries = ops_ui::vm_toolbar(conn, r, vm);
                     self.op_buttons(ui, conn, entries);
+                    if ui
+                        .button(crate::org_strings::org_strings().properties)
+                        .clicked()
+                    {
+                        self.org.vm_properties =
+                            crate::org_ui::VmPropertiesDialog::open(conn, r.clone());
+                    }
                     if conn.busy_vms.contains(r) {
                         ui.spinner();
                         ui.label(s.details_busy);
@@ -1321,6 +1456,46 @@ impl XenAdminApp {
                     xen_core::PerfTarget::Host(r) => xen_core::PerfmonObjectRef::Host(r.clone()),
                 };
                 self.perfmon = PerfmonDialog::open(conn, object);
+            }
+            return;
+        }
+        if self.tab == Tab::Search {
+            let w = crate::search_ui::world(state);
+            let object = match subject {
+                Subject::Pool(_) => model
+                    .pool()
+                    .map(|(r, _)| xen_core::search_eval::ObjKey::Pool(conn.id, r.clone())),
+                Subject::Host(r, _) => {
+                    Some(xen_core::search_eval::ObjKey::Host(conn.id, r.clone()))
+                }
+                _ => None,
+            };
+            let (base, title) = xen_core::search_eval::search_for(&w, object.as_ref());
+            let title = match title {
+                xen_core::search_eval::SearchTitle::ObjectOverview(n) => fill(
+                    crate::org_strings::org_strings().search_object_overview,
+                    &[("name", &n)],
+                ),
+                xen_core::search_eval::SearchTitle::Folder(n) => n,
+                xen_core::search_eval::SearchTitle::Overview => {
+                    crate::org_strings::org_strings().search_overview.to_owned()
+                }
+            };
+            let (base, title) = match self.org.imported.clone() {
+                Some(imported) => {
+                    let name = imported.name.clone();
+                    (imported, name)
+                }
+                None => (base, title),
+            };
+            drop(w);
+            let action = self
+                .org
+                .search
+                .show(ui, state, &self.backend, &base, &title);
+            if let Some(next) = self.org.on_search_action(action) {
+                self.tab = Tab::General;
+                self.selection = Some(next);
             }
             return;
         }
@@ -1423,16 +1598,36 @@ impl XenAdminApp {
             .auto_shrink(false)
             .show(ui, |ui| match (self.tab, subject) {
                 (Tab::General, Subject::Vm(_, vm)) => {
-                    tabs::render::sections(ui, kind, &tabs::general::vm_sections(ctx, vm));
+                    let secs = tabs::general::with_custom_fields(
+                        tabs::general::vm_sections(ctx, vm),
+                        model,
+                        &vm.other_config,
+                    );
+                    tabs::render::sections(ui, kind, &secs);
                 }
                 (Tab::General, Subject::Host(r, host)) => {
-                    tabs::render::sections(ui, kind, &tabs::general::host_sections(ctx, r, host));
+                    let secs = tabs::general::with_custom_fields(
+                        tabs::general::host_sections(ctx, r, host),
+                        model,
+                        &host.other_config,
+                    );
+                    tabs::render::sections(ui, kind, &secs);
                 }
                 (Tab::General, Subject::Pool(pool)) => {
-                    tabs::render::sections(ui, kind, &tabs::general::pool_sections(ctx, pool));
+                    let secs = tabs::general::with_custom_fields(
+                        tabs::general::pool_sections(ctx, pool),
+                        model,
+                        &pool.other_config,
+                    );
+                    tabs::render::sections(ui, kind, &secs);
                 }
                 (Tab::General, Subject::Sr(_, sr)) => {
-                    tabs::render::sections(ui, kind, &tabs::general::sr_sections(ctx, sr));
+                    let secs = tabs::general::with_custom_fields(
+                        tabs::general::sr_sections(ctx, sr),
+                        model,
+                        &sr.other_config,
+                    );
+                    tabs::render::sections(ui, kind, &secs);
                 }
                 (Tab::Memory, _) => {
                     tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject));
@@ -1797,6 +1992,10 @@ impl eframe::App for XenAdminApp {
             self.apply_actions(&state);
             return;
         }
+        if self.selection != self.last_selection {
+            self.org.imported = None;
+            self.last_selection = self.selection.clone();
+        }
         Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &state));
         Panel::bottom("status").show(ui, |ui| self.status_bar(ui, &state));
         let mut moving = false;
@@ -1895,6 +2094,15 @@ impl eframe::App for XenAdminApp {
         }
         self.xva.windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.xva.errors);
+        if let Some(d) = self
+            .pool
+            .take_org_dialog()
+            .or_else(|| self.storage.take_org_dialog())
+        {
+            self.org.dialog = Some(d);
+        }
+        self.org.windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.org.search.end_frame();
         if std::mem::take(&mut self.pool.open_connect) {
             self.open_connect_dialog(&state, None);
         }
@@ -2101,6 +2309,9 @@ mod tests {
     // (`app/tests/vmss_dr_real.rs`).
     mod vmss_dr;
     mod vmss_dr_real;
+    // F13: views, search, folders, tags, custom fields, drag and drop.
+    mod org;
+    mod org_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

@@ -33,7 +33,10 @@
 //!   superuser or a pool administrator, `NRPEEditPage`): read with the
 //!   `nrpe` plugin when the dialog opens.
 //!
-//! Left out: Custom Fields (later), GPU (no GPU support yet) and the
+//! * **Custom Fields** (`CustomFieldsDisplayPage`, F13): the pool's
+//!   custom fields and this object's values (see [`crate::org`]).
+//!
+//! Left out: GPU (no GPU support yet) and the
 //! Security page (only for servers older than XCP-ng 8.2).
 
 use std::collections::BTreeMap;
@@ -56,6 +59,8 @@ pub enum PropertiesTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
     General,
+    /// Custom Fields (`CustomFieldsDisplayPage`, F13).
+    CustomFields,
     Alerts,
     EmailOptions,
     Multipath,
@@ -87,7 +92,7 @@ pub fn pages(
     let is_pool = !is_host;
     let pool_or_standalone = is_pool_or_standalone(model, target);
     let coordinator = model.coordinator().map(|h| &**h);
-    let mut out = vec![Page::General];
+    let mut out = vec![Page::General, Page::CustomFields];
     if is_host {
         out.push(Page::Alerts);
     }

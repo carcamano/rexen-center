@@ -47,6 +47,12 @@
 //! * [`dr`]: disaster recovery (Configure, the wizard's lists, pre-checks
 //!   and report); [`dr_run`]: replication, `DR_task`, metadata sessions
 //!   and recovery, call for call as the original's actions.
+//! * [`org`]: folders, tags and custom fields in XenCenter's storage
+//!   format and the original's actions as call plans; [`org_run`]: how
+//!   they run. [`search`]: searches and their `.xensearch` XML;
+//!   [`search_eval`]: properties, filters, grouping, the navigation views
+//!   and the built-in searches; [`search_metrics`]: the Search tab's
+//!   performance figures.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -72,6 +78,8 @@ pub mod network;
 pub mod network_run;
 pub mod objects;
 pub mod operations;
+pub mod org;
+pub mod org_run;
 pub mod ova;
 pub mod ovf;
 pub mod ovf_package;
@@ -85,6 +93,9 @@ pub mod properties;
 pub mod provision_run;
 pub mod provisioning;
 pub mod rbac;
+pub mod search;
+pub mod search_eval;
+pub mod search_metrics;
 pub mod secrets;
 pub mod settings;
 pub mod storage;

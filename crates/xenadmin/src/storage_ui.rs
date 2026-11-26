@@ -133,6 +133,7 @@ pub fn repair_rows(conn: &ConnectionView, sr: &SrRecord) -> Vec<RepairRow> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertiesTab {
     General,
+    CustomFields,
     Alerts,
     ReadCaching,
 }
@@ -149,6 +150,9 @@ pub struct PropertiesDialog {
     pub read_caching: Option<bool>,
     original: (String, String, Vec<String>, Option<bool>),
     pub perfmon: Option<PerfmonDialog>,
+    /// The General tab's folder and the Custom Fields tab (F13).
+    pub org: crate::org_ui::OrgEditor,
+    pub org_dialog: Option<crate::org_ui::OrgDialog>,
 }
 
 impl PropertiesDialog {
@@ -169,6 +173,13 @@ impl PropertiesDialog {
                 read_caching,
             ),
             perfmon: PerfmonDialog::open(conn, PerfmonObjectRef::Sr(sr.clone())),
+            org: {
+                let mut e =
+                    crate::org_ui::OrgEditor::new(conn, xen_core::org::OrgObject::Sr(sr.clone()));
+                e.edit_tags = false;
+                e
+            },
+            org_dialog: None,
             sr,
         })
     }
@@ -222,6 +233,25 @@ impl Default for StorageUi {
             dialog: None,
             next_id: 1 << 40,
             errors: Vec::new(),
+        }
+    }
+}
+
+impl StorageUi {
+    /// The open SR Properties dialog (tests).
+    #[cfg(test)]
+    pub fn sr_properties_mut(&mut self) -> Option<&mut PropertiesDialog> {
+        match self.dialog.as_mut() {
+            Some((_, Dialog::Properties(d))) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// A custom field dialog the SR Properties dialog asked for.
+    pub fn take_org_dialog(&mut self) -> Option<crate::org_ui::OrgDialog> {
+        match self.dialog.as_mut() {
+            Some((_, Dialog::Properties(d))) => d.org_dialog.take(),
+            _ => None,
         }
     }
 }
@@ -452,7 +482,13 @@ fn properties_window(
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(120.0);
-                let mut tabs = vec![(PropertiesTab::General, s.tab_general)];
+                let mut tabs = vec![
+                    (PropertiesTab::General, s.tab_general),
+                    (
+                        PropertiesTab::CustomFields,
+                        crate::org_strings::org_strings().page_custom_fields,
+                    ),
+                ];
                 if d.perfmon.is_some() {
                     tabs.push((PropertiesTab::Alerts, s.tab_alerts));
                 }
@@ -491,7 +527,11 @@ fn properties_window(
                             )
                             .labelled_by(label.id);
                             ui.end_row();
+                            d.org.general_rows(ui, conn);
                         });
+                    }
+                    PropertiesTab::CustomFields => {
+                        d.org.custom_fields_page(ui, conn, &mut d.org_dialog);
                     }
                     PropertiesTab::Alerts => {
                         if let Some(p) = d.perfmon.as_mut() {
@@ -519,7 +559,10 @@ fn properties_window(
         ui.separator();
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(!d.name.trim().is_empty(), Button::new(s.ok))
+                .add_enabled(
+                    !d.name.trim().is_empty() && d.org.valid(),
+                    Button::new(s.ok),
+                )
                 .clicked()
             {
                 save = true;
@@ -544,6 +587,9 @@ fn properties_window(
         }
         if let Some(request) = d.perfmon.as_ref().and_then(PerfmonDialog::request) {
             ops.dispatch(conn, request, backend);
+        }
+        for request in d.org.requests(conn) {
+            ops.request(conn, request, backend);
         }
     }
     close

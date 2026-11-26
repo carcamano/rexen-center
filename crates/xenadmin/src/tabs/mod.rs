@@ -46,6 +46,9 @@ pub enum Tab {
     /// The users of a pool or standalone server (`AdPage`), drawn by
     /// [`crate::ad_ui`].
     Users,
+    /// The Search tab of a pool or server (`SearchPage`), drawn by
+    /// [`crate::search_ui`].
+    Search,
 }
 
 impl Tab {
@@ -62,6 +65,7 @@ impl Tab {
             Self::Snapshots => crate::prov_strings::prov_strings().tab_snapshots,
             Self::Ha => crate::ha_strings::ha_strings().tab_ha,
             Self::Users => crate::ha_strings::ha_strings().tab_users,
+            Self::Search => crate::org_strings::org_strings().tab_search,
         }
     }
 }
@@ -99,6 +103,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             Tab::Networking,
             Tab::Ha,
             Tab::Users,
+            Tab::Search,
         ],
         Subject::Host(_, host) if objects::host_is_live(model, host) => {
             let mut tabs = vec![
@@ -113,6 +118,7 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
             if xen_core::pool::visible_pool(model).is_none() {
                 tabs.push(Tab::Users);
             }
+            tabs.push(Tab::Search);
             tabs
         }
         Subject::Host(..) => vec![Tab::General],
@@ -161,6 +167,7 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Snapshots, _) => crate::prov_strings::prov_strings().hdr_snapshots,
         (Tab::Ha, _) => crate::ha_strings::ha_strings().high_availability,
         (Tab::Users, _) => crate::ha_strings::ha_strings().ad_tab_title,
+        (Tab::Search, _) => crate::org_strings::org_strings().tab_search,
     }
 }
 
@@ -334,19 +341,26 @@ mod tests {
                 Tab::PhysicalStorage,
                 Tab::Networking,
                 Tab::Ha,
-                Tab::Users
+                Tab::Users,
+                Tab::Search
             ]
         );
         // A pool member has no Users tab (the pool has it).
         let hr = Ref::new("OpaqueRef:host-0001");
         let host_tabs = tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr]));
-        assert_eq!(host_tabs.len(), 7);
-        assert_eq!(host_tabs[5..], [Tab::Console, Tab::Performance]);
+        assert_eq!(host_tabs.len(), 8);
+        assert_eq!(
+            host_tabs[5..],
+            [Tab::Console, Tab::Performance, Tab::Search]
+        );
         // A live standalone server has one.
         let lab = ConnectionModel::from_database(&xapi_mock::lab_records("t", 1));
         let lr = Ref::new("OpaqueRef:host-0001-t");
         assert_eq!(
-            tabs_for(&lab, Subject::Host(&lr, &lab.hosts[&lr])).last(),
+            tabs_for(&lab, Subject::Host(&lr, &lab.hosts[&lr]))
+                .iter()
+                .rev()
+                .nth(1),
             Some(&Tab::Users)
         );
         let vr = Ref::new("OpaqueRef:vm-web");

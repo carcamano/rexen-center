@@ -1798,6 +1798,13 @@ pub(crate) fn window(title: String) -> egui::Window<'static> {
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
 }
 
+impl PoolUi {
+    /// A custom field dialog the Properties dialog asked for.
+    pub fn take_org_dialog(&mut self) -> Option<crate::org_ui::OrgDialog> {
+        self.properties.as_mut().and_then(|p| p.org_dialog.take())
+    }
+}
+
 /// The open Properties dialog (tests).
 #[cfg(test)]
 impl PoolUi {

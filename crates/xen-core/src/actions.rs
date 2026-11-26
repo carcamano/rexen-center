@@ -549,6 +549,9 @@ pub enum ActionRequest {
     DrDestroyVApps {
         vapps: Vec<Ref<VmAppliance>>,
     },
+    /// Folders, tags, custom fields and saved searches (F13, run by
+    /// [`crate::org_run`]).
+    Org(Box<crate::org::OrgRequest>),
 }
 
 impl ActionRequest {
@@ -584,6 +587,12 @@ impl ActionRequest {
                 | Self::RemoveFromPolicy { .. }
                 | Self::SetPolicy { .. }
         )
+    }
+
+    /// A folder, tag, custom field or saved search operation (run by
+    /// [`crate::org_run`]).
+    pub fn is_org(&self) -> bool {
+        matches!(self, Self::Org(_))
     }
 
     /// A disaster recovery operation (run by [`crate::dr_run`]).
@@ -1004,6 +1013,7 @@ impl ActionRequest {
         }
         let own: &[&str] = match self {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
+            Self::Org(request) => return request.rbac_methods(),
             // `VMCrossPoolMigrateAction.StaticRBACDependencies` on the
             // source (`host.migrate_receive` is the destination's).
             Self::MigrateSend(_) => &["vm.migrate_send", "vm.assert_can_migrate", "task.destroy"],

@@ -332,6 +332,7 @@ fn properties_pages_check_and_save() {
         pages,
         vec![
             Page::General,
+            Page::CustomFields,
             Page::Alerts,
             Page::EmailOptions,
             Page::Multipath,

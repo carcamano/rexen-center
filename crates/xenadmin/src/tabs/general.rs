@@ -1,7 +1,8 @@
 //! The General tab (`GeneralTabPage.cs`): sections of label/value rows.
 //!
-//! Sections appear in the original's top-to-bottom order. Left out on
-//! purpose: Custom Fields (XenCenter's XML in `gui_config`), Read Caching,
+//! Sections appear in the original's top-to-bottom order; the Custom
+//! Fields section (F13) is added by [`with_custom_fields`]. Left out on
+//! purpose: Read Caching,
 //! Docker, licensing and update sections (empty or Citrix-only in 25.04).
 
 use xapi::{
@@ -98,6 +99,33 @@ pub fn host_version(host: &HostRecord) -> String {
         .map(String::as_str)
         .unwrap_or("");
     format!("{brand} {version}").trim().to_owned()
+}
+
+/// `GenerateCustomFieldsBox`: the custom fields with a value, after the
+/// General (and Certificates) section.
+pub fn with_custom_fields(
+    mut sections: Vec<Section>,
+    model: &xen_core::ConnectionModel,
+    other_config: &std::collections::HashMap<String, String>,
+) -> Vec<Section> {
+    let values = xen_core::org::values(&xen_core::org::definitions(model), other_config);
+    if values.is_empty() {
+        return sections;
+    }
+    let section = Section {
+        title: crate::org_strings::org_strings().page_custom_fields,
+        rows: values
+            .into_iter()
+            .map(|(d, v)| Row::new(d.name, v.display()))
+            .collect(),
+    };
+    let t = tab_strings();
+    let at = sections
+        .iter()
+        .position(|s| s.title != t.sec_general && s.title != t.sec_certificates)
+        .unwrap_or(sections.len());
+    sections.insert(at, section);
+    sections
 }
 
 // ---- VM --------------------------------------------------------------------

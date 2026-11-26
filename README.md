@@ -8,13 +8,14 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F12b (scheduled snapshots and disaster recovery) on top
-of F1–F12a (base, connection and model, detail tabs, VM and host
-operations, VNC console, performance graphs and alerts, VM creation,
+**Status: phase F13 (search, navigation views, folders, tags and custom
+fields) on top of F1–F12b (base, connection and model, detail tabs, VM and
+host operations, VNC console, performance graphs and alerts, VM creation,
 templates, snapshots and disks, storage repositories, networking, pools
 and pool and server properties, high availability, Active Directory and
 RBAC, XVA export and import, OVF/OVA packages and disk images, cross-pool
-migration and copy, Move VM, vApps).** What works:
+migration and copy, Move VM, vApps, scheduled snapshots and disaster
+recovery).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -363,6 +364,37 @@ migration and copy, Move VM, vApps).** What works:
   start; the clean-up (the `DR_task`s, a test failover's VMs, vApps and
   SRs, what the fixes changed) and the summary report. Cancelling cleans
   up too;
+- **navigation views** (the buttons under the tree, as the original's
+  navigation pane): Infrastructure, Objects (by type), Organization Views
+  (Objects by Tag, by Folder, by Custom Field, vApps) and Saved Searches
+  (the seven built-in searches and those saved on the pools), each with
+  its tree; the tree's search box narrows them. Networks, virtual disks,
+  vApps and folders can be selected there; a folder, a group or a view
+  shows the Search tab;
+- the **Search tab** (pools and servers, and the views): what to search
+  for, the filter tree (all of / any of / none of, name, description,
+  UUID, tags, pool, server, memory, address, start time, power state,
+  tools, OS, HA restart priority, read caching, Windows Update, size,
+  shared, HA, partially upgraded, in a pool or standalone, network,
+  vApp, parent or ancestor folder, not in a folder, custom fields), the
+  grouping levels, and the results grid with its columns (Name, CPU Usage,
+  Used Memory, Disks, Network, Address, HA, Uptime, one per custom field;
+  the figures read from `rrd_updates` every 30 seconds), sorting,
+  collapsible groups and a column chooser; Save... (on a pool's
+  `gui_config`, as XenCenter), Export... and Import... of `.xensearch`
+  files. The original's search XML is read and written for the filter
+  and grouping classes its builder makes; others are kept but not edited;
+- **folders, tags and custom fields**, stored exactly as XenCenter stores
+  them (`other_config["folder"]`, the pool's `EMPTY_FOLDERS`, the `tags`
+  field, the pool's `gui_config["XenCenter.CustomFields"]` XML and
+  `other_config["XenCenter.CustomFields.<name>"]`): the General tab's
+  Folder, Tags and Custom Fields rows; the Folder row and the Custom
+  Fields page of the pool, server and SR Properties dialogs; a VM
+  Properties dialog (General with folder and tags, Custom Fields); New
+  Folder, Rename and Delete Folder, Remove from folder, Rename and Delete
+  Tag, Untag in the views' menus; **drag and drop** of objects into a
+  folder, onto a tag, and of a running VM onto another server of its pool
+  (live migration, with the usual question);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -373,10 +405,9 @@ migration and copy, Move VM, vApps).** What works:
 The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
-(VM properties, so also a VM's own HA page) and custom graphs
-(New/Edit Graph) come in later phases (RDP is not embedded); the vApps
-navigation mode comes with
-the other navigation modes (F13). The OVF wizards leave out signing a package (it
+(the VM Properties pages beyond General and Custom Fields, so also a VM's
+own HA page) and custom graphs (New/Edit Graph) come in later phases (RDP
+is not embedded). The OVF wizards leave out signing a package (it
 needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
 LUN-per-VDI page, URL sources and disk conversion (no external
 converter). The New VM wizard leaves out the pages the
@@ -665,6 +696,18 @@ end to end:
   Disable, Properties and Delete, Configure, and the Disaster Recovery
   wizard's test failover through an iSCSI scan to its report, and a
   cancelled wizard cleaning up;
+- folders, tags, custom fields and searches against the mock
+  (`xapi_mock::org`: `add_tags` / `remove_tags`, the pool's
+  `add_to_gui_config` / `remove_from_gui_config`): the exact keys,
+  values and calls XenCenter makes (an emptied folder kept in
+  `EMPTY_FOLDERS`, New Folder, Rename, Delete, tags added and removed one
+  by one, custom field definitions as XML and values with dates in UTC),
+  saved searches on the pool, every view and the built-in searches over
+  the live cache, the `.xensearch` format, and the Search tab's figures;
+  in the window: every navigation view, the Search tab's filters,
+  grouping, sorting, Save, Export and Import, the Properties dialogs and
+  tree menus, and drag and drop into a folder, onto a tag and onto a
+  server;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -808,6 +851,16 @@ only looked at: Configure and the wizard (up to its Storage page) are
 opened and cancelled; no replication, `DR_task`, recovery or SR change is
 made. `f12b_real_run_on_the_mock` rehearses it and checks exactly that.
 
+Search, views, folders and tags on a real host (`app/tests/org_real.rs`,
+same variables): `real_f13_views_search_and_test_vm_folder_tags` builds
+every view and runs every built-in search and the Search tab read only,
+then makes the disposable VM `xenadmin-rs-test-f13`, gives it the folder
+`/xenadmin-rs-test-f13` and the tag `xenadmin-rs-test-f13` through its
+Properties dialog (checked to write only the VM), clears the tag there
+and the folder with the VM's own call (the product's Remove from folder
+would also list the emptied folder on the pool), then deletes the VM. The
+pool record must not change. `f13_real_run_on_the_mock` rehearses it.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -843,7 +896,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

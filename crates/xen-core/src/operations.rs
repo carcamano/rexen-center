@@ -100,6 +100,47 @@ pub enum OperationKind {
     Vmss(VmssKind),
     /// A disaster recovery operation (F12b).
     Dr(DrKind),
+    /// A folder, tag, custom field or saved search operation (F13).
+    Org(OrgKind),
+}
+
+/// The history entry of a folder, tag, custom field or saved search
+/// operation (F13), with the names its title shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrgKind {
+    /// `MOVE_OBJECT_TO_FOLDER` / `MOVE_OBJECTS_TO_FOLDER`.
+    MoveToFolder {
+        object: Option<String>,
+        folder: String,
+    },
+    /// `DELETING_FOLDER` / `DELETING_FOLDERS` (also "Remove from folder").
+    DeleteFromFolders { count: usize },
+    /// `RENAMING_FOLDER`.
+    RenameFolder { folder: String, name: String },
+    /// `CREATE_NEW_FOLDER` / `CREATE_NEW_FOLDERS`.
+    NewFolders { paths: Vec<String> },
+    /// `ADD_TAG`.
+    AddTag { tag: String },
+    /// `DELETE_TAG` (untag).
+    RemoveTag { tag: String },
+    /// `RENAME_TAG`.
+    RenameTag { old: String, new: String },
+    /// `DELETE_TAG`, everywhere.
+    DeleteTag { tag: String },
+    /// `ACTION_SAVE_FOLDER_TAGS`.
+    FolderAndTags { object: String },
+    /// `ADD_CUSTOM_FIELD`.
+    AddCustomField { name: String },
+    /// `DELETE_CUSTOM_FIELD`.
+    RemoveCustomField { name: String },
+    /// `ACTION_SAVE_CUSTOM_FIELDS`.
+    SaveCustomFields { object: String },
+    /// Saving a search on the pool.
+    SaveSearch { name: String },
+    /// Deleting a saved search.
+    DeleteSearch { name: String },
+    /// The VM Properties dialog's name and description (`VM` properties).
+    VmNames { name: String },
 }
 
 /// The history entry of a snapshot schedule operation (F12b), with the
@@ -739,6 +780,7 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         request if request.is_vapp() => OperationKind::VApp(vapp_kind(model, request)),
         request if request.is_vmss() => OperationKind::Vmss(vmss_kind(model, request)),
         request if request.is_dr() => OperationKind::Dr(dr_kind(model, request)),
+        ActionRequest::Org(r) => OperationKind::Org(org_kind(model, r)),
         request => OperationKind::Provision(provision_kind(model, request)),
     }
 }
@@ -839,6 +881,60 @@ fn vapp_kind(model: &ConnectionModel, request: &ActionRequest) -> VAppKind {
             name: app_name(vapp),
         },
         _ => unreachable!("not a vApp request"),
+    }
+}
+
+/// The history entry of an F13 operation.
+fn org_kind(model: &ConnectionModel, request: &crate::org::OrgRequest) -> OrgKind {
+    use crate::org::{FolderItem, OrgRequest};
+    let name = |o: &crate::org::OrgObject| o.name(model).unwrap_or_default().to_owned();
+    match request {
+        OrgRequest::MoveToFolder { items, folder } => OrgKind::MoveToFolder {
+            object: match items.as_slice() {
+                [FolderItem::Object(o)] => Some(name(o)),
+                [FolderItem::Folder(f)] => Some(crate::org::folder_name(f)),
+                _ => None,
+            },
+            folder: crate::org::folder_name(folder),
+        },
+        OrgRequest::DeleteFromFolders { items } => {
+            OrgKind::DeleteFromFolders { count: items.len() }
+        }
+        OrgRequest::RenameFolder { folder, name } => OrgKind::RenameFolder {
+            folder: crate::org::folder_name(folder),
+            name: name.clone(),
+        },
+        OrgRequest::NewFolders { paths } => OrgKind::NewFolders {
+            paths: paths.clone(),
+        },
+        OrgRequest::AddTag { tag, .. } => OrgKind::AddTag { tag: tag.clone() },
+        OrgRequest::RemoveTag { tag, .. } => OrgKind::RemoveTag { tag: tag.clone() },
+        OrgRequest::RenameTag { old, new } => OrgKind::RenameTag {
+            old: old.clone(),
+            new: new.clone(),
+        },
+        OrgRequest::DeleteTag { tag } => OrgKind::DeleteTag { tag: tag.clone() },
+        OrgRequest::FolderAndTags { object, .. } => OrgKind::FolderAndTags {
+            object: name(object),
+        },
+        OrgRequest::AddCustomField(d) => OrgKind::AddCustomField {
+            name: d.name.clone(),
+        },
+        OrgRequest::RemoveCustomField(d) => OrgKind::RemoveCustomField {
+            name: d.name.clone(),
+        },
+        OrgRequest::SaveCustomFields { object, .. } => OrgKind::SaveCustomFields {
+            object: name(object),
+        },
+        OrgRequest::SaveSearch { name, .. } => OrgKind::SaveSearch { name: name.clone() },
+        OrgRequest::DeleteSearch { name, .. } => OrgKind::DeleteSearch { name: name.clone() },
+        OrgRequest::VmNames { vm, .. } => OrgKind::VmNames {
+            name: model
+                .vms
+                .get(vm)
+                .map(|v| v.name_label.clone())
+                .unwrap_or_default(),
+        },
     }
 }
 
@@ -1304,7 +1400,8 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
         | ActionRequest::DrRecover { .. }
         | ActionRequest::DrStart { .. }
         | ActionRequest::DrDestroyVms { .. }
-        | ActionRequest::DrDestroyVApps { .. } => None,
+        | ActionRequest::DrDestroyVApps { .. }
+        | ActionRequest::Org(_) => None,
         ActionRequest::ImportXva { .. }
         | ActionRequest::ExportOvf(_)
         | ActionRequest::ImportOvf(_) => None,
@@ -1464,6 +1561,9 @@ pub(crate) fn start_action_with(
             }
             request if request.is_dr() => {
                 crate::dr_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_org() => {
+                crate::org_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };

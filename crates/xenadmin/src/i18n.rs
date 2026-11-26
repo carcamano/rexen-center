@@ -640,6 +640,7 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         OperationKind::VApp(kind) => crate::vapp_strings::vapp_title(kind),
         OperationKind::Vmss(kind) => crate::vmss_strings::vmss_title(kind),
         OperationKind::Dr(kind) => crate::dr_strings::dr_title(kind),
+        OperationKind::Org(kind) => crate::org_strings::org_title(kind),
     }
 }
 

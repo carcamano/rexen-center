@@ -79,6 +79,7 @@ pub mod ha;
 pub mod migrate;
 pub mod networking;
 pub mod ops;
+pub mod org;
 pub mod pool;
 pub mod provisioning;
 pub mod raw_vdi;
@@ -1092,7 +1093,12 @@ impl Db {
         });
     }
 
-    fn modify(&mut self, class: &str, opaque_ref: &str, f: impl FnOnce(&mut Map<String, Value>)) {
+    pub(crate) fn modify(
+        &mut self,
+        class: &str,
+        opaque_ref: &str,
+        f: impl FnOnce(&mut Map<String, Value>),
+    ) {
         let key = (class.to_owned(), opaque_ref.to_owned());
         let Some(Value::Object(rec)) = self.objects.get_mut(&key) else {
             return;
@@ -1707,6 +1713,7 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 api_error("HANDLE_INVALID", &["host", host])
             }
         }
+        _ if org::handles(sync_class, sync_call) => db.org_call(sync_class, sync_call, params),
         _ if sync_call == "add_to_other_config" || sync_call == "remove_from_other_config" => {
             db.other_config(&sync_class.to_lowercase(), sync_call, params)
         }

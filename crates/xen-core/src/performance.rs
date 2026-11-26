@@ -169,6 +169,21 @@ impl PerfEnv {
         let view = state.connection(self.connection)?;
         xapi::Endpoint::parse(&view.server).ok()
     }
+
+    /// The connected server's endpoint (for [`crate::search_metrics`]).
+    pub(crate) fn endpoint_pub(&self) -> Option<xapi::Endpoint> {
+        self.endpoint()
+    }
+
+    /// An RRD client for `host` at `endpoint`.
+    pub(crate) fn client(
+        &self,
+        model: &ConnectionModel,
+        host: &Ref<Host>,
+        endpoint: &xapi::Endpoint,
+    ) -> xen_rrd::Result<RrdClient> {
+        client_for(self, model, host, endpoint)
+    }
 }
 
 /// What to ask for: the object's UUID, the host to ask, whether it runs.

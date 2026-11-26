@@ -474,6 +474,7 @@ async fn server_and_pool_properties_are_saved() {
         properties::pages(m, &host_target, rbac.as_deref()),
         vec![
             Page::General,
+            Page::CustomFields,
             Page::Alerts,
             Page::EmailOptions,
             Page::Multipath,
@@ -489,6 +490,7 @@ async fn server_and_pool_properties_are_saved() {
         properties::pages(m, &pool_target, rbac.as_deref()),
         vec![
             Page::General,
+            Page::CustomFields,
             Page::EmailOptions,
             Page::PowerOn,
             Page::NetworkOptions,

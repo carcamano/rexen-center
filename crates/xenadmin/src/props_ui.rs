@@ -99,6 +99,10 @@ pub struct PropertiesDialog {
     pub nrpe: NrpeConfig,
     /// Why OK did not save (the page's message).
     pub problem: Option<String>,
+    /// The General page's folder and the Custom Fields page (F13).
+    pub org: crate::org_ui::OrgEditor,
+    /// A custom field dialog to open (the window shows it).
+    pub org_dialog: Option<crate::org_ui::OrgDialog>,
 }
 
 /// The height of the page list and of the page (both scroll).
@@ -188,6 +192,16 @@ impl PropertiesDialog {
             nrpe_state: NrpeState::Failed,
             nrpe: NrpeConfig::default(),
             problem: None,
+            org: {
+                let object = match &target {
+                    PropertiesTarget::Pool(p) => xen_core::org::OrgObject::Pool(p.clone()),
+                    PropertiesTarget::Host(h) => xen_core::org::OrgObject::Host(h.clone()),
+                };
+                let mut e = crate::org_ui::OrgEditor::new(conn, object);
+                e.edit_tags = false;
+                e
+            },
+            org_dialog: None,
             target,
             pages,
         };
@@ -316,6 +330,7 @@ impl PropertiesDialog {
         let s = pool_strings();
         match page {
             Page::General => s.page_general,
+            Page::CustomFields => crate::org_strings::org_strings().page_custom_fields,
             Page::Alerts => s.page_alerts,
             Page::EmailOptions => s.page_email,
             Page::Multipath => s.page_multipath,
@@ -336,6 +351,7 @@ impl PropertiesDialog {
         let on_off = |b: bool| if b { s.enabled } else { s.disabled }.to_owned();
         match page {
             Page::General => self.name.clone(),
+            Page::CustomFields => self.org.custom_fields_subtext(),
             Page::Alerts => self
                 .perfmon
                 .as_ref()
@@ -408,6 +424,14 @@ impl PropertiesDialog {
             {
                 return Some((Page::General, s.invalid_iqn.to_owned()));
             }
+        }
+        if !self.org.valid() {
+            return Some((
+                Page::CustomFields,
+                crate::org_strings::org_strings()
+                    .field_date_invalid
+                    .to_owned(),
+            ));
         }
         if let Some(p) = &self.perfmon
             && !p.form.is_valid()
@@ -611,6 +635,9 @@ impl PropertiesDialog {
                     backend,
                 );
             }
+            for request in self.org.requests(&conn) {
+                ops.request(&conn, request, backend);
+            }
             return true;
         }
         false
@@ -655,7 +682,11 @@ impl PropertiesDialog {
                             .hint_text(s.general_tags_hint),
                     );
                     ui.end_row();
+                    self.org.general_rows(ui, conn);
                 });
+            }
+            Page::CustomFields => {
+                self.org.custom_fields_page(ui, conn, &mut self.org_dialog);
             }
             Page::Alerts => {
                 if let Some(p) = self.perfmon.as_mut() {

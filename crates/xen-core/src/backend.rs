@@ -168,6 +168,13 @@ pub enum Command {
         target: crate::performance::PerfTarget,
         link: crate::performance::PerfLink,
     },
+    /// Keep the Search tab's performance figures of a connection up to
+    /// date until the [`MetricsHandle`](crate::search_metrics::MetricsHandle)
+    /// paired with `link` is dropped.
+    WatchSearchMetrics {
+        connection: ConnectionId,
+        link: crate::search_metrics::MetricsLink,
+    },
     /// New Pool (`CreatePoolAction`): the server of `coordinator` becomes
     /// the coordinator of pool `name`, and the servers of `members` join it.
     NewPool {
@@ -1125,6 +1132,17 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                     tokio::spawn(crate::performance::run(env, target, link));
                 }
                 None => tracing::debug!("performance ignored: no such connection"),
+            },
+            Command::WatchSearchMetrics { connection, link } => match active.get(&connection) {
+                Some(c) => {
+                    let env = crate::performance::PerfEnv {
+                        shared: shared.clone(),
+                        connection,
+                        session: c.session.clone(),
+                    };
+                    tokio::spawn(crate::search_metrics::run(env, link));
+                }
+                None => tracing::debug!("search metrics ignored: no such connection"),
             },
             Command::NewPool {
                 coordinator,
