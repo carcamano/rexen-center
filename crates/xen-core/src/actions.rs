@@ -429,12 +429,23 @@ pub enum ActionRequest {
         sr: Ref<Sr>,
         affinity: Option<Ref<Host>>,
     },
+    /// The Export wizard's OVF/OVA export (`ExportApplianceAction`, F11b).
+    ExportOvf(Box<crate::ovf_run::OvfExport>),
+    /// The Import wizard's OVF/OVA or disk image import
+    /// (`ImportApplianceAction` / `ImportImageAction`, F11b).
+    ImportOvf(Box<crate::ovf_run::OvfImport>),
 }
 
 impl ActionRequest {
     /// An XVA export or import (run by [`crate::xva_run`]).
     pub fn is_transfer(&self) -> bool {
-        matches!(self, Self::ExportXva { .. } | Self::ImportXva { .. })
+        matches!(
+            self,
+            Self::ExportXva { .. }
+                | Self::ImportXva { .. }
+                | Self::ExportOvf(_)
+                | Self::ImportOvf(_)
+        )
     }
 
     /// An HA request (run by [`crate::ha_run`]).
@@ -820,6 +831,26 @@ impl ActionRequest {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
             // `ExportVmAction` / `ImportVmAction.ConstantRBACRequirements`.
             Self::ExportXva { .. } => &["task.create", "http/get_export"],
+            // `ApplianceAction.StaticRBACDependencies` and the transfers.
+            Self::ExportOvf(_) => &["task.create", "http/get_export_raw_vdi"],
+            Self::ImportOvf(spec) => {
+                let mut m = vec![
+                    "vm.create",
+                    "vm.destroy",
+                    "vm.remove_from_other_config",
+                    "vdi.create",
+                    "vdi.destroy",
+                    "vbd.create",
+                    "vif.create",
+                    "task.create",
+                    "http/put_import_raw_vdi",
+                ];
+                if spec.start {
+                    m.push("vm.start");
+                }
+                m.extend(TASK);
+                return m;
+            }
             Self::ImportXva { affinity, .. } => {
                 let mut m = vec![
                     "task.create",

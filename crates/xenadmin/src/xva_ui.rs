@@ -23,10 +23,11 @@
 //!   delete) and Finish (summary, start the VM after import). Cancelling
 //!   the wizard cancels a transfer in progress.
 //!
-//! OVF/OVA packages and disk images are a later phase: the format list
-//! offers XVA only and such files are refused with a word saying so.
-//! There is no native file dialog: paths are typed, as in the Back Up
-//! dialog.
+//! The OVF/OVA format of the Export wizard (its EULA and Advanced Options
+//! pages) and the Import wizard's OVF/OVA and disk image pages are F11b's
+//! ([`crate::ovf_ui`]): the Import wizard hands such a source over to
+//! [`crate::ovf_ui::OvfImportWizard`]. There is no native file dialog:
+//! paths are typed, as in the Back Up dialog.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -63,7 +64,7 @@ const IMPORT_RBAC: &[&str] = &[
     "sr.scan",
 ];
 
-fn vm_name(conn: &ConnectionView, vm: &Ref<Vm>) -> String {
+pub(crate) fn vm_name(conn: &ConnectionView, vm: &Ref<Vm>) -> String {
     conn.model
         .vms
         .get(vm)
@@ -144,7 +145,7 @@ pub fn export_to_file_entry(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &xapi::
 }
 
 /// `{folder}/{name}` with the `.xva` extension added when missing.
-fn xva_path(folder: &str, name: &str) -> PathBuf {
+pub(crate) fn xva_path(folder: &str, name: &str) -> PathBuf {
     let mut file = name.to_owned();
     if !file.to_lowercase().ends_with(".xva") {
         file.push_str(".xva");
@@ -153,7 +154,7 @@ fn xva_path(folder: &str, name: &str) -> PathBuf {
 }
 
 /// `CheckPermissions`: a file can be made in `dir`.
-fn writable(dir: &Path) -> bool {
+pub(crate) fn writable(dir: &Path) -> bool {
     let touch = dir.join(format!("_xenadmin-rs-{}", std::process::id()));
     let ok = std::fs::File::create(&touch).is_ok();
     let _ = std::fs::remove_file(&touch);
@@ -161,7 +162,12 @@ fn writable(dir: &Path) -> bool {
 }
 
 /// The wizard pages' navigation buttons; returns (previous, next, cancel).
-fn nav(ui: &mut Ui, can_previous: bool, can_next: bool, next: &str) -> (bool, bool, bool) {
+pub(crate) fn nav(
+    ui: &mut Ui,
+    can_previous: bool,
+    can_next: bool,
+    next: &str,
+) -> (bool, bool, bool) {
     let n = crate::net_strings::net_strings();
     let mut out = (false, false, false);
     ui.horizontal(|ui| {
@@ -174,7 +180,7 @@ fn nav(ui: &mut Ui, can_previous: bool, can_next: bool, next: &str) -> (bool, bo
     out
 }
 
-fn page_list(ui: &mut Ui, names: &[&str], current: usize) {
+pub(crate) fn page_list(ui: &mut Ui, names: &[&str], current: usize) {
     ui.vertical(|ui| {
         ui.set_width(130.0);
         for (i, name) in names.iter().enumerate() {
@@ -184,7 +190,7 @@ fn page_list(ui: &mut Ui, names: &[&str], current: usize) {
     });
 }
 
-fn summary(ui: &mut Ui, id: &str, rows: &[(String, String)]) {
+pub(crate) fn summary(ui: &mut Ui, id: &str, rows: &[(String, String)]) {
     Grid::new(id)
         .num_columns(2)
         .spacing([16.0, 4.0])
@@ -197,7 +203,7 @@ fn summary(ui: &mut Ui, id: &str, rows: &[(String, String)]) {
         });
 }
 
-fn error_label(ui: &mut Ui, error: &Option<String>) {
+pub(crate) fn error_label(ui: &mut Ui, error: &Option<String>) {
     if let Some(e) = error {
         ui.colored_label(ui.visuals().error_fg_color, e);
     }
@@ -210,21 +216,44 @@ pub(crate) enum ExportPage {
     Appliance,
     Rbac,
     Vms,
+    /// OVF/OVA only.
+    Eula,
+    /// OVF/OVA only.
+    Options,
     Finish,
 }
 
-/// The Export wizard (`ExportApplianceWizard`, XVA).
+/// The Export wizard's format (`ExportAppliancePage`): OVF/OVA first, as
+/// the original.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportFormat {
+    Ovf,
+    Xva,
+}
+
+/// The Export wizard (`ExportApplianceWizard`).
 pub struct ExportWizard {
     connection: ConnectionId,
     pub(crate) page: ExportPage,
     pub(crate) name: String,
     pub(crate) folder: String,
+    pub(crate) format: ExportFormat,
     rbac_needed: bool,
     rbac_blocked: Option<String>,
+    rbac_blocked_ovf: Option<String>,
     pub(crate) ticked: Vec<Ref<Vm>>,
     search: String,
     pub(crate) verify: bool,
-    error: Option<String>,
+    pub(crate) error: Option<String>,
+    /// OVF/OVA: the EULA files, the path being typed, the selected one and
+    /// the text shown by View.
+    pub(crate) eulas: Vec<String>,
+    pub(crate) eula_input: String,
+    pub(crate) eula_selected: Option<usize>,
+    pub(crate) eula_view: Option<String>,
+    pub(crate) manifest: bool,
+    pub(crate) ova: bool,
+    pub(crate) compress: bool,
 }
 
 impl ExportWizard {
@@ -234,6 +263,17 @@ impl ExportWizard {
             RbacCheck::Allowed => None,
             RbacCheck::Denied { .. } => Some(fill(
                 xva_strings().rbac_export,
+                &[("role", &i18n::session_roles_text(conn))],
+            )),
+        };
+        let rbac_blocked_ovf = match rbac::check(
+            &conn.model,
+            conn.rbac.as_deref(),
+            crate::ovf_ui::EXPORT_OVF_RBAC,
+        ) {
+            RbacCheck::Allowed => None,
+            RbacCheck::Denied { .. } => Some(fill(
+                crate::ovf_strings::ovf_strings().rbac_export_appliance,
                 &[("role", &i18n::session_roles_text(conn))],
             )),
         };
@@ -248,12 +288,29 @@ impl ExportWizard {
             folder: rules::downloads_folder()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default(),
+            format: ExportFormat::Ovf,
             rbac_needed,
             rbac_blocked,
+            rbac_blocked_ovf,
             ticked: vms,
             search: String::new(),
             verify: false,
             error: None,
+            eulas: Vec::new(),
+            eula_input: String::new(),
+            eula_selected: None,
+            eula_view: None,
+            manifest: false,
+            ova: false,
+            compress: false,
+        }
+    }
+
+    /// The RBAC page's refusal for the chosen format.
+    fn blocked(&self) -> Option<&String> {
+        match self.format {
+            ExportFormat::Ovf => self.rbac_blocked_ovf.as_ref(),
+            ExportFormat::Xva => self.rbac_blocked.as_ref(),
         }
     }
 
@@ -262,7 +319,11 @@ impl ExportWizard {
         if self.rbac_needed {
             p.push(ExportPage::Rbac);
         }
-        p.extend([ExportPage::Vms, ExportPage::Finish]);
+        p.push(ExportPage::Vms);
+        if self.format == ExportFormat::Ovf {
+            p.extend([ExportPage::Eula, ExportPage::Options]);
+        }
+        p.push(ExportPage::Finish);
         p
     }
 
@@ -272,6 +333,8 @@ impl ExportWizard {
             ExportPage::Appliance => x.page_appliance,
             ExportPage::Rbac => x.page_rbac,
             ExportPage::Vms => x.page_vms,
+            ExportPage::Eula => crate::ovf_strings::ovf_strings().page_eula,
+            ExportPage::Options => crate::ovf_strings::ovf_strings().page_options,
             ExportPage::Finish => x.page_finish,
         }
     }
@@ -301,7 +364,15 @@ impl ExportWizard {
         let dir = Path::new(&self.folder);
         self.error = if !dir.is_dir() {
             Some(x.error_dir_missing.to_owned())
-        } else if xva_path(&self.folder, &self.name).exists() {
+        } else if self.format == ExportFormat::Ovf
+            && xen_core::ovf_rules::appliance_exists(dir, &self.name)
+        {
+            Some(
+                crate::ovf_strings::ovf_strings()
+                    .error_appliance_exists
+                    .to_owned(),
+            )
+        } else if self.format == ExportFormat::Xva && xva_path(&self.folder, &self.name).exists() {
             Some(x.error_exists.to_owned())
         } else if !writable(dir) {
             Some(x.error_permissions.to_owned())
@@ -311,8 +382,25 @@ impl ExportWizard {
         self.error.is_none()
     }
 
-    /// `CheckSpaceRequirements` when leaving the VMs page.
+    /// `CheckSpaceRequirements` when leaving the VMs page (and, for an
+    /// OVF, no disk over 2 TiB).
     fn leave_vms(&mut self, conn: &ConnectionView) -> bool {
+        if self.format == ExportFormat::Ovf
+            && self
+                .ticked
+                .iter()
+                .filter_map(|r| conn.model.vms.get(r))
+                .any(|v| xen_core::ovf_rules::too_large_for_ovf(&conn.model, v))
+        {
+            self.error = Some(fill(
+                crate::ovf_strings::ovf_strings().ovf_disk_too_large,
+                &[(
+                    "size",
+                    &xen_core::format::disk_size(xen_core::ovf_rules::OVF_DISK_MAX),
+                )],
+            ));
+            return false;
+        }
         let needed: i64 = self
             .ticked
             .iter()
@@ -335,9 +423,12 @@ impl ExportWizard {
     fn page_ok(&self) -> bool {
         match self.page {
             ExportPage::Appliance => self.path_error().is_none(),
-            ExportPage::Rbac => self.rbac_blocked.is_none(),
-            ExportPage::Vms => self.ticked.len() == 1,
-            ExportPage::Finish => true,
+            ExportPage::Rbac => self.blocked().is_none(),
+            ExportPage::Vms => match self.format {
+                ExportFormat::Xva => self.ticked.len() == 1,
+                ExportFormat::Ovf => !self.ticked.is_empty(),
+            },
+            ExportPage::Eula | ExportPage::Options | ExportPage::Finish => true,
         }
     }
 
@@ -363,15 +454,20 @@ impl ExportWizard {
                 .labelled_by(l.id);
                 ui.end_row();
                 ui.label(x.label_format);
+                let o = crate::ovf_strings::ovf_strings();
+                let shown = match self.format {
+                    ExportFormat::Ovf => o.format_ovf,
+                    ExportFormat::Xva => x.format_xva,
+                };
                 ComboBox::from_id_salt("export-format")
-                    .selected_text(x.format_xva)
+                    .selected_text(shown)
                     .width(420.0)
                     .show_ui(ui, |ui| {
-                        let _ = ui.selectable_label(true, x.format_xva);
+                        ui.selectable_value(&mut self.format, ExportFormat::Ovf, o.format_ovf);
+                        ui.selectable_value(&mut self.format, ExportFormat::Xva, x.format_xva);
                     });
                 ui.end_row();
             });
-        ui.label(RichText::new(x.format_ovf_later).weak());
         if let Some(Some(e)) = self.path_error() {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
@@ -379,7 +475,10 @@ impl ExportWizard {
 
     fn vms_page(&mut self, ui: &mut Ui, conn: &ConnectionView, show_hidden: bool) {
         let x = xva_strings();
-        ui.heading(x.page_vms_title);
+        ui.heading(match self.format {
+            ExportFormat::Xva => x.page_vms_title,
+            ExportFormat::Ovf => crate::ovf_strings::ovf_strings().page_vms_title_ovf,
+        });
         ui.label(x.vms_intro);
         ui.add_space(6.0);
         let pool = connection_name(conn);
@@ -473,12 +572,28 @@ impl ExportWizard {
                 self.ticked.clear();
             }
         });
-        if self.ticked.len() > 1 {
+        if self.ticked.len() > 1 && self.format == ExportFormat::Xva {
             ui.label(RichText::new(x.only_one_xva).italics());
+        }
+        if self.format == ExportFormat::Ovf
+            && self
+                .ticked
+                .iter()
+                .filter_map(|r| conn.model.vms.get(r))
+                .any(|v| xen_core::ovf_rules::has_vtpm(v))
+        {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                crate::ovf_strings::ovf_strings().vtpm_warning,
+            );
         }
     }
 
     fn finish_page(&mut self, ui: &mut Ui, conn: &ConnectionView) {
+        if self.format == ExportFormat::Ovf {
+            self.ovf_finish_page(ui, conn);
+            return;
+        }
         let x = xva_strings();
         ui.heading(x.page_finish_export_title);
         ui.label(x.finish_export_intro);
@@ -512,7 +627,11 @@ impl ExportWizard {
         let index = pages.iter().position(|p| *p == self.page).unwrap_or(0);
         let mut open = true;
         let mut outcome = Ok(None);
-        egui::Window::new(x.export_wizard_title)
+        let title = match self.format {
+            ExportFormat::Ovf => crate::ovf_strings::ovf_strings().export_ovf_title,
+            ExportFormat::Xva => x.export_wizard_title,
+        };
+        egui::Window::new(title)
             .id(egui::Id::unique("export-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -536,7 +655,7 @@ impl ExportWizard {
                                     ui.heading(x.page_rbac);
                                     ui.label(x.rbac_description);
                                     ui.add_space(6.0);
-                                    match &self.rbac_blocked {
+                                    match self.blocked() {
                                         Some(why) => {
                                             ui.colored_label(ui.visuals().error_fg_color, why);
                                         }
@@ -546,6 +665,8 @@ impl ExportWizard {
                                     }
                                 }
                                 ExportPage::Vms => self.vms_page(ui, conn, show_hidden),
+                                ExportPage::Eula => self.eula_page(ui),
+                                ExportPage::Options => self.options_page(ui),
                                 ExportPage::Finish => self.finish_page(ui, conn),
                             });
                         error_label(ui, &self.error);
@@ -564,7 +685,9 @@ impl ExportWizard {
                     self.page = pages[index - 1];
                 }
                 if next {
-                    if last {
+                    if last && self.format == ExportFormat::Ovf {
+                        outcome = Ok(self.ovf_request());
+                    } else if last {
                         let vm = self.ticked.first().cloned();
                         outcome = match vm {
                             Some(vm) => Ok(Some(ActionRequest::ExportXva {
@@ -582,7 +705,10 @@ impl ExportWizard {
                         };
                         if ok {
                             self.error = None;
-                            self.page = pages[index + 1];
+                            // The format may have changed the pages.
+                            let pages = self.pages();
+                            let index = pages.iter().position(|p| *p == self.page).unwrap_or(0);
+                            self.page = pages[(index + 1).min(pages.len() - 1)];
                         }
                     }
                 }
@@ -785,6 +911,8 @@ pub struct ImportWizard {
     pub(crate) vifs: Vec<VifRow>,
     selected_vif: Option<usize>,
     pub(crate) start: bool,
+    /// An OVF/OVA package or a disk image: the wizard that takes over.
+    pub(crate) handoff: Option<Box<crate::ovf_ui::OvfImportWizard>>,
 }
 
 impl ImportWizard {
@@ -807,7 +935,19 @@ impl ImportWizard {
             vifs: Vec::new(),
             selected_vif: None,
             start: true,
+            handoff: None,
         }
+    }
+
+    /// The wizard back on its source page with `path` (Previous from the
+    /// OVF/OVA or disk image pages).
+    pub(crate) fn back_to_source(
+        path: String,
+        target: Option<(ConnectionId, Option<Ref<Host>>)>,
+    ) -> Self {
+        let mut w = Self::new(target);
+        w.path = path;
+        w
     }
 
     fn pages(&self) -> Vec<ImportPage> {
@@ -836,19 +976,16 @@ impl ImportWizard {
             || (self.started_after.is_some() && self.operation.is_none())
     }
 
-    /// `CheckIsSupportedType` and `CheckPathExists`.
+    /// `CheckIsSupportedType` and `CheckPathExists`; an OVF/OVA package or
+    /// a disk image is handed over to [`crate::ovf_ui::OvfImportWizard`].
     fn leave_source(&mut self) -> bool {
+        use xen_core::ovf_rules::{SourceKind, source_kind};
         let x = xva_strings();
+        let o = crate::ovf_strings::ovf_strings();
         self.path = self.path.trim().to_owned();
-        let lower = self.path.to_lowercase();
-        let xva = lower.ends_with(".xva") || lower.ends_with(".xva.gz");
-        let later = [".ovf", ".ova", ".ova.gz", ".vhd", ".vmdk"]
-            .iter()
-            .any(|e| lower.ends_with(e));
-        self.error = if later {
-            Some(x.error_later_phase.to_owned())
-        } else if !xva {
-            Some(x.error_not_supported.to_owned())
+        let kind = source_kind(&self.path);
+        self.error = if kind == SourceKind::Unknown {
+            Some(o.error_unknown_type.to_owned())
         } else if !Path::new(&self.path).is_file() {
             Some(x.error_path_missing.to_owned())
         } else {
@@ -857,8 +994,16 @@ impl ImportWizard {
         if self.error.is_some() {
             return false;
         }
-        if lower.ends_with(".gz") {
-            let dir = Path::new(&self.path).parent().unwrap_or(Path::new("."));
+        let compressed = matches!(
+            kind,
+            SourceKind::Xva { compressed: true }
+                | SourceKind::Ovf {
+                    compressed: true,
+                    ..
+                }
+        );
+        let dir = Path::new(&self.path).parent().unwrap_or(Path::new("."));
+        if compressed {
             if !writable(dir) {
                 self.error = Some(x.error_source_readonly.to_owned());
                 return false;
@@ -866,8 +1011,31 @@ impl ImportWizard {
             self.ask_uncompress = true;
             return false;
         }
-        self.capacity = Some(rules::disk_capacity(Path::new(&self.path)));
-        true
+        match kind {
+            SourceKind::Xva { .. } => {
+                self.capacity = Some(rules::disk_capacity(Path::new(&self.path)));
+                true
+            }
+            SourceKind::Ovf { ova, .. } => {
+                if ova && !writable(dir) {
+                    self.error = Some(o.error_ova_readonly.to_owned());
+                    return false;
+                }
+                match crate::ovf_ui::OvfImportWizard::package(&self.path, self.target.clone()) {
+                    Ok(w) => self.handoff = Some(Box::new(w)),
+                    Err(e) => self.error = Some(e),
+                }
+                false
+            }
+            SourceKind::Image => {
+                match crate::ovf_ui::OvfImportWizard::image(&self.path, self.target.clone()) {
+                    Ok(w) => self.handoff = Some(Box::new(w)),
+                    Err(e) => self.error = Some(e),
+                }
+                false
+            }
+            SourceKind::Unknown => false,
+        }
     }
 
     fn start_uncompress(&mut self) {
@@ -922,8 +1090,8 @@ impl ImportWizard {
         match done {
             Ok(()) => {
                 self.path = u.out.display().to_string();
-                self.capacity = Some(rules::disk_capacity(&u.out));
-                true
+                // An `.ova.gz` became an `.ova`: on to its own pages.
+                self.leave_source()
             }
             Err(e) => {
                 tracing::warn!(error = %e, "uncompressing failed");
@@ -1046,48 +1214,14 @@ impl ImportWizard {
         }
     }
 
-    /// `GlobalSelectHost`: each connected pool (a pool of one shows its
-    /// server only) and its live servers.
     fn home_page(&mut self, ui: &mut Ui, state: &AppState) {
         let x = xva_strings();
         ui.heading(x.page_home_title);
         ui.label(x.home_blurb);
         ui.add_space(6.0);
-        let mut chosen = None;
-        for conn in state.connections.iter().filter(|c| c.status.is_connected()) {
-            let m = &conn.model;
-            let pool_row =
-                m.hosts.len() > 1 || m.pool().is_some_and(|(_, p)| !p.name_label.is_empty());
-            let mut hosts: Vec<_> = m.hosts.iter().collect();
-            hosts.sort_by(|a, b| objects::natural_cmp(&a.1.name_label, &b.1.name_label));
-            if pool_row {
-                let on = self.target.as_ref() == Some(&(conn.id, None));
-                if ui.selectable_label(on, connection_name(conn)).clicked() {
-                    chosen = Some((conn.id, None));
-                }
-            }
-            for (r, h) in hosts {
-                let live = objects::host_is_live(m, h);
-                let on = self.target.as_ref() == Some(&(conn.id, Some(r.clone())));
-                ui.horizontal(|ui| {
-                    if pool_row {
-                        ui.add_space(20.0);
-                    }
-                    if ui
-                        .add_enabled(live, egui::Button::selectable(on, &h.name_label))
-                        .clicked()
-                    {
-                        chosen = Some((conn.id, Some(r.clone())));
-                    }
-                });
-            }
-        }
-        if let Some(c) = chosen {
-            if self.target.as_ref() != Some(&c) {
-                // `NotifyNextPagesOfChange`: the SR is chosen again.
-                self.sr = None;
-            }
-            self.target = Some(c);
+        if target_picker(ui, state, &mut self.target) {
+            // `NotifyNextPagesOfChange`: the SR is chosen again.
+            self.sr = None;
         }
     }
 
@@ -1572,6 +1706,50 @@ impl ImportWizard {
     }
 }
 
+/// `GlobalSelectHost`: each connected pool (a pool of one shows its
+/// server only) and its live servers; true when the choice changed.
+pub(crate) fn target_picker(
+    ui: &mut Ui,
+    state: &AppState,
+    target: &mut Option<(ConnectionId, Option<Ref<Host>>)>,
+) -> bool {
+    let mut chosen = None;
+    for conn in state.connections.iter().filter(|c| c.status.is_connected()) {
+        let m = &conn.model;
+        let pool_row = m.hosts.len() > 1 || m.pool().is_some_and(|(_, p)| !p.name_label.is_empty());
+        let mut hosts: Vec<_> = m.hosts.iter().collect();
+        hosts.sort_by(|a, b| objects::natural_cmp(&a.1.name_label, &b.1.name_label));
+        if pool_row {
+            let on = target.as_ref() == Some(&(conn.id, None));
+            if ui.selectable_label(on, connection_name(conn)).clicked() {
+                chosen = Some((conn.id, None));
+            }
+        }
+        for (r, h) in hosts {
+            let live = objects::host_is_live(m, h);
+            let on = target.as_ref() == Some(&(conn.id, Some(r.clone())));
+            ui.horizontal(|ui| {
+                if pool_row {
+                    ui.add_space(20.0);
+                }
+                if ui
+                    .add_enabled(live, egui::Button::selectable(on, &h.name_label))
+                    .clicked()
+                {
+                    chosen = Some((conn.id, Some(r.clone())));
+                }
+            });
+        }
+    }
+    match chosen {
+        Some(c) if target.as_ref() != Some(&c) => {
+            *target = Some(c);
+            true
+        }
+        _ => false,
+    }
+}
+
 // ---- the dialogs together ----------------------------------------------------------------
 
 /// The F11a dialogs of the window.
@@ -1580,6 +1758,8 @@ pub struct XvaUi {
     pub(crate) export: Option<ExportWizard>,
     pub(crate) export_file: Option<ExportFileDialog>,
     pub(crate) import: Option<ImportWizard>,
+    /// The Import wizard on an OVF/OVA package or a disk image (F11b).
+    pub(crate) import_ovf: Option<crate::ovf_ui::OvfImportWizard>,
     pub errors: Vec<String>,
 }
 
@@ -1592,6 +1772,7 @@ impl XvaUi {
                 self.export_file = Some(ExportFileDialog::new(conn, vm));
             }
             DialogRequest::Import(host) => {
+                self.import_ovf = None;
                 self.import = Some(ImportWizard::new(Some((conn.id, host))));
             }
             _ => {}
@@ -1600,6 +1781,7 @@ impl XvaUi {
 
     /// Opens the Import wizard with nothing chosen (the File menu).
     pub fn open_import(&mut self, target: Option<(ConnectionId, Option<Ref<Host>>)>) {
+        self.import_ovf = None;
         self.import = Some(ImportWizard::new(target));
     }
 
@@ -1641,6 +1823,23 @@ impl XvaUi {
             && w.show(ctx, state, ops, backend).is_err()
         {
             self.import = None;
+        }
+        if let Some(w) = self.import.as_mut()
+            && let Some(next) = w.handoff.take()
+        {
+            self.import = None;
+            self.import_ovf = Some(*next);
+        }
+        if let Some(w) = self.import_ovf.as_mut() {
+            use crate::ovf_ui::Shown;
+            match w.show(ctx, state, ops, backend) {
+                Shown::Open => {}
+                Shown::Closed => self.import_ovf = None,
+                Shown::Back { path, target } => {
+                    self.import_ovf = None;
+                    self.import = Some(ImportWizard::back_to_source(path, target));
+                }
+            }
         }
     }
 }

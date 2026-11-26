@@ -2047,6 +2047,10 @@ mod tests {
     // of a disposable test VM on the real host (`app/tests/xva_real.rs`).
     mod xva;
     mod xva_real;
+    // F11b: OVF/OVA export and import and disk image import
+    // (`app/tests/ovf.rs`), and on a real host (`app/tests/ovf_real.rs`).
+    mod ovf;
+    mod ovf_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

@@ -176,7 +176,9 @@ pub(crate) async fn run(
         | ActionRequest::SetSubjectRoles { .. }
         | ActionRequest::LogoutSubjects { .. }
         | ActionRequest::ExportXva { .. }
-        | ActionRequest::ImportXva { .. } => {
+        | ActionRequest::ImportXva { .. }
+        | ActionRequest::ExportOvf(_)
+        | ActionRequest::ImportOvf(_) => {
             unreachable!("run by crate::operations")
         }
     }

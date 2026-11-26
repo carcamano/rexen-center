@@ -295,6 +295,8 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("http/put_host_restore", "pool-admin"),
     ("http/get_export", "vm-admin"),
     ("http/put_import", "vm-admin"),
+    ("http/get_export_raw_vdi", "vm-admin"),
+    ("http/put_import_raw_vdi", "vm-admin"),
     ("vif.move", "vm-admin"),
 ];
 

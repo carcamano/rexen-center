@@ -48,6 +48,7 @@ const CALLS: &[(&str, &[&str])] = &[
             "set_memory",
             "set_VCPUs_max",
             "set_VCPUs_at_startup",
+            "create",
         ],
     ),
     (
@@ -465,6 +466,7 @@ impl Db {
                 self.vm_memory_limits(&[json!(""), vm, json!(min), v.clone(), v.clone(), v])
             }
             ("VM", "set_VCPUs_max" | "set_VCPUs_at_startup") => self.vm_vcpus(call, params),
+            ("VM", "create") => self.vm_create(params.get(1)),
             ("VDI", "create") => self.vdi_create(params.get(1)),
             ("VDI", "destroy") => self.vdi_destroy(str_param(params, 1)),
             ("VDI", "resize" | "resize_online") => self.vdi_resize(call, params),
@@ -1201,6 +1203,106 @@ impl Db {
             rec.insert(field.to_owned(), json!(n));
         });
         Ok(json!(""))
+    }
+
+    /// `VM.create`: XAPI refuses a record with empty enum or date values
+    /// ("Unknown tag/contents"); the VM is halted, with no devices.
+    fn vm_create(&mut self, record: Option<&Value>) -> Reply {
+        let rec = record
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let actions = &["destroy", "restart"][..];
+        check_fields(
+            &rec,
+            &[
+                ("power_state", &["Halted"]),
+                ("actions_after_shutdown", actions),
+                ("actions_after_reboot", actions),
+                (
+                    "actions_after_crash",
+                    &[
+                        "destroy",
+                        "coredump_and_destroy",
+                        "restart",
+                        "coredump_and_restart",
+                        "preserve",
+                        "rename_restart",
+                    ],
+                ),
+                (
+                    "actions_after_softreboot",
+                    &["soft_reboot", "destroy", "restart", "rename_restart"],
+                ),
+                (
+                    "domain_type",
+                    &["hvm", "pv", "pv_in_pvh", "pvh", "unspecified"],
+                ),
+                ("snapshot_time", &[]),
+            ],
+        )?;
+        for f in ["memory_static_max", "VCPUs_max", "VCPUs_at_startup"] {
+            if !rec.contains_key(f) {
+                return api_error("FIELD_TYPE_ERROR", &[f]);
+            }
+        }
+        let (smin, dmin, dmax, smax) = (
+            int(&rec, "memory_static_min"),
+            int(&rec, "memory_dynamic_min"),
+            int(&rec, "memory_dynamic_max"),
+            int(&rec, "memory_static_max"),
+        );
+        if !(smin <= dmin && dmin <= dmax && dmax <= smax) {
+            return api_error(
+                "MEMORY_CONSTRAINT_VIOLATION",
+                &[
+                    "Memory limits must satisfy: static_min <= dynamic_min <= dynamic_max <= static_max",
+                ],
+            );
+        }
+        let (vm, uuid) = self.new_ref("vm");
+        let mut rec = rec;
+        for (k, v) in [
+            ("uuid", json!(uuid)),
+            ("power_state", json!("Halted")),
+            ("resident_on", json!(NULL_REF)),
+            ("VBDs", json!([])),
+            ("VIFs", json!([])),
+            ("VTPMs", json!([])),
+            ("VUSBs", json!([])),
+            ("consoles", json!([])),
+            ("crash_dumps", json!([])),
+            ("snapshots", json!([])),
+            ("children", json!([])),
+            ("snapshot_of", json!(NULL_REF)),
+            ("parent", json!(NULL_REF)),
+            ("current_operations", json!({})),
+            ("is_a_snapshot", json!(false)),
+            ("is_default_template", json!(false)),
+            ("is_control_domain", json!(false)),
+            ("metrics", json!(NULL_REF)),
+            ("guest_metrics", json!(NULL_REF)),
+        ] {
+            rec.insert(k.into(), v);
+        }
+        for (k, v) in [
+            ("affinity", json!(NULL_REF)),
+            ("appliance", json!(NULL_REF)),
+            ("suspend_SR", json!(NULL_REF)),
+            ("suspend_VDI", json!(NULL_REF)),
+            ("other_config", json!({})),
+            ("platform", json!({})),
+            ("HVM_boot_params", json!({})),
+            ("tags", json!([])),
+            ("blocked_operations", json!({})),
+            ("memory_target", json!(dmax)),
+        ] {
+            rec.entry(k).or_insert(v);
+        }
+        let allowed = vm_allowed(&rec);
+        rec.insert("allowed_operations".into(), json!(allowed));
+        self.insert("vm", &vm, Value::Object(rec));
+        Ok(json!(vm))
     }
 
     fn vdi_create(&mut self, record: Option<&Value>) -> Reply {

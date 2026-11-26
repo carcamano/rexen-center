@@ -190,6 +190,9 @@ pub(crate) async fn run(
         ActionRequest::ExportXva { vm, path, verify } => {
             export(shared, connection, op, session, &cancel, vm, path, *verify).await
         }
+        request @ (ActionRequest::ExportOvf(_) | ActionRequest::ImportOvf(_)) => {
+            crate::ovf_run::run(shared, connection, op, session, &cancel, request).await
+        }
         ActionRequest::ImportXva { path, sr, affinity } => {
             import(
                 shared,

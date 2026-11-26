@@ -108,6 +108,24 @@ pub enum TransferKind {
         pool: String,
         in_pool: bool,
     },
+    /// "Export OVF package '{name}' from '{pool}'" (or OVA).
+    ExportOvf {
+        name: String,
+        pool: String,
+        ova: bool,
+    },
+    /// "Import Appliance '{name}' to '{pool}'" (`file`: the package).
+    ImportAppliance {
+        name: String,
+        file: String,
+        pool: String,
+    },
+    /// "Import VM '{vm}' from Disk Image to '{pool}'" (`file`: the image).
+    ImportImage {
+        vm: String,
+        file: String,
+        pool: String,
+    },
 }
 
 /// The HA operations, with the names their titles show (the original's
@@ -413,6 +431,41 @@ pub enum OperationStep {
     ImportComplete { template: bool },
     /// A failed import: removing what it left.
     RemovingImported,
+    /// OVF export: "Exporting disk '{disk}' to '{file}' ({index} of
+    /// {count})...".
+    ExportingDisk {
+        disk: String,
+        file: String,
+        index: usize,
+        count: usize,
+    },
+    /// OVF export: "Verifying disk '{disk}'...".
+    VerifyingDisk { disk: String },
+    /// OVF export: "Calculating checksum for file '{file}'...".
+    CalculatingChecksum { file: String },
+    /// OVF export: "Creating manifest file...".
+    CreatingManifest,
+    /// OVF export: "Archiving appliance files into single package file
+    /// '{file}'...".
+    ArchivingPackage { file: String },
+    /// OVF import: "Verifying Digital Signature...".
+    VerifyingSignature,
+    /// OVF import: "Verifying Manifest Content...".
+    VerifyingManifest,
+    /// OVF import: "Creating VM '{vm}'...".
+    CreatingVm { vm: String },
+    /// OVF import: "Attached CD/DVD Drive.".
+    AttachedCd,
+    /// OVF import: "Expanding {file}...".
+    ExpandingFile { file: String },
+    /// OVF import: "Preparing VDI for '{disk}'...".
+    PreparingVdi { disk: String },
+    /// OVF import: "Importing '{file}' ({index} of {count})...".
+    ImportingDisk {
+        file: String,
+        index: usize,
+        count: usize,
+    },
 }
 
 /// How an operation ended (or that it has not).
@@ -595,6 +648,26 @@ fn transfer_kind(model: &ConnectionModel, request: &ActionRequest) -> TransferKi
                     || model.hosts.len() > 1,
             }
         }
+        ActionRequest::ExportOvf(spec) => TransferKind::ExportOvf {
+            name: spec.name.clone(),
+            pool: pool_name,
+            ova: spec.ova,
+        },
+        ActionRequest::ImportOvf(spec) => match &spec.image {
+            Some(_) => TransferKind::ImportImage {
+                vm: spec.vms.first().map(|v| v.name.clone()).unwrap_or_default(),
+                file: spec.path.clone(),
+                pool: pool_name,
+            },
+            None => TransferKind::ImportAppliance {
+                name: std::path::Path::new(&spec.path)
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                file: spec.path.clone(),
+                pool: pool_name,
+            },
+        },
         _ => unreachable!("not a transfer"),
     }
 }
@@ -925,7 +998,9 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
             return Some(OperationObject::Host(host.clone()));
         }
         ActionRequest::ExportXva { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
-        ActionRequest::ImportXva { .. } => None,
+        ActionRequest::ImportXva { .. }
+        | ActionRequest::ExportOvf(_)
+        | ActionRequest::ImportOvf(_) => None,
         ActionRequest::SetProperties {
             target: crate::properties::PropertiesTarget::Host(host),
             ..

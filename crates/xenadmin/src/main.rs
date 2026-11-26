@@ -33,6 +33,8 @@ mod new_sr;
 mod new_vm;
 mod ops_strings;
 mod ops_ui;
+mod ovf_strings;
+mod ovf_ui;
 mod perf_strings;
 mod perf_view;
 mod perfmon_ui;

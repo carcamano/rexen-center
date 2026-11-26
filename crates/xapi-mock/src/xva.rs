@@ -67,6 +67,8 @@ pub(crate) struct World {
     pub(crate) digests: HashMap<String, String>,
     /// The largest piece of an import body read at once.
     pub(crate) largest_piece: usize,
+    /// Disk → the content `/import_raw_vdi` wrote into it.
+    pub(crate) contents: HashMap<String, crate::vhd::Content>,
 }
 
 impl Default for World {
@@ -82,6 +84,7 @@ impl Default for World {
             keep_half_imported: false,
             digests: HashMap::new(),
             largest_piece: 0,
+            contents: HashMap::new(),
         }
     }
 }
@@ -156,6 +159,16 @@ fn sha1(data: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// [`xxh64`] for the other transfer handlers.
+pub(crate) fn xxh64_hex(data: &[u8]) -> String {
+    xxh64(data)
+}
+
+/// [`block`] for the other transfer handlers.
+pub(crate) fn block_pattern(uuid: &str, index: u64, size: usize) -> Vec<u8> {
+    block(uuid, index, size)
 }
 
 /// The digest of a disk's whole content: the hash of its blocks' hashes.

@@ -39,7 +39,10 @@
 //! * messages: `message.create` and `message.destroy` (with their events),
 //!   and `host.call_plugin` for perfmon's `refresh` / `start`;
 //! * XVA export and import: `GET /export` and `PUT /import`, streamed both
-//!   ways with task progress, cancellation and cleanup (see [`xva`]).
+//!   ways with task progress, cancellation and cleanup (see [`xva`]);
+//! * disk transfers: `GET /export_raw_vdi` and `PUT /import_raw_vdi` as
+//!   dynamic VHDs or raw bytes, each disk's content kept (see [`raw_vdi`]
+//!   and [`vhd`]), and `VM.create`.
 //!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
@@ -63,8 +66,10 @@ pub mod networking;
 pub mod ops;
 pub mod pool;
 pub mod provisioning;
+pub mod raw_vdi;
 pub mod rrd;
 pub mod storage;
+pub mod vhd;
 pub mod xva;
 
 pub use ad::{AD_ADMIN, AD_DOMAIN, AD_USERS};
@@ -1202,6 +1207,12 @@ async fn handle(
     }
     if req.method() == Method::PUT && req.uri().path() == "/import" {
         return xva::import(&state, req).await;
+    }
+    if req.method() == Method::GET && req.uri().path() == "/export_raw_vdi" {
+        return Ok(raw_vdi::export(&state, &req));
+    }
+    if req.method() == Method::PUT && req.uri().path() == "/import_raw_vdi" {
+        return raw_vdi::import(&state, req).await;
     }
     let Ok(response) = handle_whole(state, req).await;
     Ok(response.map(MockBody::Full))

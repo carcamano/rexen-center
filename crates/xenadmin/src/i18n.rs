@@ -458,6 +458,7 @@ pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error
             .or_else(|| crate::pool_strings::pool_error(code, params))
             .or_else(|| crate::ha_strings::ha_error(code, params))
             .or_else(|| crate::xva_strings::xva_error(code, params))
+            .or_else(|| crate::ovf_strings::ovf_error(code, params))
     {
         return text;
     }
@@ -625,7 +626,8 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         OperationKind::Pool(kind) => pool_title(kind),
         OperationKind::Ha(kind) => crate::ha_strings::ha_title(kind),
         OperationKind::Ad(kind) => crate::ha_strings::ad_title(kind),
-        OperationKind::Transfer(kind) => crate::xva_strings::xva_title(kind),
+        OperationKind::Transfer(kind) => crate::ovf_strings::ovf_title(kind)
+            .unwrap_or_else(|| crate::xva_strings::xva_title(kind)),
     }
 }
 
@@ -772,6 +774,9 @@ fn provision_title(kind: &ProvisionKind) -> String {
 
 /// What a running operation is doing now.
 pub fn operation_step(step: &OperationStep) -> String {
+    if let Some(text) = crate::ovf_strings::ovf_step(step) {
+        return text;
+    }
     if let Some(text) = crate::xva_strings::xva_step(step) {
         return text;
     }

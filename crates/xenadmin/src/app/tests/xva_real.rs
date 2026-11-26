@@ -308,6 +308,7 @@ fn f11a_run(h: &mut Harness<'_, XenAdminApp>, dir: &Path, template: &str) -> Str
         {
             let w = h.state_mut().xva.export.as_mut().unwrap();
             assert_eq!(w.name, TEST_VM);
+            w.format = crate::xva_ui::ExportFormat::Xva;
             w.folder = dir.display().to_string();
         }
         press(h, n.next);

@@ -41,7 +41,6 @@ xva_strings! {
     label_location = "Location:",
     label_format = "Format:",
     format_xva = "XVA File (*.xva)",
-    format_ovf_later = "OVF/OVA packages come with a later phase of this console.",
     location_hint = "Folder path",
     error_invalid_name = "Appliance name is invalid.",
     error_invalid_dir = "Destination directory is invalid.",
@@ -94,8 +93,6 @@ xva_strings! {
     source_intro = "Enter the pathname of an exported VM or template, an OVF/OVA package or a virtual hard disk image file.",
     label_filename = "Filename:",
     path_hint = "File path (*.xva, *.xva.gz)",
-    error_not_supported = "The selected file is not a valid appliance file.",
-    error_later_phase = "OVF/OVA packages and virtual hard disk images come with a later phase of this console.",
     error_path_missing = "Path does not exist.",
     error_source_readonly = "You do not have write permission on the location provided. Read-write access is required to import this type of file.",
     uncompress_question = "{console} will uncompress the file to '{out}'. After uncompression the original file '{file}' will be deleted. Continue?",
@@ -184,6 +181,8 @@ pub fn xva_title(kind: &xen_core::operations::TransferKind) -> String {
             );
             fill(s.op_import, &[("file", file), ("host", &location)])
         }
+        // F11b's (`crate::ovf_strings::ovf_title`).
+        _ => String::new(),
     }
 }
 

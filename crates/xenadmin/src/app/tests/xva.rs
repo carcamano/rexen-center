@@ -36,7 +36,9 @@ fn temp_dir() -> PathBuf {
 
 /// The fixture pool (both servers enabled) connected in the window; disks
 /// of 4 blocks of 64 KiB.
-fn pool_window(runtime: &tokio::runtime::Runtime) -> (MockServer, Harness<'static, XenAdminApp>) {
+pub(super) fn pool_window(
+    runtime: &tokio::runtime::Runtime,
+) -> (MockServer, Harness<'static, XenAdminApp>) {
     let server = runtime.block_on(MockServer::start(false));
     server.set_field("host", H2, "enabled", json!(true));
     server.set_field("host", H2, "other_config", json!({}));
@@ -52,14 +54,14 @@ fn pool_window(runtime: &tokio::runtime::Runtime) -> (MockServer, Harness<'stati
 }
 
 /// Opens the menu-bar menu `menu`.
-fn open_menu(h: &mut Harness<'_, XenAdminApp>, menu: &str) {
+pub(super) fn open_menu(h: &mut Harness<'_, XenAdminApp>, menu: &str) {
     settle(h);
     h.get_all_by_label(menu).next().expect("menu").click();
     settle(h);
 }
 
 /// Waits for the latest operation titled `title` to end; its status.
-fn wait_end(h: &mut Harness<'_, XenAdminApp>, title: &str) -> xen_core::OperationStatus {
+pub(super) fn wait_end(h: &mut Harness<'_, XenAdminApp>, title: &str) -> xen_core::OperationStatus {
     step_until(h, title, |h| op_done(h, title));
     catch_up(h);
     h.state()
@@ -74,7 +76,7 @@ fn wait_end(h: &mut Harness<'_, XenAdminApp>, title: &str) -> xen_core::Operatio
         .clone()
 }
 
-fn succeeded(status: &xen_core::OperationStatus) -> bool {
+pub(super) fn succeeded(status: &xen_core::OperationStatus) -> bool {
     matches!(status, xen_core::OperationStatus::Succeeded)
 }
 
@@ -108,7 +110,12 @@ fn export_db(h: &mut Harness<'_, XenAdminApp>, dir: &Path, verify: bool) {
     assert_eq!(export_page(h), Some(ExportPage::Appliance));
     // The name is the VM's; the folder starts at Downloads.
     assert_eq!(h.state().xva.export.as_ref().unwrap().name, "db-01");
-    h.state_mut().xva.export.as_mut().unwrap().folder = dir.display().to_string();
+    {
+        // OVF/OVA is the default format, as the original; XVA here.
+        let w = h.state_mut().xva.export.as_mut().unwrap();
+        w.format = crate::xva_ui::ExportFormat::Xva;
+        w.folder = dir.display().to_string();
+    }
     press(h, n.next);
     assert_eq!(export_page(h), Some(ExportPage::Vms));
     assert!(shows(h, x.page_vms_title));
@@ -161,7 +168,12 @@ fn the_export_wizard_and_export_to_file() {
     select_vm(&mut h, DB);
     open_menu(&mut h, strings().menu_vm);
     press(&mut h, x.menu_export);
-    h.state_mut().xva.export.as_mut().unwrap().folder = dir.display().to_string();
+    {
+        // OVF/OVA is the default format, as the original; XVA here.
+        let w = h.state_mut().xva.export.as_mut().unwrap();
+        w.format = crate::xva_ui::ExportFormat::Xva;
+        w.folder = dir.display().to_string();
+    }
     press(&mut h, n.next);
     assert!(shows(&h, x.error_exists));
     assert_eq!(export_page(&h), Some(ExportPage::Appliance));
@@ -231,10 +243,13 @@ fn the_import_wizard_from_a_compressed_file() {
     open_menu(&mut h, strings().menu_file);
     press(&mut h, x.menu_import);
     assert_eq!(import_page(&h), Some(ImportPage::Source));
-    // Another format is refused for now.
-    h.state_mut().xva.import.as_mut().unwrap().path = dir.join("a.ova").display().to_string();
+    // A file of no known type is refused.
+    h.state_mut().xva.import.as_mut().unwrap().path = dir.join("a.txt").display().to_string();
     press(&mut h, n.next);
-    assert!(shows(&h, x.error_later_phase));
+    assert!(shows(
+        &h,
+        crate::ovf_strings::ovf_strings().error_unknown_type
+    ));
     // A file that does not exist.
     h.state_mut().xva.import.as_mut().unwrap().path = dir.join("none.xva").display().to_string();
     press(&mut h, n.next);

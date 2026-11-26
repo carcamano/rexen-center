@@ -8,11 +8,12 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F11a (XVA export and import) on top of F1–F10b (base,
-connection and model, detail tabs, VM and host operations, VNC console,
-performance graphs and alerts, VM creation, templates, snapshots and
-disks, storage repositories, networking, pools and pool and server
-properties, high availability, Active Directory and RBAC).** What works:
+**Status: phase F11b (OVF/OVA packages and disk images) on top of
+F1–F11a (base, connection and model, detail tabs, VM and host operations,
+VNC console, performance graphs and alerts, VM creation, templates,
+snapshots and disks, storage repositories, networking, pools and pool and
+server properties, high availability, Active Directory and RBAC, XVA
+export and import).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -285,6 +286,29 @@ properties, high availability, Active Directory and RBAC).** What works:
   networks the import made but left unused are destroyed. A cancelled or
   failed transfer leaves no VM or disk behind. Files are never held in
   memory (32 KiB at a time). Progress and Cancel are in the Events panel;
+- **OVF/OVA packages and disk images**, as the original's wizards. The
+  Export wizard's default format is **OVF/OVA**: several VMs, an EULAs
+  page (text files, by path), **Advanced Options** (create a manifest,
+  create an OVA, compress; signing is shown but not available) and the
+  summary with **Verify export on completion**. Each disk comes from `GET
+  /export_raw_vdi?format=vhd` into `<folder>/<name>/<vdi uuid>.vhd`
+  (gzipped with Compress), hashed on the way; then `<name>.ovf` (the
+  original's descriptor: CPU, memory, interfaces, disks, DVD drive and the
+  Xen settings) and the SHA-256 manifest `<name>.mf`. An OVA is written in
+  one pass (descriptor, disks, manifest last). The Import wizard takes an
+  `.ovf`, `.ova` (`.ova.gz` uncompressed first) or a disk image (`.vhd`,
+  `.img`/`.raw`, `.iso`): a package shows its EULAs, the location, the
+  RBAC page, Storage (one SR for all disks, or one per disk), Networking,
+  **Security** (verify the manifest, or the signature against the
+  certificate's key) and the summary; an image shows VM Definition (name,
+  CPUs, memory), the location, Storage, Networking and **Boot options**
+  (BIOS, UEFI, UEFI Secure Boot). The import checks the package first,
+  then makes each VM with `VM.create`, its interfaces, an empty DVD drive
+  and each disk (`VDI.create`, `PUT /import_raw_vdi`: a dynamic VHD as
+  VHD, a fixed VHD, raw image or ISO as raw bytes, `VBD.create`). VMDK,
+  VHDX, qcow2 and WIM disks are refused with a clear word: nothing is
+  converted. A cancelled or failed export leaves no file, a cancelled or
+  failed import no VM or disk;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -296,10 +320,11 @@ The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
 (VM properties, so also a VM's own HA page), custom graphs
-(New/Edit Graph), OVF/OVA packages and disk images (the Export wizard
-offers the XVA format only, and the Import wizard refuses those files
-for now) and cross-pool migration come in later phases (RDP is not
-embedded). The New VM wizard leaves out the pages the
+(New/Edit Graph), vApps and cross-pool migration come in later phases
+(RDP is not embedded). The OVF wizards leave out signing a package (it
+needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
+LUN-per-VDI page, URL sources and disk conversion (no external
+converter); an imported package makes no vApp. The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
 copying BIOS strings). See the port plan for the full roadmap.
 
@@ -543,6 +568,19 @@ end to end:
   upload read no more than one buffer at a time; in the window: the Export
   wizard and its checks, Export to File of a template, the Import wizard
   from an `.xva.gz`, and a transfer cancelled from the wizard;
+- OVF/OVA and disk images against the mock (`xapi_mock::raw_vdi` and
+  `xapi_mock::vhd`: `GET /export_raw_vdi` as a dynamic VHD or raw bytes,
+  `PUT /import_raw_vdi` read as it arrives, each disk's content kept and
+  hashed; `VM.create`): a VM exported as an OVA and as a compressed OVF
+  folder with a 4 KiB buffer and imported back (the disk's content, the
+  memory, vCPUs, boot settings, the interface and its MAC checked); a raw
+  image and a fixed VHD imported as VMs, the raw image's VM exported again
+  with the image's bytes; cancelled transfers, server errors, a dropped
+  link, a full disk and a file that ends early leaving no file, VM or
+  disk; a corrupt manifest, a changed disk, an unlisted file and a bad
+  signature found before anything is made; a signed package accepted; a
+  VMDK refused; in the window: the Export wizard's OVF pages, the Import
+  wizard on that OVA and on a disk image, and the formats it refuses;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -655,6 +693,17 @@ it and deletes it. Nothing else is acted on. `f11a_real_run_on_the_mock`
 rehearses it on the lab pool and checks no other object changes and only
 the calls it needs are made.
 
+OVF/OVA and disk images on a real host (`app/tests/ovf_real.rs`, same
+variables plus `XENADMIN_REAL_LOG` and `XENADMIN_REAL_OVF_DIR`):
+`real_f11b_ova_and_image` makes one disposable VM at a time, all named
+`xenadmin-rs-test-f11b*` with their disks on "Local storage" and never
+started: the test VM (100 MiB disk) exported as an OVA with the wizard,
+deleted, imported back, checked and deleted; then a 16 MiB raw image
+imported as a VM, checked, exported as an OVA (its disk's content checked
+against the image), deleted, imported back, checked and deleted.
+`f11b_real_run_on_the_mock` rehearses it and checks no other object
+changes and only the calls it needs are made.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -690,7 +739,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |
