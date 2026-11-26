@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center icon, concept Servers in a rebirth loop</title>
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#36424F"/>
+      <stop offset="1" stop-color="#1B222B"/>
+    </linearGradient>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dy="10" result="blur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.3"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- macOS rounded square: 824 px on the 1024 px grid -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#base)" filter="url(#shadow)"/>
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="4"/>
+  <path d="M260.1 439.8 A262 262 0 0 1 729.2 365.5" fill="none" stroke="url(#rust)" stroke-width="64" stroke-linecap="butt"/>
+  <path d="M787.2 326.3 L785.1 448.4 L671.2 404.6 Z" fill="url(#rust)" stroke="url(#rust)" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M763.9 584.2 A262 262 0 0 1 294.8 658.5" fill="none" stroke="url(#rust)" stroke-width="64" stroke-linecap="butt"/>
+  <path d="M236.8 697.7 L238.9 575.6 L352.8 619.4 Z" fill="url(#rust)" stroke="url(#rust)" stroke-width="8" stroke-linejoin="round"/>
+  <rect x="232" y="402" width="560" height="92" rx="22" fill="#F3F5F8"/>
+  <rect x="278" y="426" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <rect x="330" y="426" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <rect x="382" y="426" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <circle cx="732" cy="448" r="20" fill="#3FC36A"/>
+  <rect x="232" y="530" width="560" height="92" rx="22" fill="#F3F5F8"/>
+  <rect x="278" y="554" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <rect x="330" y="554" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <rect x="382" y="554" width="26" height="44" rx="8" fill="#9AA7B8"/>
+  <circle cx="732" cy="576" r="20" fill="url(#rust)"/>
+</svg>

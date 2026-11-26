@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center mark, concept Phoenix</title>
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFC266"/>
+      <stop offset="1" stop-color="#E4561E"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(512 512) scale(1.22) translate(-512 -512)">
+  <path d="M512,668 C 536,730 572,776 626,800 C 572,812 534,798 512,774 C 490,798 452,812 398,800 C 452,776 488,730 512,668 Z" fill="#B9431A"/>
+  <path d="M500,600 C 404,590 282,500 222,276 C 318,392 414,440 500,458 Z" fill="url(#flame)"/>
+  <path d="M524,600 C 620,590 742,500 802,276 C 706,392 610,440 524,458 Z" fill="url(#flame)"/>
+  <path d="M500,640 C 410,636 306,580 262,450 C 340,520 424,544 500,546 Z" fill="url(#rust)"/>
+  <path d="M524,640 C 614,636 718,580 762,450 C 684,520 600,544 524,546 Z" fill="url(#rust)"/>
+  <path d="M500,676 C 434,676 360,648 320,588 C 382,616 442,626 500,624 Z" fill="#B9431A"/>
+  <path d="M524,676 C 590,676 664,648 704,588 C 642,616 582,626 524,624 Z" fill="#B9431A"/>
+  <path d="M512,250 C 548,300 590,370 574,480 C 562,570 532,630 512,700 C 492,630 462,570 450,480 C 434,370 476,300 512,250 Z" fill="#64748B"/>
+  </g>
+</svg>

@@ -1,0 +1,14 @@
+# Renders the icon's SVG sources to the PNG, .ico and contact-sheet files the
+# app and the packages use. A packaging tool, outside the main workspace so
+# the console does not depend on an SVG renderer.
+[package]
+name = "icon-render"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause"
+publish = false
+
+[dependencies]
+resvg = "0.45"
+
+[workspace]

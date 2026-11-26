@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center mark, concept X in a circular again arrow</title>
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(512 512) scale(1.22) translate(-512 -512)">
+  <path d="M750.4 385.2 A270 270 0 1 1 613.1 261.7" fill="none" stroke="#64748B" stroke-width="72" stroke-linecap="butt"/>
+  <path d="M644.6 183.8 L722.6 305.9 L581.7 339.5 Z" fill="#64748B" stroke="#64748B" stroke-width="8" stroke-linejoin="round"/>
+  <g stroke="url(#rust)" stroke-width="98" stroke-linecap="butt">
+    <path d="M392 392 L632 632"/>
+    <path d="M632 392 L392 632"/>
+  </g>
+  </g>
+</svg>

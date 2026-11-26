@@ -22,6 +22,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod about;
 mod ad_ui;
 mod alerts_view;
 mod app;
@@ -307,9 +308,9 @@ fn viewport() -> egui::ViewportBuilder {
         .with_icon(window_icon())
 }
 
-/// The generic application icon (`packaging/icons/make_icon.py`).
+/// The application icon ([`branding::ICON_PNG`]).
 fn window_icon() -> Arc<egui::IconData> {
-    match eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")) {
+    match branding::icon_data() {
         Ok(icon) => Arc::new(icon),
         Err(e) => {
             tracing::warn!(error = %e, "window icon");

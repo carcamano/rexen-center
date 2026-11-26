@@ -87,7 +87,14 @@ string_table! {
     about_title = "About",
     /// `{version}`
     about_version = "Version {version}",
-    about_summary = "A cross-platform management console for XCP-ng pools.",
+    /// `{platform}`
+    about_summary = "A desktop console for {platform}.",
+    /// `{product}`: the icon's accessible name.
+    about_icon = "{product} icon",
+    /// `{os}`, `{arch}`: the operating system and processor it was built for.
+    about_build_release = "Release build for {os} ({arch})",
+    /// `{os}`, `{arch}`
+    about_build_debug = "Debug build for {os} ({arch})",
     about_disclaimer = "An independent community project: not an official XCP-ng, Vates or Citrix product.",
     about_credits_heading = "Credits",
     about_credits = "Based on XCP-ng Center, maintained by the XCP-ng community, which derives from \

@@ -116,7 +116,7 @@ pub struct XenAdminApp {
     selection: Option<Selection>,
     connect: ConnectForm,
     cert_prompts: VecDeque<CertificatePrompt>,
-    about_open: bool,
+    about: crate::about::About,
     options_open: bool,
     events_open: bool,
     errors: Vec<String>,
@@ -199,7 +199,7 @@ impl XenAdminApp {
             selection: None,
             connect: ConnectForm::default(),
             cert_prompts: VecDeque::new(),
-            about_open: false,
+            about: crate::about::About::default(),
             options_open: false,
             events_open: true,
             errors: Vec::new(),
@@ -697,7 +697,7 @@ impl XenAdminApp {
                     .button(format!("{} {}", s.menu_about, branding::PRODUCT_NAME))
                     .clicked()
                 {
-                    self.about_open = true;
+                    self.about.open = true;
                     ui.close();
                 }
             });
@@ -2069,38 +2069,6 @@ impl XenAdminApp {
         }
     }
 
-    fn about_window(&mut self, ctx: &Context) {
-        let s = strings();
-        let mut open = self.about_open;
-        egui::Window::new(format!("{} {}", s.about_title, branding::PRODUCT_NAME))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(480.0)
-            .show(ctx, |ui| {
-                ui.heading(branding::PRODUCT_NAME);
-                ui.label(RichText::new(branding::SUBTITLE).italics());
-                ui.label(fill(s.about_version, &[("version", branding::VERSION)]));
-                ui.label(s.about_summary);
-                ui.label(s.about_disclaimer);
-                ui.add_space(8.0);
-                ui.strong(s.about_credits_heading);
-                ui.label(s.about_credits);
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new(fill(
-                    s.about_license_heading,
-                    &[("license", branding::LICENSE_ID)],
-                ))
-                .default_open(false)
-                .show(ui, |ui| {
-                    ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                        ui.label(RichText::new(branding::LICENSE_TEXT).monospace().small());
-                    });
-                });
-            });
-        self.about_open = open;
-    }
-
     fn errors_window(&mut self, ctx: &Context) {
         if self.errors.is_empty() {
             return;
@@ -2216,7 +2184,7 @@ impl eframe::App for XenAdminApp {
         self.connect_window(&ctx, &state);
         self.certificate_window(&ctx);
         self.options_window(&ctx, &state);
-        self.about_window(&ctx);
+        self.about.show(&ctx);
         self.alerts
             .window(&ctx, &state, &mut self.ops, &self.backend);
         perfmon_ui::window(
@@ -2721,7 +2689,7 @@ mod tests {
         assert_eq!(about_item, "About ReXen Center");
         harness.get_by_label(branding::PRODUCT_NAME);
         harness.get_by_label("ReXen Center — XCP-ng Center, born again in Rust");
-        harness.get_by_label(&fill(s.about_version, &[("version", branding::VERSION)]));
+        harness.get_by_label(&crate::about::version_line());
         harness.get_by_label(s.about_disclaimer);
         harness.get_by_label(s.about_credits);
     }

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center mark, concept RX monogram</title>
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+    <clipPath id="rows"><rect x="0" y="322" width="1024" height="380"/></clipPath>
+  </defs>
+  <g transform="translate(512 512) scale(1.22) translate(-512 -512)">
+  <g fill="none" stroke-width="88" clip-path="url(#rows)">
+    <path d="M249 280 V740" stroke="#64748B"/>
+    <path d="M249 366 H338 A103 103 0 0 1 338 572 H249" stroke="#64748B" stroke-linejoin="miter"/>
+    <path d="M352 560 L500 740" stroke="#64748B"/>
+    <path d="M556 290 L806 734" stroke="#64748B"/>
+    <path d="M806 290 L556 734" stroke="url(#rust)"/>
+  </g>
+  </g>
+</svg>
