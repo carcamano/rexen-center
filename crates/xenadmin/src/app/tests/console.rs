@@ -10,6 +10,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use xapi::{Ref, Vm, VmPowerState};
 use xapi_mock::MockServer;
+use xen_core::ThemeSetting;
 use xen_core::console::{ConsoleStatus, ConsoleTarget};
 use xen_vnc::KeyCode;
 
@@ -119,6 +120,24 @@ pub(super) fn snapshot(h: &Harness<'_, XenAdminApp>, key: &ConsoleKey, path: &st
     (fb.width(), fb.height())
 }
 
+/// The fills of the rectangles drawn around (and larger than) `image`.
+fn surround_fills(h: &Harness<'_, XenAdminApp>, image: egui::Rect) -> Vec<egui::Color32> {
+    fn walk(shape: &egui::Shape, image: egui::Rect, out: &mut Vec<egui::Color32>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, image, out)),
+            egui::Shape::Rect(r) if r.rect.contains_rect(image) && r.rect != image => {
+                out.push(r.fill);
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for c in &h.output().shapes {
+        walk(&c.shape, image, &mut out);
+    }
+    out
+}
+
 fn mock_harness(runtime: &tokio::runtime::Runtime) -> (MockServer, Harness<'static, XenAdminApp>) {
     let server = runtime.block_on(MockServer::start_with_records(
         true,
@@ -169,6 +188,28 @@ fn the_console_tab_shows_the_guest_and_sends_input() {
     let rect = image_rect(&harness, &key);
     assert!(rect.width() < 600.0, "{rect:?}");
     assert!((rect.width() / rect.height() - 640.0 / 480.0).abs() < 0.01);
+    // Around the screen: the theme's grey surround (not black, which a
+    // text console's screen is), in the light and the dark theme.
+    for theme in [ThemeSetting::Light, ThemeSetting::Dark] {
+        let mut p = harness.state().backend.state().settings.preferences.clone();
+        p.theme = theme;
+        let wanted = p.clone();
+        harness.state().backend.send(Command::SetPreferences(p));
+        step_until(&mut harness, "theme applied", |h| {
+            h.state().backend.state().settings.preferences == wanted
+        });
+        settle(&mut harness);
+        let visuals = harness.ctx.style_of(harness.ctx.theme()).visuals.clone();
+        assert_eq!(visuals.dark_mode, theme == ThemeSetting::Dark);
+        let rect = image_rect(&harness, &key);
+        let fills = surround_fills(&harness, rect);
+        let surround = crate::theme::console_surround(&visuals);
+        assert!(fills.contains(&surround), "{theme:?}: {fills:?}");
+        assert!(
+            !fills.contains(&egui::Color32::BLACK),
+            "{theme:?}: {fills:?}"
+        );
+    }
 
     // Click the white square at the top-left (pixels 0..8): the click lands
     // on it, and focuses the console.

@@ -77,6 +77,26 @@ pub fn muted(visuals: &Visuals) -> Color32 {
     }
 }
 
+/// The background around the console's screen (the letterbox): a mid grey,
+/// clearly neither black (a text console's own background) nor the panel
+/// colour, so the edge of the remote screen shows.
+pub fn console_surround(visuals: &Visuals) -> Color32 {
+    if visuals.dark_mode {
+        Color32::from_gray(72)
+    } else {
+        Color32::from_gray(150)
+    }
+}
+
+/// The 1 px line drawn around the console's screen, on the surround.
+pub fn console_border(visuals: &Visuals) -> Color32 {
+    if visuals.dark_mode {
+        Color32::from_gray(160)
+    } else {
+        Color32::from_gray(64)
+    }
+}
+
 /// Graph line colours, by position (the d3 "category10" set).
 const SERIES: [Color32; 10] = [
     Color32::from_rgb(0x1f, 0x77, 0xb4),
@@ -228,6 +248,27 @@ mod tests {
             let f = segment_fill(fill, Color32::BLACK);
             assert!(contrast(f, Color32::BLACK) >= 1.5);
             assert!(contrast(text_on(f), f) >= 4.5);
+        }
+    }
+
+    /// The console's surround stands out from a black screen and from the
+    /// panels in both themes, and its border from both the surround and a
+    /// black screen.
+    #[test]
+    fn the_console_surround_is_not_black_in_both_themes() {
+        for v in both() {
+            let surround = console_surround(&v);
+            let dark = v.dark_mode;
+            assert_ne!(surround, Color32::BLACK);
+            let r = contrast(surround, Color32::BLACK);
+            assert!(r >= 2.0, "surround on black dark={dark}: {r:.2}");
+            let r = contrast(surround, v.panel_fill);
+            assert!(r >= 1.5, "surround on panel dark={dark}: {r:.2}");
+            let border = console_border(&v);
+            let r = contrast(border, surround);
+            assert!(r >= 1.5, "border on surround dark={dark}: {r:.2}");
+            let r = contrast(border, Color32::BLACK);
+            assert!(r >= 1.5, "border on black dark={dark}: {r:.2}");
         }
     }
 

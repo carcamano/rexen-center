@@ -185,7 +185,16 @@ impl ConsoleView {
         let response = ui.interact(rect, id, Sense::click_and_drag());
         ui.allocate_rect(available, Sense::hover());
         let painter = ui.painter_at(available);
-        painter.rect_filled(available, 0.0, Color32::BLACK);
+        // A grey surround and a thin border, so a black screen (a text
+        // console) does not run into the letterbox around it.
+        let visuals = ui.visuals();
+        painter.rect_filled(available, 0.0, crate::theme::console_surround(visuals));
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.0, crate::theme::console_border(visuals)),
+            egui::StrokeKind::Outside,
+        );
         painter.image(
             texture,
             rect,
