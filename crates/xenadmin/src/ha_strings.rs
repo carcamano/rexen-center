@@ -9,21 +9,11 @@
 //! access keys. Templates use `{name}` placeholders filled by
 //! [`crate::i18n::fill`].
 
-macro_rules! ha_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct HaStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: HaStrings = HaStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "ha", struct HaStrings, fn ha_strings;
 
-ha_strings! {
     // ---- HA: menus and commands -------------------------------------------
     high_availability = "High Availability",
     menu_high_availability = "High Availability",
@@ -265,11 +255,6 @@ ha_strings! {
     op_roles_many = "Assigning new roles to subjects '{names}'",
     op_logout_one = "Terminating session for user '{names}'",
     op_logout_many = "Terminating session for users '{names}'",
-}
-
-/// The strings of the user's language.
-pub fn ha_strings() -> &'static HaStrings {
-    &EN
 }
 
 /// `Helpers.RestartPriorityI18n`.

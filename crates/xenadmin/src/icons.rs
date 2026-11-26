@@ -5,6 +5,8 @@ use egui::{Color32, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2
 use xapi::VmPowerState;
 use xen_core::objects::{SrIcon, VmIcon};
 
+use crate::theme::{Tone, tone};
+
 const SIZE: Vec2 = vec2(14.0, 14.0);
 
 fn allocate(ui: &mut Ui) -> (Rect, egui::Painter) {
@@ -12,21 +14,16 @@ fn allocate(ui: &mut Ui) -> (Rect, egui::Painter) {
     (rect, ui.painter_at(rect))
 }
 
-/// Colour used for a VM power state.
-pub fn power_color(state: &VmPowerState) -> Color32 {
+/// Colour used for a VM power state, in the theme of `ui`.
+pub fn power_color(ui: &Ui, state: &VmPowerState) -> Color32 {
     match state {
-        VmPowerState::Running => Color32::from_rgb(0x2e, 0xa0, 0x43),
-        VmPowerState::Halted => Color32::from_rgb(0xc0, 0x39, 0x2b),
-        VmPowerState::Suspended => Color32::from_rgb(0xe6, 0x9b, 0x00),
-        VmPowerState::Paused => Color32::from_rgb(0x2f, 0x6f, 0xd0),
-        VmPowerState::Unknown(_) => Color32::GRAY,
+        VmPowerState::Running => tone(ui, Tone::Ok),
+        VmPowerState::Halted => tone(ui, Tone::Error),
+        VmPowerState::Suspended => tone(ui, Tone::Warning),
+        VmPowerState::Paused => tone(ui, Tone::Info),
+        VmPowerState::Unknown(_) => crate::theme::muted(ui.visuals()),
     }
 }
-
-const BUSY: Color32 = Color32::from_rgb(0xe0, 0x7b, 0x00);
-const WARN: Color32 = Color32::from_rgb(0xe6, 0x9b, 0x00);
-const BROKEN: Color32 = Color32::from_rgb(0xc0, 0x39, 0x2b);
-const OK: Color32 = Color32::from_rgb(0x2e, 0xa0, 0x43);
 
 /// A VM, template or snapshot in the state the tree shows.
 pub fn vm_state(ui: &mut Ui, icon: VmIcon) {
@@ -35,7 +32,10 @@ pub fn vm_state(ui: &mut Ui, icon: VmIcon) {
         VmIcon::Halted => vm(ui, &VmPowerState::Halted),
         VmIcon::Suspended => vm(ui, &VmPowerState::Suspended),
         VmIcon::Paused => vm(ui, &VmPowerState::Paused),
-        VmIcon::Busy => monitor(ui, BUSY),
+        VmIcon::Busy => {
+            let busy = tone(ui, Tone::Busy);
+            monitor(ui, busy)
+        }
         VmIcon::Snapshot { with_memory } => snapshot(ui, with_memory),
         VmIcon::UserTemplate => template(ui, false),
         VmIcon::DefaultTemplate => template(ui, true),
@@ -44,7 +44,8 @@ pub fn vm_state(ui: &mut Ui, icon: VmIcon) {
 
 /// A VM: monitor outline with a power-state dot.
 pub fn vm(ui: &mut Ui, state: &VmPowerState) {
-    monitor(ui, power_color(state));
+    let dot = power_color(ui, state);
+    monitor(ui, dot);
 }
 
 fn monitor(ui: &mut Ui, dot: Color32) {
@@ -128,7 +129,10 @@ pub fn host_state(ui: &mut Ui, state: HostState) {
     match state {
         HostState::Connected => host(ui, true),
         HostState::Disconnected => host(ui, false),
-        HostState::Maintenance => host_lights(ui, WARN),
+        HostState::Maintenance => {
+            let warn = tone(ui, Tone::Warning);
+            host_lights(ui, warn)
+        }
     }
 }
 
@@ -158,13 +162,13 @@ pub fn sr(ui: &mut Ui, icon: SrIcon) {
     painter.add(ellipse(body.center().y));
     match icon {
         SrIcon::Broken => {
-            let s = Stroke::new(1.6, BROKEN);
+            let s = Stroke::new(1.6, tone(ui, Tone::Error));
             let c = pos2(rect.max.x - 3.0, rect.max.y - 3.0);
             painter.line_segment([c + vec2(-2.5, -2.5), c + vec2(2.5, 2.5)], s);
             painter.line_segment([c + vec2(-2.5, 2.5), c + vec2(2.5, -2.5)], s);
         }
         SrIcon::Default => {
-            let s = Stroke::new(1.6, OK);
+            let s = Stroke::new(1.6, tone(ui, Tone::Ok));
             let c = pos2(rect.max.x - 3.5, rect.max.y - 3.0);
             painter.line_segment([c + vec2(-2.5, 0.0), c + vec2(-0.5, 2.0)], s);
             painter.line_segment([c + vec2(-0.5, 2.0), c + vec2(3.0, -2.5)], s);
@@ -175,7 +179,12 @@ pub fn sr(ui: &mut Ui, icon: SrIcon) {
 
 /// A host: server box; green lights when up, grey when not.
 pub fn host(ui: &mut Ui, enabled: bool) {
-    host_lights(ui, if enabled { OK } else { Color32::GRAY });
+    let light = if enabled {
+        tone(ui, Tone::Ok)
+    } else {
+        crate::theme::muted(ui.visuals())
+    };
+    host_lights(ui, light);
 }
 
 fn host_lights(ui: &mut Ui, light: Color32) {

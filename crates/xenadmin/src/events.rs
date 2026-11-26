@@ -4,14 +4,12 @@
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
-use egui::{Color32, Grid, ProgressBar, RichText, ScrollArea, Ui};
+use egui::{Grid, ProgressBar, RichText, ScrollArea, Ui};
 use xapi::{Ref, Task, TaskAllowedOperations, TaskRecord, TaskStatusType};
 use xen_core::{AppState, BackendHandle, Command, ConnectionView, Operation, OperationStatus};
 
 use crate::i18n::{self, fill, strings};
 use crate::ops_strings::ops_strings;
-
-const GREEN: Color32 = Color32::from_rgb(0x2e, 0xa0, 0x43);
 
 /// Width of the progress column, kept even when no bar is shown so the
 /// columns after it do not jump when a bar appears.
@@ -120,7 +118,7 @@ fn operation_row(
             });
         }
         OperationStatus::Succeeded => {
-            ui.colored_label(GREEN, label);
+            ui.colored_label(crate::theme::tone(ui, crate::theme::Tone::Ok), label);
         }
         OperationStatus::Cancelled => {
             ui.label(RichText::new(label).weak());
@@ -223,7 +221,7 @@ fn task_row(
             });
         }
         TaskStatusType::Success => {
-            ui.colored_label(GREEN, label);
+            ui.colored_label(crate::theme::tone(ui, crate::theme::Tone::Ok), label);
         }
         TaskStatusType::Failure => {
             ui.colored_label(ui.visuals().error_fg_color, label);

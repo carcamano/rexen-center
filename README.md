@@ -8,15 +8,17 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F14a (GPUs and vGPUs, USB pass-through, vTPMs, memory
-settings, external SSH and Remote Desktop consoles) on top of F1–F13
-(base, connection and model, detail tabs, VM and host operations, VNC
-console, performance graphs and alerts, VM creation, templates,
-snapshots and disks, storage repositories, networking, pools and pool and
-server properties, high availability, Active Directory and RBAC, XVA
-export and import, OVF/OVA packages and disk images, cross-pool migration
-and copy, Move VM, vApps, scheduled snapshots and disaster recovery,
-search, navigation views, folders, tags and custom fields).** What works:
+**Status: phase F14b (light and dark themes, the message catalogue for
+translations, native file dialogs, the home page and release packages) on
+top of F1–F14a (base, connection and model, detail tabs, VM and host
+operations, VNC console, performance graphs and alerts, VM creation,
+templates, snapshots and disks, storage repositories, networking, pools
+and pool and server properties, high availability, Active Directory and
+RBAC, XVA export and import, OVF/OVA packages and disk images, cross-pool
+migration and copy, Move VM, vApps, scheduled snapshots and disaster
+recovery, search, navigation views, folders, tags and custom fields, GPUs
+and vGPUs, USB pass-through, vTPMs, memory settings, external SSH and
+Remote Desktop consoles).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -428,6 +430,23 @@ search, navigation views, folders, tags and custom fields).** What works:
   port 3389 and starts the platform's client (`mstsc` on Windows, the
   `.rdp` handler on macOS, `xfreerdp` elsewhere, or a program set in
   Options). Remote Desktop is not embedded (plan decision);
+- **light and dark themes** (F14b, this console's own): Tools > Options >
+  Appearance chooses Light, Dark or the system's setting, saved and applied
+  at once. Status texts, alert badges, tree icons, graph lines and the
+  memory and GPU bars have a variant for each theme (a test checks their
+  contrast against both);
+- **languages**: every user-visible string is in one message catalogue
+  (`crates/xenadmin/src/locale.rs`; the English catalogue is exported to
+  `crates/xenadmin/locales/en.toml`), and Tools > Options > Language
+  chooses among the shipped languages or follows the system. Only English
+  ships (plan decision 5); `crates/xenadmin/locales/README.md` explains
+  how to add pt-BR;
+- **native file dialogs**: a Browse... button beside every file or folder
+  field (certificates, server backups, XVA and OVF/OVA import and export,
+  saved searches, the external tools) opens the platform's Open, Save or
+  folder dialog; a typed path still works;
+- a **home page** when nothing is selected (in place of the original's web
+  page), with Add a Server;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -485,6 +504,27 @@ To check a real host read-only from the command line:
 XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --example list_objects
 ```
 
+## Release packages
+
+Each platform has a script under `packaging/` that builds a release binary
+(`cargo build --release --locked`) and packs it with the generic icon
+(`packaging/icons/`, drawn by `make_icon.py`). Packages are not signed or
+notarized. The output folder defaults to `target/dist`.
+
+| Platform | Command | Result |
+|---|---|---|
+| macOS | `packaging/macos/build.sh [out-dir]` | `xenadmin-rs.app` and `xenadmin-rs-<version>-macos-<arch>.dmg` (Xcode command line tools only: `sips`, `iconutil`, `hdiutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| Linux | `packaging/linux/build.sh [out-dir]` | `xenadmin-rs-<version>-linux-<arch>.tar.gz`, plus a `.deb` when `dpkg-deb` is present and an AppImage when `appimagetool` is present |
+| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `xenadmin-rs-<version>-windows-<arch>.zip` (`xenadmin.exe`, `LICENSE`, `README.md`) |
+
+The macOS package is built and started on the development machine; the
+Linux and Windows scripts have not been run yet. Gatekeeper asks before
+the first start of the unsigned app (right-click > Open). On Linux the file
+dialogs use the XDG desktop portal (`xdg-desktop-portal` with a GTK or KDE
+backend). Windows release builds have no console window, so the
+command-line modes (`--add-server`, `--forget-server`) report through their
+exit code only.
+
 ## Settings, passwords and logs
 
 The configuration folder is, in order of preference:
@@ -496,7 +536,8 @@ The configuration folder is, in order of preference:
    macOS, `%APPDATA%\xenadmin-rs\config` on Windows,
    `$XDG_CONFIG_HOME/xenadmin-rs` on Linux.
 
-It holds `settings.toml` (preferences and the saved servers),
+It holds `settings.toml` (preferences, including `theme` and `language`,
+and the saved servers),
 `known_servers.toml` (the trusted certificate fingerprint of each
 `host:port`) and `logs/` (one file per day, the last 7 kept). Tools > Options
 shows where it is.
@@ -528,6 +569,11 @@ A test runs every flow at `trace` level and checks the log for both.
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+After adding or changing a UI string, rewrite the exported English
+catalogue with `XENADMIN_BLESS=1 cargo test -p xenadmin english_catalogue`
+(the test fails while `locales/en.toml` is out of date). Native file
+dialogs never open under test: tests queue the path the dialog returns.
 
 The tests need no XCP-ng host and never touch the OS keyring (they use an
 in-memory store). `crates/xapi-mock` is a JSON-RPC server loaded
@@ -954,7 +1000,8 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`), GPUs, USB, vTPMs and memory settings (`devices`, `memory`, `devices_run`), the external SSH and Remote Desktop consoles (`consoles`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
-| `crates/xenadmin` | The egui/eframe desktop app. |
+| `crates/xenadmin` | The egui/eframe desktop app; its message catalogue's English export and translation guide are in `locales/`. |
+| `packaging/` | The release package scripts and the generic icon (not a crate). |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
 `xapi`, `xen-rrd`, `xen-vnc` and `xen-core` do not depend on egui. The app runs a tokio runtime on

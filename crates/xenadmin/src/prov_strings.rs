@@ -8,21 +8,11 @@
 //! `&` access keys. Templates use `{name}` placeholders filled by
 //! [`crate::i18n::fill`].
 
-macro_rules! prov_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct ProvStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: ProvStrings = ProvStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "prov", struct ProvStrings, fn prov_strings;
 
-prov_strings! {
     // Menus and buttons.
     new_vm = "New VM...",
     new_vm_toolbar = "New VM",
@@ -337,9 +327,4 @@ prov_strings! {
     step_rolling_back = "Removing the VM that could not be completed",
     /// `{vm}`
     step_revert_power = "Reverting the power state of {vm}",
-}
-
-/// The strings of the current language.
-pub fn prov_strings() -> &'static ProvStrings {
-    &EN
 }

@@ -234,7 +234,15 @@ fn search_tab_filters_groups_saves_exports_and_imports() {
     click_tab(&mut h, s.tab_search);
     settle(&mut h);
     press(&mut h, s.export);
-    type_into(&mut h, s.file_label, file.to_str().unwrap());
+    // The native Save dialog fills the field (cancelled first: unchanged).
+    crate::file_dialog::tests::answer_next(None);
+    press(&mut h, strings().browse);
+    crate::file_dialog::tests::answer_next(Some(file.to_str().unwrap()));
+    press(&mut h, strings().browse);
+    assert_eq!(
+        crate::file_dialog::tests::opened(),
+        ["save Saved Searches", "save Saved Searches"]
+    );
     press(&mut h, s.ok);
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(text.starts_with("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<!DOCTYPE xensearch"));

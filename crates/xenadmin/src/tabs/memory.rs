@@ -49,13 +49,13 @@ pub enum MemoryRow {
     },
 }
 
-const XEN_COLOR: Color32 = Color32::from_rgb(169, 169, 169);
-const DOM0_COLOR: Color32 = Color32::from_rgb(105, 105, 105);
-const VM_COLORS: [Color32; 2] = [
+pub(crate) const XEN_COLOR: Color32 = Color32::from_rgb(169, 169, 169);
+pub(crate) const DOM0_COLOR: Color32 = Color32::from_rgb(105, 105, 105);
+pub(crate) const VM_COLORS: [Color32; 2] = [
     Color32::from_rgb(25, 25, 112),
     Color32::from_rgb(70, 130, 180),
 ];
-const USED_COLOR: Color32 = Color32::from_rgb(34, 139, 34);
+pub(crate) const USED_COLOR: Color32 = Color32::from_rgb(34, 139, 34);
 
 /// The rows for `subject`: a host and the VMs whose home it is; every host
 /// of a pool (no VM rows); a VM alone.
@@ -355,19 +355,16 @@ fn host_bar(ui: &mut Ui, total: i64, segments: &[Segment]) {
     for segment in segments {
         let w = segment.bytes as f32 * scale;
         let seg = Rect::from_min_size(pos2(x, rect.min.y), vec2(w, rect.height()));
-        painter.rect_filled(seg, CornerRadius::ZERO, segment.color);
+        let fill = crate::theme::segment_fill(segment.color, ui.visuals().extreme_bg_color);
+        let ink = crate::theme::text_on(fill);
+        painter.rect_filled(seg, CornerRadius::ZERO, fill);
         let caption = format!("{}\n{}", segment.name, memory_size(segment.bytes, false));
-        let galley = painter.layout(
-            caption,
-            egui::FontId::proportional(10.0),
-            Color32::WHITE,
-            w - 4.0,
-        );
+        let galley = painter.layout(caption, egui::FontId::proportional(10.0), ink, w - 4.0);
         if galley.size().x <= w - 4.0 && galley.size().y <= rect.height() {
             painter.galley(
                 pos2(x + 2.0, seg.center().y - galley.size().y / 2.0),
                 galley,
-                Color32::WHITE,
+                ink,
             );
         }
         if let Some(pos) = response.hover_pos()
@@ -396,10 +393,11 @@ fn vm_bar(ui: &mut Ui, static_max: i64, used: i64, dynamic: Option<(i64, i64)>, 
     let used_w = (used as f32 * scale).min(width);
     if used_w > 0.0 {
         let seg = Rect::from_min_size(bar.min, vec2(used_w, bar.height()));
-        painter.rect_filled(seg, CornerRadius::same(4), USED_COLOR);
+        let fill = crate::theme::segment_fill(USED_COLOR, ui.visuals().extreme_bg_color);
+        let ink = crate::theme::text_on(fill);
+        painter.rect_filled(seg, CornerRadius::same(4), fill);
         let caption = memory_size(used, false);
-        let galley =
-            painter.layout_no_wrap(caption, egui::FontId::proportional(10.0), Color32::WHITE);
+        let galley = painter.layout_no_wrap(caption, egui::FontId::proportional(10.0), ink);
         if galley.size().x + 4.0 <= used_w {
             painter.galley(
                 pos2(
@@ -407,7 +405,7 @@ fn vm_bar(ui: &mut Ui, static_max: i64, used: i64, dynamic: Option<(i64, i64)>, 
                     seg.center().y - galley.size().y / 2.0,
                 ),
                 galley,
-                Color32::WHITE,
+                ink,
             );
         }
     }

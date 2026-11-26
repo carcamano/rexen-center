@@ -277,7 +277,10 @@ impl BondForm {
             return None;
         }
         Some(NewBondSpec {
-            name: format!("Bond {}", network::bond_suffix(model, &self.checked)),
+            name: fill(
+                net_strings().bond_name,
+                &[("suffix", &network::bond_suffix(model, &self.checked))],
+            ),
             pifs: self.checked.clone(),
             mode: self.choice.mode(),
             hashing: self.choice.hashing(),

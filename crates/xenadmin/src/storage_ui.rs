@@ -427,7 +427,7 @@ fn repair_window(
                 for row in &rows {
                     ui.label(format!("    {}", row.host));
                     let color = if row.ok {
-                        egui::Color32::from_rgb(0x2e, 0x8b, 0x57)
+                        crate::theme::tone(ui, crate::theme::Tone::Ok)
                     } else {
                         ui.visuals().error_fg_color
                     };

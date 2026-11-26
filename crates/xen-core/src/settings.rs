@@ -137,6 +137,22 @@ pub struct Preferences {
     pub show_hidden_objects: bool,
     /// Options > External Tools: the SSH and Remote Desktop clients (F14a).
     pub external_tools: ExternalTools,
+    /// Options > Appearance: light, dark, or the system's (F14b).
+    pub theme: ThemeSetting,
+    /// Options > Language: a shipped language's tag (`en`), or empty to
+    /// follow the system's language (F14b).
+    pub language: String,
+}
+
+/// The colour theme (this console's own; the original had none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeSetting {
+    /// Light or dark as the operating system is.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 /// Which SSH console "Launch SSH Console" starts (`SshConsole`).
@@ -178,6 +194,8 @@ impl Default for Preferences {
             show_snapshots: tree.snapshots,
             show_hidden_objects: tree.hidden_objects,
             external_tools: ExternalTools::default(),
+            theme: ThemeSetting::System,
+            language: String::new(),
         }
     }
 }
@@ -364,6 +382,8 @@ mod tests {
         assert_eq!(load_settings(&paths).unwrap(), Settings::default());
         let mut settings = Settings::default();
         settings.preferences.save_passwords = false;
+        settings.preferences.theme = ThemeSetting::Dark;
+        settings.preferences.language = "pt-BR".into();
         settings.upsert_server(SavedServer {
             address: "10.0.0.1".into(),
             username: "root".into(),
@@ -377,6 +397,8 @@ mod tests {
         save_settings(&paths, &settings).unwrap();
         let text = fs::read_to_string(paths.settings_file()).unwrap();
         assert!(text.contains("[[server]]"), "{text}");
+        assert!(text.contains("theme = \"dark\""), "{text}");
+        assert!(text.contains("language = \"pt-BR\""), "{text}");
         let loaded = load_settings(&paths).unwrap();
         assert_eq!(loaded, settings);
         assert_eq!(loaded.servers.len(), 1);
@@ -396,6 +418,9 @@ mod tests {
         let s = load_settings(&paths).unwrap();
         assert!(!s.preferences.restore_connections);
         assert!(s.preferences.save_passwords, "missing keys take defaults");
+        // Files from before F14b follow the system's theme and language.
+        assert_eq!(s.preferences.theme, ThemeSetting::System);
+        assert_eq!(s.preferences.language, "");
         fs::write(paths.settings_file(), "not = [toml").unwrap();
         assert!(matches!(
             load_settings(&paths),

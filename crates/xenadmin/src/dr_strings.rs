@@ -11,22 +11,11 @@
 use xen_core::operations::DrKind;
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! dr_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct DrStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "dr", struct DrStrings, fn dr_strings;
 
-        /// English.
-        pub static EN: DrStrings = DrStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-dr_strings! {
     // ---- menus -------------------------------------------------------------
     menu = "Disaster Recovery",
     menu_configure = "Configure...",
@@ -234,10 +223,6 @@ dr_strings! {
     step_starting_vm = "Starting VM '{vm}'",
     step_starting_vapp = "Starting vApp '{name}'",
     err_nothing_to_start = "There are no VMs or vApps to start",
-}
-
-pub fn dr_strings() -> &'static DrStrings {
-    &EN
 }
 
 /// The title of an F12b disaster recovery operation.

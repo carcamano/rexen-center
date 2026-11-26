@@ -20,22 +20,11 @@ use xen_core::memory::{DmcUnavailable, MemoryConfirm};
 use xen_core::operations::DeviceKind;
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! dev_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct DevStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "dev", struct DevStrings, fn dev_strings;
 
-        /// English.
-        pub static EN: DevStrings = DevStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-dev_strings! {
     // ---- GPU tab ------------------------------------------------------------
     tab_gpu = "GPU",
     gpu_none_pool = "GPU configuration and monitoring are disabled, because there are no GPUs available in this pool.",
@@ -246,11 +235,6 @@ dev_strings! {
     /// This console's own.
     step_memory = "Changing memory settings",
     step_starting = "Starting VM",
-}
-
-/// The strings of the current language.
-pub fn dev_strings() -> &'static DevStrings {
-    &EN
 }
 
 /// `VGPU_type.Description` (`multiple`) or `Name`.

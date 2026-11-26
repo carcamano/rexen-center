@@ -283,7 +283,13 @@ fn failed_new_pool_is_undone_and_refused_joins_say_why() {
     // A named pool with HA on: Add Server lists why b cannot join.
     a.set_name_label("pool", POOL_A, "HA pool");
     a.set_field("pool", POOL_A, "ha_enabled", json!(true));
-    step_until(&mut h, "pool named", |h| shows(h, "HA pool"));
+    // Two changes, maybe two event batches: wait for the cache to have both.
+    step_until(&mut h, "pool named, HA seen", |h| {
+        shows(h, "HA pool")
+            && h.state().backend.state().connections.iter().any(|c| {
+                c.server == a.address() && c.model.pool().is_some_and(|(_, p)| p.ha_enabled)
+            })
+    });
     open(
         &mut h,
         ca,
@@ -584,12 +590,23 @@ fn server_dialogs_of_the_server_menu() {
     // Back up then restore (the restore's next steps are shown).
     let path = std::env::temp_dir().join(format!("xen-f10a-ui-{}.xbk", std::process::id()));
     open(&mut h, ca, DialogRequest::Backup(Ref::new(HOST_A)));
-    h.state_mut().pool.transfer.as_mut().unwrap().path = path.display().to_string();
+    // Chosen in the native Save dialog.
+    crate::file_dialog::tests::answer_next(Some(path.to_str().unwrap()));
+    press(&mut h, strings().browse);
+    assert_eq!(
+        h.state().pool.transfer.as_ref().unwrap().path,
+        path.display().to_string()
+    );
     press(&mut h, p.backup_button);
     wait_ok(&mut h, "Backing up server 'lab-host-a'");
     assert!(path.is_file());
     open(&mut h, ca, DialogRequest::Restore(Ref::new(HOST_A)));
-    h.state_mut().pool.transfer.as_mut().unwrap().path = path.display().to_string();
+    crate::file_dialog::tests::answer_next(Some(path.to_str().unwrap()));
+    press(&mut h, strings().browse);
+    assert_eq!(
+        crate::file_dialog::tests::opened(),
+        ["save Server backup files", "open Server backup files"]
+    );
     press(&mut h, p.restore_button);
     wait_ok(&mut h, "Restoring server 'lab-host-a'");
     step_until(&mut h, "restore notice", |h| {

@@ -105,21 +105,6 @@ const GRAPH_HEIGHT: f32 = 150.0;
 /// Width of a graph's key (`GraphList.KEY_WIDTH`).
 const KEY_WIDTH: f32 = 200.0;
 
-/// Distinct line colours (the original's palette is per data source; here
-/// by position in the graph).
-const PALETTE: [Color32; 10] = [
-    Color32::from_rgb(0x1f, 0x77, 0xb4),
-    Color32::from_rgb(0xff, 0x7f, 0x0e),
-    Color32::from_rgb(0x2c, 0xa0, 0x2c),
-    Color32::from_rgb(0xd6, 0x27, 0x28),
-    Color32::from_rgb(0x94, 0x67, 0xbd),
-    Color32::from_rgb(0x8c, 0x56, 0x4b),
-    Color32::from_rgb(0xe3, 0x77, 0xc2),
-    Color32::from_rgb(0x7f, 0x7f, 0x7f),
-    Color32::from_rgb(0xbc, 0xbd, 0x22),
-    Color32::from_rgb(0x17, 0xbe, 0xcf),
-];
-
 impl Performance {
     /// Closes the feeds that are not shown any more.
     pub fn retain(&mut self, shown: Option<&PerfKey>, alive: impl Fn(ConnectionId) -> bool) {
@@ -191,7 +176,7 @@ impl Performance {
             }
             PerfStatus::Failed(e) => {
                 ui.colored_label(
-                    Color32::from_rgb(0xc0, 0x39, 0x2b),
+                    crate::theme::tone(ui, crate::theme::Tone::Error),
                     fill(p.perf_failed, &[("error", e)]),
                 );
             }
@@ -313,7 +298,7 @@ pub fn source_name(model: &ConnectionModel, target: &PerfTarget, name: &str) -> 
             }),
             PerfTarget::Host(_) => None,
         };
-        let label = network.unwrap_or_else(|| format!("VIF {device}"));
+        let label = network.unwrap_or_else(|| fill(p.ds_vif_default, &[("device", &device)]));
         return fill(if rx { p.ds_vif_rx } else { p.ds_vif_tx }, &[("0", &label)]);
     }
     if let Some(rest) = name.strip_prefix("vbd_") {
@@ -436,7 +421,7 @@ fn graph_ui(
         segments.retain(|s| !s.is_empty());
         lines.push((
             source_name(model, &key.1, source),
-            PALETTE[i % PALETTE.len()],
+            crate::theme::series(ui.visuals(), i),
             segments,
         ));
     }
@@ -496,6 +481,7 @@ fn graph_ui(
     let plot_width = (ui.available_width() - key_width - 12.0).max(200.0);
     let keys: Vec<(String, Color32)> = lines.iter().map(|l| (l.0.clone(), l.1)).collect();
     ui.horizontal_top(|ui| {
+        let event_color = crate::theme::muted(ui.visuals());
         plot.width(plot_width).show(ui, |plot_ui| {
             for (name, color, segments) in lines {
                 for segment in segments {
@@ -509,7 +495,7 @@ fn graph_ui(
             for (t, name) in events {
                 plot_ui.vline(
                     VLine::new(crate::alerts_view::message_title(name), *t as f64)
-                        .color(Color32::from_rgb(0x88, 0x88, 0x88))
+                        .color(event_color)
                         .width(1.0),
                 );
             }

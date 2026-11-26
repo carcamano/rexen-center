@@ -94,7 +94,7 @@ pub fn confirmation(conn: &ConnectionView, request: &DeviceRequest) -> Option<Co
 
 // ---- the GPU tab ----------------------------------------------------------------------------
 
-const SEGMENT_COLORS: [Color32; 2] = [
+pub(crate) const SEGMENT_COLORS: [Color32; 2] = [
     Color32::from_rgb(83, 39, 139),
     Color32::from_rgb(157, 115, 215),
 ];
@@ -123,15 +123,17 @@ fn gpu_bar(ui: &mut Ui, bar: &devices::GpuBar) {
             pos2(bar_rect.min.x + slot * i as f32, bar_rect.min.y),
             vec2(slot, bar_rect.height()),
         );
-        painter.rect_filled(seg, CornerRadius::same(4), SEGMENT_COLORS[i % 2]);
+        let fill = crate::theme::segment_fill(SEGMENT_COLORS[i % 2], Color32::BLACK);
+        let ink = crate::theme::text_on(fill);
+        painter.rect_filled(seg, CornerRadius::same(4), fill);
         let text = format!("{vm}\n{model}");
         let galley = painter.layout(
             text.clone(),
             egui::FontId::proportional(10.0),
-            Color32::WHITE,
+            ink,
             slot - 4.0,
         );
-        painter.galley(seg.center() - galley.size() / 2.0, galley, Color32::WHITE);
+        painter.galley(seg.center() - galley.size() / 2.0, galley, ink);
         if response.hover_pos().is_some_and(|p| seg.contains(p)) {
             hovered = Some(text);
         }
@@ -1227,26 +1229,43 @@ pub fn external_tools_options(ui: &mut Ui, t: &mut ExternalTools) {
         ui.radio_value(&mut t.ssh_console, SshConsole::System, d.tools_system);
         ui.horizontal(|ui| {
             ui.radio_value(&mut t.ssh_console, SshConsole::Putty, d.tools_putty);
-            if ui
+            let typed = ui
                 .add(egui::TextEdit::singleline(&mut t.putty_location).desired_width(300.0))
-                .changed()
-            {
+                .changed();
+            let browsed = crate::file_dialog::browse_button(
+                ui,
+                &mut t.putty_location,
+                crate::file_dialog::Pick::Open(Vec::new()),
+            );
+            if typed || browsed {
                 t.ssh_console = SshConsole::Putty;
             }
         });
         ui.horizontal(|ui| {
             ui.radio_value(&mut t.ssh_console, SshConsole::OpenSsh, d.tools_openssh);
-            if ui
+            let typed = ui
                 .add(egui::TextEdit::singleline(&mut t.openssh_location).desired_width(300.0))
-                .changed()
-            {
+                .changed();
+            let browsed = crate::file_dialog::browse_button(
+                ui,
+                &mut t.openssh_location,
+                crate::file_dialog::Pick::Open(Vec::new()),
+            );
+            if typed || browsed {
                 t.ssh_console = SshConsole::OpenSsh;
             }
         });
     });
     ui.group(|ui| {
         ui.label(d.tools_rdp_group);
-        ui.add(egui::TextEdit::singleline(&mut t.rdp_client).desired_width(360.0));
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut t.rdp_client).desired_width(360.0));
+            crate::file_dialog::browse_button(
+                ui,
+                &mut t.rdp_client,
+                crate::file_dialog::Pick::Open(Vec::new()),
+            );
+        });
         ui.label(RichText::new(d.tools_rdp_hint).weak());
     });
 }

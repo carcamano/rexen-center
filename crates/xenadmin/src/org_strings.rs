@@ -14,22 +14,11 @@ use xen_core::search::{ObjectTypes, PropertyName};
 use xen_core::search_eval::tools;
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! org_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct OrgStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "org", struct OrgStrings, fn org_strings;
 
-        /// English.
-        pub static EN: OrgStrings = OrgStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-org_strings! {
     // ---- navigation pane ----------------------------------------------------
     nav_infrastructure = "Infrastructure",
     nav_objects = "Objects",
@@ -311,11 +300,6 @@ org_strings! {
     op_delete_search = "Delete Search '{name}'",
     /// `UPDATE_PROPERTIES`.
     op_vm_names = "Saving properties of {name}",
-}
-
-/// The strings of the current language.
-pub fn org_strings() -> &'static OrgStrings {
-    &EN
 }
 
 /// The title of an F13 operation.

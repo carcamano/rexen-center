@@ -114,8 +114,20 @@ fn export_db(h: &mut Harness<'_, XenAdminApp>, dir: &Path, verify: bool) {
         // OVF/OVA is the default format, as the original; XVA here.
         let w = h.state_mut().xva.export.as_mut().unwrap();
         w.format = crate::xva_ui::ExportFormat::Xva;
-        w.folder = dir.display().to_string();
     }
+    // The folder comes from the native folder dialog.
+    crate::file_dialog::tests::answer_next(Some(dir.to_str().unwrap()));
+    press(h, strings().browse);
+    assert_eq!(
+        crate::file_dialog::tests::opened()
+            .last()
+            .map(String::as_str),
+        Some("folder")
+    );
+    assert_eq!(
+        h.state().xva.export.as_ref().unwrap().folder,
+        dir.display().to_string()
+    );
     press(h, n.next);
     assert_eq!(export_page(h), Some(ExportPage::Vms));
     assert!(shows(h, x.page_vms_title));

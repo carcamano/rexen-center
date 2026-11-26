@@ -9,22 +9,11 @@
 //! placeholders filled by [`crate::i18n::fill`].
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! xva_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct XvaStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "xva", struct XvaStrings, fn xva_strings;
 
-        /// English.
-        pub static EN: XvaStrings = XvaStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-xva_strings! {
     // ---- menus -------------------------------------------------------------
     menu_import = "Import...",
     menu_export = "Export...",
@@ -157,10 +146,6 @@ xva_strings! {
     err_import_file = "The file could not be read: {reason}",
     err_import_failed = "Import failed: {reason}",
     err_template_exists = "The {product} Template that you are attempting to import already exists in the selected pool.",
-}
-
-pub fn xva_strings() -> &'static XvaStrings {
-    &EN
 }
 
 /// The title of an XVA transfer.

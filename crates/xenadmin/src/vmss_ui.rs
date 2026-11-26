@@ -1206,7 +1206,7 @@ impl ManagePolicies {
                         ui.label(rules::vm_count(m, p).to_string());
                         match rules::next_runs(p, self.clock.time) {
                             Some((client, server)) => {
-                                ui.label(format!("{} UTC", short_text(client)));
+                                ui.label(fill(s.time_utc, &[("time", &short_text(client))]));
                                 ui.label(short_text(server));
                             }
                             None => {
@@ -1273,7 +1273,7 @@ impl ManagePolicies {
                             ui.label(
                                 msg.timestamp
                                     .unix_seconds()
-                                    .map(|t| format!("{} UTC", short_text(t)))
+                                    .map(|t| fill(s.time_utc, &[("time", &short_text(t))]))
                                     .unwrap_or_default(),
                             );
                             let title = crate::alerts_view::message_title(&msg.name);

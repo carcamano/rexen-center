@@ -412,9 +412,15 @@ async fn failed_joins_change_nothing_and_a_failed_new_pool_is_undone() {
     assert_eq!(field(&a, "pool", POOL_A, "crash_dump_SR"), default_sr);
     assert!(!b.is_pool_member());
     assert_eq!(a.refs("host").len(), 1);
-    let state = h.backend.state();
+    // The operation ends once the server is undone; the cache learns of it
+    // from the next event batch, which may come a little later.
+    let state = h
+        .wait_for("the cache shows a standalone server again", |s| {
+            s.connection(ca)
+                .is_some_and(|c| pool::visible_pool(&c.model).is_none())
+        })
+        .await;
     assert!(view(&state, cb).status.is_connected());
-    assert!(pool::visible_pool(&view(&state, ca).model).is_none());
     b.fail_method("pool.join", None);
 
     // The coordinator refuses (HA on): Add Server fails, nothing moves.

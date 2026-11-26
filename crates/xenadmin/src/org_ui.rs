@@ -953,6 +953,7 @@ impl OrgUi {
             OrgDialog::NewCustomField { .. } => s.new_custom_field,
             OrgDialog::DeleteCustomField { .. } => s.delete,
         };
+        let importing = matches!(dialog, OrgDialog::Import { .. });
         window(title.to_owned()).show(ctx, |ui| {
             ui.set_min_width(380.0);
             let mut can = true;
@@ -1024,6 +1025,12 @@ impl OrgUi {
                     ui.label(fill(s.delete_search_prompt, &[("name", name)]));
                 }
                 OrgDialog::Export { path, message, .. } | OrgDialog::Import { path, message } => {
+                    let filters = crate::file_dialog::search_filters();
+                    let pick = if importing {
+                        crate::file_dialog::Pick::Open(filters)
+                    } else {
+                        crate::file_dialog::Pick::Save(filters)
+                    };
                     ui.horizontal(|ui| {
                         let l = ui.label(s.file_label);
                         ui.add(
@@ -1032,6 +1039,7 @@ impl OrgUi {
                                 .hint_text("search.xensearch"),
                         )
                         .labelled_by(l.id);
+                        crate::file_dialog::browse_button(ui, path, pick);
                     });
                     if let Some(m) = message {
                         ui.colored_label(ui.visuals().warn_fg_color, m.as_str());
@@ -1410,7 +1418,7 @@ pub fn object_general(ui: &mut Ui, w: &World<'_>, o: &ObjKey) {
                         ui.end_row();
                     }
                     if let Some(uuid) = w.uuid(o) {
-                        ui.label("UUID");
+                        ui.label(crate::tab_strings::tab_strings().uuid);
                         ui.label(uuid);
                         ui.end_row();
                     }

@@ -17,7 +17,7 @@ use xen_core::{
 };
 
 use crate::i18n::fill;
-use crate::message_names::{MESSAGE_BODIES, MESSAGE_NAMES};
+use crate::locale::{MESSAGE_BODIES, MESSAGE_NAMES, TableInfo};
 use crate::ops_ui::OpsUi;
 use crate::perf_strings::perf_strings;
 
@@ -45,17 +45,17 @@ pub struct AlertsView {
     confirm: Option<Confirm>,
 }
 
-fn lookup(table: &'static [(&'static str, &'static str)], key: &str) -> Option<&'static str> {
-    table
-        .binary_search_by(|(k, _)| (*k).cmp(key))
-        .ok()
-        .map(|i| table[i].1)
+/// A data table's text for `key`, in the active language.
+fn lookup(table: &'static TableInfo, key: &str) -> Option<&'static str> {
+    let pairs = table.pairs;
+    let i = pairs.binary_search_by(|(k, _)| (*k).cmp(key)).ok()?;
+    Some(crate::locale::translated(table, pairs[i].0).unwrap_or(pairs[i].1))
 }
 
 /// The friendly name of a message type (`Message.FriendlyName`), or the
 /// name itself.
 pub fn message_title(name: &str) -> String {
-    lookup(MESSAGE_NAMES, &name.to_lowercase())
+    lookup(&MESSAGE_NAMES, &name.to_lowercase())
         .map(str::to_owned)
         .unwrap_or_else(|| name.to_owned())
 }
@@ -72,14 +72,15 @@ pub fn priority_label(p: AlertPriority) -> &'static str {
     }
 }
 
-fn priority_color(p: AlertPriority) -> Color32 {
+fn priority_color(ui: &egui::Ui, p: AlertPriority) -> Color32 {
+    use crate::theme::{Tone, tone};
     match p {
-        AlertPriority::Critical => Color32::from_rgb(0xc0, 0x39, 0x2b),
-        AlertPriority::Major => Color32::from_rgb(0xe6, 0x7e, 0x22),
-        AlertPriority::Warning => Color32::from_rgb(0xd4, 0xac, 0x0d),
-        AlertPriority::Minor => Color32::from_rgb(0x2e, 0xa0, 0x43),
-        AlertPriority::Information => Color32::from_rgb(0x34, 0x98, 0xdb),
-        AlertPriority::Unknown => Color32::GRAY,
+        AlertPriority::Critical => tone(ui, Tone::Error),
+        AlertPriority::Major => tone(ui, Tone::Warning),
+        AlertPriority::Warning => tone(ui, Tone::Caution),
+        AlertPriority::Minor => tone(ui, Tone::Ok),
+        AlertPriority::Information => tone(ui, Tone::Info),
+        AlertPriority::Unknown => crate::theme::muted(ui.visuals()),
     }
 }
 
@@ -132,13 +133,15 @@ fn data_rate(v: f64) -> String {
 
 fn period_text(seconds: f64) -> String {
     let s = seconds.max(0.0) as i64;
-    if s >= 3600 && s % 3600 == 0 {
-        format!("{} hour(s)", s / 3600)
+    let p = perf_strings();
+    let (template, count) = if s >= 3600 && s % 3600 == 0 {
+        (p.period_hours, s / 3600)
     } else if s >= 60 {
-        format!("{} minute(s)", s / 60)
+        (p.period_minutes, s / 60)
     } else {
-        format!("{s} seconds")
-    }
+        (p.period_seconds, s)
+    };
+    fill(template, &[("count", &count.to_string())])
 }
 
 /// The alert's description (`Description`): perfmon alarms in words, the
@@ -212,7 +215,7 @@ pub fn alert_description(model: &ConnectionModel, alert: &Alert) -> String {
         return failed_logins_text(&f);
     }
     if !matches!(alert.object, AlertObject::Other)
-        && let Some(template) = lookup(MESSAGE_BODIES, &alert.record.name.to_lowercase())
+        && let Some(template) = lookup(&MESSAGE_BODIES, &alert.record.name.to_lowercase())
         && !template.contains("{2}")
     {
         let pool = model
@@ -395,7 +398,7 @@ impl AlertsView {
                             let model = &conn.model;
                             let key = (*conn_id, alert.message.clone());
                             ui.colored_label(
-                                priority_color(alert.priority),
+                                priority_color(ui, alert.priority),
                                 priority_label(alert.priority),
                             );
                             ui.vertical(|ui| {
@@ -533,7 +536,7 @@ mod tests {
 
     #[test]
     fn message_tables_are_sorted_for_lookup() {
-        for table in [MESSAGE_NAMES, MESSAGE_BODIES] {
+        for table in [MESSAGE_NAMES.pairs, MESSAGE_BODIES.pairs] {
             assert!(table.windows(2).all(|w| w[0].0 < w[1].0));
         }
         assert_eq!(message_title("VM_STARTED"), "VM Started");

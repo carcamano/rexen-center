@@ -1575,18 +1575,32 @@ impl PoolUi {
                 }
             };
             ui.label(s.install_key);
-            ui.add(
-                TextEdit::singleline(&mut d.key)
-                    .desired_width(480.0)
-                    .hint_text(s.path_hint),
-            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut d.key)
+                        .desired_width(400.0)
+                        .hint_text(s.path_hint),
+                );
+                crate::file_dialog::browse_button(
+                    ui,
+                    &mut d.key,
+                    crate::file_dialog::Pick::Open(crate::file_dialog::key_filters()),
+                );
+            });
             error(ui, &d.errors.0);
             ui.label(s.install_cert);
-            ui.add(
-                TextEdit::singleline(&mut d.certificate)
-                    .desired_width(480.0)
-                    .hint_text(s.path_hint),
-            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut d.certificate)
+                        .desired_width(400.0)
+                        .hint_text(s.path_hint),
+                );
+                crate::file_dialog::browse_button(
+                    ui,
+                    &mut d.certificate,
+                    crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
+                );
+            });
             error(ui, &d.errors.1);
             ui.label(s.install_chain);
             let mut remove = None;
@@ -1602,7 +1616,12 @@ impl PoolUi {
                 d.chain.remove(i);
             }
             ui.horizontal(|ui| {
-                ui.add(TextEdit::singleline(&mut d.chain_entry).desired_width(400.0));
+                ui.add(TextEdit::singleline(&mut d.chain_entry).desired_width(320.0));
+                crate::file_dialog::browse_button(
+                    ui,
+                    &mut d.chain_entry,
+                    crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
+                );
                 if ui.button(s.install_add).clicked() && !d.chain_entry.trim().is_empty() {
                     d.chain.push(d.chain_entry.trim().to_owned());
                     d.chain_entry.clear();
@@ -1682,11 +1701,20 @@ impl PoolUi {
                     ("ext", BACKUP_EXTENSION),
                 ],
             ));
-            ui.add(
-                TextEdit::singleline(&mut d.path)
-                    .desired_width(440.0)
-                    .hint_text(s.path_hint),
-            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut d.path)
+                        .desired_width(360.0)
+                        .hint_text(s.path_hint),
+                );
+                let filters = crate::file_dialog::backup_filters();
+                let pick = if d.restore {
+                    crate::file_dialog::Pick::Open(filters)
+                } else {
+                    crate::file_dialog::Pick::Save(filters)
+                };
+                crate::file_dialog::browse_button(ui, &mut d.path, pick);
+            });
             if let Some(e) = &d.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }

@@ -10,6 +10,11 @@
 //! sits next to the executable; `XENADMIN_CONFIG_DIR` overrides it), saved
 //! passwords in the OS keyring (service name `xenadmin-rs`, or
 //! `XENADMIN_KEYRING_SERVICE`), and logs in its `logs` folder.
+//!
+//! Release builds for Windows use the GUI subsystem (no console window);
+//! the command-line modes then report through their exit code only.
+
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod ad_ui;
 mod alerts_view;
@@ -24,11 +29,13 @@ mod dev_ui;
 mod dr_strings;
 mod dr_ui;
 mod events;
+mod file_dialog;
 mod friendly_errors;
 mod ha_strings;
 mod ha_ui;
 mod i18n;
 mod icons;
+mod locale;
 mod logging;
 mod message_names;
 mod migrate_ui;
@@ -56,6 +63,7 @@ mod sr_strings;
 mod storage_ui;
 mod tab_strings;
 mod tabs;
+mod theme;
 mod vapp_strings;
 mod vapp_ui;
 mod vmss_strings;
@@ -119,7 +127,8 @@ fn main() -> eframe::Result<()> {
             .with_title(branding::PRODUCT_NAME)
             .with_app_id(branding::PRODUCT_NAME)
             .with_inner_size([1100.0, 760.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            .with_icon(window_icon()),
         ..Default::default()
     };
     let store = Arc::new(store);
@@ -150,6 +159,17 @@ fn main() -> eframe::Result<()> {
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     result
+}
+
+/// The generic application icon (`packaging/icons/make_icon.py`).
+fn window_icon() -> Arc<egui::IconData> {
+    match eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")) {
+        Ok(icon) => Arc::new(icon),
+        Err(e) => {
+            tracing::warn!(error = %e, "window icon");
+            Arc::new(egui::IconData::default())
+        }
+    }
 }
 
 /// Resolves on Ctrl+C, or SIGTERM on Unix.

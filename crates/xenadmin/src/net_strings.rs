@@ -9,21 +9,11 @@
 //! resources), without the `&` access keys. Templates use `{name}`
 //! placeholders filled by [`crate::i18n::fill`].
 
-macro_rules! net_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct NetStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: NetStrings = NetStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "net", struct NetStrings, fn net_strings;
 
-net_strings! {
     // Buttons of the tabs.
     add_network = "Add Network...",
     network_properties = "Properties",
@@ -35,6 +25,8 @@ net_strings! {
     deactivate = "Deactivate",
     configure_ip = "Configure...",
     create_bond_button = "Create Bond...",
+    /// `{suffix}`: the new bond's name (`NEW_BOND_NAME`).
+    bond_name = "Bond {suffix}",
     delete_bond_button = "Delete Bond",
     rescan = "Rescan",
     yes = "Yes",
@@ -280,11 +272,6 @@ net_strings! {
     err_bond_gone = "Could not find the bond in {console}'s cache.",
     err_vlan_exists = "A VLAN with the specified tag already exists on that NIC.",
     err_network_gone = "Network has gone away",
-}
-
-/// The strings of the current language.
-pub fn net_strings() -> &'static NetStrings {
-    &EN
 }
 
 /// The wording of the errors [`xen_core::network`] reports itself, if

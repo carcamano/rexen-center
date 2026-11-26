@@ -265,9 +265,8 @@ pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec
 
 /// "Install XCP-ng VM Tools...".
 pub fn install_tools_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| {
+    static LABEL: crate::locale::Derived = crate::locale::Derived::new();
+    LABEL.get(|| {
         let p = prov_strings();
         fill(p.install_tools, &[("tools", p.tools_name)])
     })

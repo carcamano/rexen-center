@@ -304,7 +304,9 @@ pub fn pretty_duration(seconds: i64) -> String {
 /// X" without the colon).
 pub fn vm_display_name(vm: &VmRecord) -> String {
     match vm.name_label.strip_prefix("Control domain on host: ") {
-        Some(host) if vm.is_control_domain => format!("Control domain on host {host}"),
+        Some(host) if vm.is_control_domain => {
+            fill(tab_strings().control_domain_on, &[("host", host)])
+        }
         _ => vm.name_label.clone(),
     }
 }

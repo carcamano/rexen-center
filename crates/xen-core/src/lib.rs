@@ -133,5 +133,5 @@ pub use operations::{
 pub use performance::{PerfData, PerfHandle, PerfLink, PerfStatus, PerfTarget};
 pub use rbac::{RbacCheck, SessionRbac};
 pub use secrets::{KeyringSecretStore, MemorySecretStore, SecretStore};
-pub use settings::{ConfigLocation, ConfigPaths, Preferences, SavedServer, Settings};
+pub use settings::{ConfigLocation, ConfigPaths, Preferences, SavedServer, Settings, ThemeSetting};
 pub use store::Store;

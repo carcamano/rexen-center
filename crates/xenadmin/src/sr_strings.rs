@@ -8,21 +8,11 @@
 //! resources), without the `&` access keys. Templates use `{name}`
 //! placeholders filled by [`crate::i18n::fill`].
 
-macro_rules! sr_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct SrStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: SrStrings = SrStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "sr", struct SrStrings, fn sr_strings;
 
-sr_strings! {
     // Menus and buttons.
     menu_storage = "Storage",
     new_sr = "New SR...",
@@ -264,11 +254,6 @@ sr_strings! {
     err_unknown = "An unknown error occurred.",
     /// `{name}`, `{pool}`
     err_sr_in_use = "The SR '{name}' is in use on '{pool}' and cannot be introduced.  You must detach the SR from '{pool}' before using it again.",
-}
-
-/// The strings of the current language.
-pub fn sr_strings() -> &'static SrStrings {
-    &EN
 }
 
 /// The wording of the errors [`xen_core::storage`] reports itself, if

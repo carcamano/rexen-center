@@ -10,21 +10,11 @@
 //! without the `&` access keys. Templates use `{name}` placeholders filled
 //! by [`crate::i18n::fill`].
 
-macro_rules! pool_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct PoolStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: PoolStrings = PoolStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "pool", struct PoolStrings, fn pool_strings;
 
-pool_strings! {
     // Menus.
     menu_pool = "Pool",
     new_pool = "New Pool...",
@@ -345,11 +335,6 @@ pool_strings! {
     err_host_unreachable = "The server is unreachable.",
     err_file = "The file could not be written or read: {error}",
     err_certificate_timeout = "The server did not start using the new certificate in time.",
-}
-
-/// The strings of the user's language.
-pub fn pool_strings() -> &'static PoolStrings {
-    &EN
 }
 
 /// The wording of the errors [`xen_core::pool_run`] reports itself, if

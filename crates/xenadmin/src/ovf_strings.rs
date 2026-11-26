@@ -9,22 +9,11 @@
 //! dialogs, no signing, no converter); each says so.
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! ovf_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct OvfStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "ovf", struct OvfStrings, fn ovf_strings;
 
-        /// English.
-        pub static EN: OvfStrings = OvfStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-ovf_strings! {
     // ---- Export wizard -----------------------------------------------------
     export_ovf_title = "Export OVF/OVA Package",
     format_ovf = "OVF/OVA Package (*.ovf, *.ova)",
@@ -189,10 +178,6 @@ ovf_strings! {
     err_no_sr = "The storage repository was not found and a default was not assigned.",
     err_file_error = "The file {file} could not be read: {reason}",
     err_import_failed = "Importing {file} failed: {reason}",
-}
-
-pub fn ovf_strings() -> &'static OvfStrings {
-    &EN
 }
 
 /// The title of an F11b transfer, when it is one.

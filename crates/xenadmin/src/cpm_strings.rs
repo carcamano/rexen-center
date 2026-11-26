@@ -8,22 +8,11 @@
 //! are this console's own; each says so.
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! cpm_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct CpmStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "cpm", struct CpmStrings, fn cpm_strings;
 
-        /// English.
-        pub static EN: CpmStrings = CpmStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-cpm_strings! {
     // ---- menus -------------------------------------------------------------
     menu_cpm = "Migrate VM wizard...",
     menu_move_vm = "Move VM...",
@@ -190,10 +179,6 @@ cpm_strings! {
 
     // ---- errors ------------------------------------------------------------
     err_move_destroy = "Failed to finalize moving VM '{vm}' to new storage. Please see logs for details.",
-}
-
-pub fn cpm_strings() -> &'static CpmStrings {
-    &EN
 }
 
 /// The title of an F12a migration, copy or move.

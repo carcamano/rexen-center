@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use egui::{Button, Color32, Context, DragValue, Grid, RichText, Ui};
+use egui::{Button, Context, DragValue, Grid, RichText, Ui};
 use xapi::{Ref, Sr, Vm};
 use xen_core::ha::{self, HaProblem, RestartPriority};
 use xen_core::operations::{HaKind, OperationKind};
@@ -444,7 +444,7 @@ impl Priorities {
         if self.calculating() {
             return;
         }
-        let red = Color32::from_rgb(0xd0, 0x30, 0x30);
+        let red = crate::theme::tone(ui, crate::theme::Tone::Error);
         match &self.max {
             Some(Err(_)) => {
                 ui.colored_label(red, h.unable_to_calculate);
@@ -1231,7 +1231,7 @@ impl HaUi {
                 .request_repaint_after(HEARTBEAT_DELAY.saturating_sub(since.elapsed()));
         }
         ui.add_space(10.0);
-        let red = Color32::from_rgb(0xd0, 0x30, 0x30);
+        let red = crate::theme::tone(ui, crate::theme::Tone::Error);
         ui.label(RichText::new(h.configuration_title).strong());
         Grid::new("ha-config")
             .num_columns(2)
@@ -1265,7 +1265,7 @@ impl HaUi {
         ui.add_space(10.0);
         ui.label(RichText::new(h.heartbeating_status).strong());
         let srs = ha::heartbeat_srs(&conn.model, pool);
-        let green = Color32::from_rgb(0x20, 0x90, 0x30);
+        let green = crate::theme::tone(ui, crate::theme::Tone::Ok);
         Grid::new("ha-heartbeats")
             .num_columns(2 + srs.len())
             .striped(true)

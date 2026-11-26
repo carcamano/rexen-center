@@ -6,21 +6,11 @@
 //! its 25.04 XCP-ng build. Templates use `{name}` placeholders filled by
 //! [`crate::i18n::fill`].
 
-macro_rules! tab_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's detail-tab strings.
-        pub struct TabStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: TabStrings = TabStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "tab", struct TabStrings, fn tab_strings;
 
-tab_strings! {
     tab_general = "General",
     tab_memory = "Memory",
     tab_storage = "Storage",
@@ -93,6 +83,8 @@ tab_strings! {
     tags = "Tags",
     folder = "Folder",
     uuid = "UUID",
+    /// `{host}`: a control domain's name, as the original shows it.
+    control_domain_on = "Control domain on host {host}",
 
     os = "Operating System",
     virt_mode = "Virtualization mode",
@@ -341,9 +333,4 @@ tab_strings! {
     tree_filter = "Filter by name",
     tree_filter_clear = "Clear filter",
     tree_no_match = "No objects match the filter.",
-}
-
-/// The tab strings of the UI language (English only for now).
-pub fn tab_strings() -> &'static TabStrings {
-    &EN
 }

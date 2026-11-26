@@ -173,6 +173,9 @@ pub struct XenAdminApp {
     /// The selection of the last frame (an imported search is dropped when
     /// it changes).
     last_selection: Option<Selection>,
+    /// The theme and language last applied from the preferences.
+    applied_theme: Option<xen_core::ThemeSetting>,
+    applied_language: Option<String>,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -224,6 +227,8 @@ impl XenAdminApp {
             org: crate::org_ui::OrgUi::default(),
             dev: crate::dev_ui::DevUi::default(),
             last_selection: None,
+            applied_theme: None,
+            applied_language: None,
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -1304,7 +1309,65 @@ impl XenAdminApp {
             (_, Some(conn), Some(subject)) => self.object_details(ui, state, conn, subject),
             (Some(Selection::Connection(_)), Some(conn), _) => self.connection_details(ui, conn),
             (Some(Selection::Saved(address)), _, _) => self.saved_details(ui, state, address),
-            _ => no_selection(ui, state),
+            _ => self.welcome(ui, state),
+        }
+    }
+
+    /// The home page, shown when nothing is selected: a native page in place
+    /// of the original's web page (`TabPages/HomePage`), whose one action
+    /// was "Add a Server".
+    fn welcome(&mut self, ui: &mut Ui, state: &AppState) {
+        let s = strings();
+        let mut add = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() * 0.25).clamp(16.0, 160.0));
+            ui.label(
+                RichText::new(branding::PRODUCT_NAME)
+                    .heading()
+                    .size(28.0)
+                    .strong(),
+            );
+            ui.add_space(4.0);
+            ui.label(fill(
+                s.welcome_blurb,
+                &[("platform", branding::PLATFORM_NAME)],
+            ));
+            ui.add_space(18.0);
+            add = ui
+                .add(
+                    egui::Button::new(RichText::new(s.welcome_add_server).size(16.0))
+                        .min_size(egui::vec2(180.0, 36.0)),
+                )
+                .clicked();
+            ui.add_space(18.0);
+            let saved = state.settings.servers.len();
+            if saved > 0 {
+                let connected = state
+                    .settings
+                    .servers
+                    .iter()
+                    .filter(|server| {
+                        state
+                            .connections
+                            .iter()
+                            .any(|c| c.server == server.address && c.status.is_connected())
+                    })
+                    .count();
+                ui.label(fill(
+                    s.welcome_servers,
+                    &[
+                        ("connected", &connected.to_string()),
+                        ("saved", &saved.to_string()),
+                    ],
+                ));
+            }
+            // The tree says how to connect when there is nothing yet.
+            if saved > 0 || !state.connections.is_empty() {
+                ui.label(RichText::new(s.tree_no_selection).weak());
+            }
+        });
+        if add {
+            self.open_connect_dialog(state, None);
         }
     }
 
@@ -1317,7 +1380,7 @@ impl XenAdminApp {
             .find(|x| x.address == address)
             .cloned()
         else {
-            no_selection(ui, state);
+            self.welcome(ui, state);
             return;
         };
         ui.horizontal(|ui| {
@@ -1396,7 +1459,7 @@ impl XenAdminApp {
                     if !vm.is_a_template {
                         ui.label(RichText::new("·").weak());
                         ui.colored_label(
-                            icons::power_color(&vm.power_state),
+                            icons::power_color(ui, &vm.power_state),
                             power_label(&vm.power_state),
                         );
                     }
@@ -1924,6 +1987,18 @@ impl XenAdminApp {
         }
     }
 
+    /// Applies the theme and language of the preferences when they change.
+    fn apply_appearance(&mut self, ctx: &Context, preferences: &Preferences) {
+        if self.applied_theme != Some(preferences.theme) {
+            ctx.set_theme(crate::theme::preference(preferences.theme));
+            self.applied_theme = Some(preferences.theme);
+        }
+        if self.applied_language.as_deref() != Some(preferences.language.as_str()) {
+            crate::locale::apply_preference(&preferences.language);
+            self.applied_language = Some(preferences.language.clone());
+        }
+    }
+
     fn options_window(&mut self, ctx: &Context, state: &AppState) {
         if !self.options_open {
             return;
@@ -1940,6 +2015,9 @@ impl XenAdminApp {
             .show(ctx, |ui| {
                 ui.checkbox(&mut preferences.save_passwords, s.options_save_passwords);
                 ui.checkbox(&mut preferences.restore_connections, s.options_restore);
+                ui.add_space(8.0);
+                ui.separator();
+                appearance_options(ui, &mut preferences);
                 ui.add_space(8.0);
                 ui.separator();
                 crate::dev_ui::external_tools_options(ui, &mut preferences.external_tools);
@@ -2046,6 +2124,51 @@ impl XenAdminApp {
     }
 }
 
+/// Options > Appearance: the theme and the language.
+fn appearance_options(ui: &mut Ui, preferences: &mut Preferences) {
+    use xen_core::ThemeSetting;
+    let s = strings();
+    ui.label(RichText::new(s.options_appearance).strong());
+    Grid::new("options-appearance")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(s.options_theme);
+            ui.horizontal(|ui| {
+                for (value, label) in [
+                    (ThemeSetting::System, s.options_theme_system),
+                    (ThemeSetting::Light, s.options_theme_light),
+                    (ThemeSetting::Dark, s.options_theme_dark),
+                ] {
+                    ui.radio_value(&mut preferences.theme, value, label);
+                }
+            });
+            ui.end_row();
+            let label = ui.label(s.options_language);
+            let system = crate::locale::resolve("", crate::locale::system_languages());
+            let system_name = crate::locale::LOCALES
+                .iter()
+                .find(|l| l.tag == system)
+                .map_or(system, |l| l.name);
+            let follow = fill(s.options_language_system, &[("language", system_name)]);
+            let selected = crate::locale::LOCALES
+                .iter()
+                .find(|l| l.tag == preferences.language)
+                .map_or(follow.clone(), |l| l.name.to_owned());
+            egui::ComboBox::from_id_salt("options-language")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut preferences.language, String::new(), follow);
+                    for l in crate::locale::LOCALES {
+                        ui.selectable_value(&mut preferences.language, l.tag.to_owned(), l.name);
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+            ui.end_row();
+        });
+}
+
 impl eframe::App for XenAdminApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.drain_notifications();
@@ -2053,6 +2176,7 @@ impl eframe::App for XenAdminApp {
         self.tree_cache
             .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
+        self.apply_appearance(&ctx, &state.settings.preferences);
         self.update_consoles(&state);
         let shown_perf = self.selected_perf(&state);
         self.performance
@@ -2306,18 +2430,6 @@ fn status_line(ui: &mut Ui, conn: &ConnectionView) {
     }
 }
 
-fn no_selection(ui: &mut Ui, state: &AppState) {
-    let s = strings();
-    ui.centered_and_justified(|ui| {
-        let hint = if state.connections.is_empty() && state.settings.servers.is_empty() {
-            s.tree_empty
-        } else {
-            s.tree_no_selection
-        };
-        ui.label(RichText::new(hint).weak());
-    });
-}
-
 fn row(ui: &mut Ui, label: &str, value: &str) {
     if value.is_empty() {
         return;
@@ -2408,6 +2520,9 @@ mod tests {
     // (`app/tests/devices_real.rs`).
     mod devices;
     mod devices_real;
+    // F14b: themes and the message catalogue on a real host
+    // (`app/tests/appearance_real.rs`).
+    mod appearance_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -3002,10 +3117,14 @@ mod tests {
                 && h.query_by_label(s.events_server_tasks).is_some()
         });
         harness.get_by_label(s.events_cancel).click();
+        // "Cancelled" already shows on the VM start's row (the operation and
+        // the task status share the word): wait for the server to have
+        // cancelled the task and for its own row to say so.
         step_until(&mut harness, "task cancelled", |h| {
-            h.query_by_label(s.task_cancelled).is_some()
+            server.record("task", &task).unwrap()["status"] == "cancelled"
+                && h.query_all_by_label(s.task_cancelled).count() == 2
         });
-        assert_eq!(server.record("task", &task).unwrap()["status"], "cancelled");
+        assert_eq!(s.op_cancelled, s.task_cancelled);
 
         // Clear Finished empties the operation list.
         harness.get_by_label(s.events_clear).click();
@@ -3104,6 +3223,95 @@ mod tests {
                 .restore_connections
         });
         harness.get_by_label(s.options_mode_memory);
+    }
+
+    /// Nothing selected: the home page, whose "Add a Server" opens the
+    /// connect dialog, as the original's.
+    #[test]
+    fn the_home_page_adds_a_server() {
+        let runtime = runtime();
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+        harness.step();
+        harness.get_by_label(s.cancel).click();
+        step_until(&mut harness, "home page", |h| {
+            h.query_by_label(s.welcome_add_server).is_some()
+                && h.query_by_label(s.connect_title).is_none()
+        });
+        harness.get_by_label(branding::PRODUCT_NAME);
+        harness.get_by_label(s.welcome_add_server).click();
+        step_until(&mut harness, "connect dialog", |h| {
+            h.query_by_label(s.connect_title).is_some()
+        });
+    }
+
+    /// Options > Appearance: the theme switches at once and is saved; the
+    /// language list follows the catalogue, and choosing a language
+    /// re-labels the window (the test-only pseudo-language here).
+    #[test]
+    fn options_switch_theme_and_language() {
+        use xen_core::ThemeSetting;
+        let runtime = runtime();
+        let mut harness = app_harness(&runtime);
+        let s = strings();
+        let theme =
+            |h: &Harness<'_, XenAdminApp>| h.state().backend.state().settings.preferences.theme;
+        harness.step();
+        harness.get_by_label(s.cancel).click();
+        harness.step();
+        // A new profile follows the system.
+        assert_eq!(theme(&harness), ThemeSetting::System);
+        assert_eq!(
+            harness.ctx.options(|o| o.theme_preference),
+            egui::ThemePreference::System
+        );
+        harness.get_by_label(s.menu_tools).click();
+        step_until(&mut harness, "tools menu", |h| {
+            h.query_by_label(s.menu_options).is_some()
+        });
+        harness.get_by_label(s.menu_options).click();
+        step_until(&mut harness, "options", |h| {
+            h.query_by_label(s.options_theme_dark).is_some()
+        });
+
+        harness.get_by_label(s.options_theme_dark).click();
+        step_until(&mut harness, "dark saved and shown", |h| {
+            theme(h) == ThemeSetting::Dark && (h.ctx.theme() == egui::Theme::Dark)
+        });
+        harness.get_by_label(s.options_theme_light).click();
+        step_until(&mut harness, "light saved and shown", |h| {
+            theme(h) == ThemeSetting::Light && !(h.ctx.theme() == egui::Theme::Dark)
+        });
+        harness.get_by_label(s.options_theme_system).click();
+        step_until(&mut harness, "system saved", |h| {
+            theme(h) == ThemeSetting::System
+                && h.ctx.options(|o| o.theme_preference) == egui::ThemePreference::System
+        });
+
+        // Language: "System default (English)", then every shipped language.
+        let follow = fill(s.options_language_system, &[("language", "English")]);
+        harness.get_by_value(&follow);
+        harness.get_by_label(s.options_language).click();
+        step_until(&mut harness, "language list", |h| {
+            h.query_by_label("Pseudo").is_some()
+        });
+        harness.get_by_label("Pseudo").click();
+        step_until(&mut harness, "pseudo-language", |h| {
+            h.state().backend.state().settings.preferences.language == "en-XA"
+                && h.query_by_label("[[File]]").is_some()
+                && h.query_by_label("[[Theme:]]").is_some()
+        });
+        assert!(harness.query_by_label(s.menu_file).is_none());
+        harness.get_by_label("[[Language:]]").click();
+        step_until(&mut harness, "language list again", |h| {
+            h.query_by_label("English").is_some()
+        });
+        harness.get_by_label("English").click();
+        step_until(&mut harness, "English again", |h| {
+            h.state().backend.state().settings.preferences.language == "en"
+                && h.query_by_label(s.menu_file).is_some()
+        });
+        crate::locale::set_active_for_this_thread(None);
     }
 
     /// Clicks the first widget labelled `label` (the tree and the tab bar

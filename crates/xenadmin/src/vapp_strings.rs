@@ -8,22 +8,11 @@
 //! as named placeholders. A few are this console's own; each says so.
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! vapp_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct VAppStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "vapp", struct VAppStrings, fn vapp_strings;
 
-        /// English.
-        pub static EN: VAppStrings = VAppStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-vapp_strings! {
     // ---- menus -------------------------------------------------------------
     menu_manage = "Manage vApps...",
     menu_start = "Start vApp",
@@ -131,10 +120,6 @@ vapp_strings! {
     step_startup = "Setting VM startup options on {vm}",
     step_deleting = "Deleting vApp '{name}'",
     step_creating_appliance = "Creating appliance '{name}'...",
-}
-
-pub fn vapp_strings() -> &'static VAppStrings {
-    &EN
 }
 
 /// The title of an F12a vApp operation.

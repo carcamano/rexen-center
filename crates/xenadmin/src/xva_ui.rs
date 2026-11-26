@@ -446,12 +446,19 @@ impl ExportWizard {
                     .labelled_by(l.id);
                 ui.end_row();
                 let l = ui.label(x.label_location);
-                ui.add(
-                    TextEdit::singleline(&mut self.folder)
-                        .desired_width(420.0)
-                        .hint_text(x.location_hint),
-                )
-                .labelled_by(l.id);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        TextEdit::singleline(&mut self.folder)
+                            .desired_width(340.0)
+                            .hint_text(x.location_hint),
+                    )
+                    .labelled_by(l.id);
+                    crate::file_dialog::browse_button(
+                        ui,
+                        &mut self.folder,
+                        crate::file_dialog::Pick::Folder,
+                    );
+                });
                 ui.end_row();
                 ui.label(x.label_format);
                 let o = crate::ovf_strings::ovf_strings();
@@ -808,8 +815,15 @@ impl ExportFileDialog {
             ui.set_max_width(520.0);
             ui.label(RichText::new(&record.name_label).strong());
             let l = ui.label(x.file_name);
-            ui.add(TextEdit::singleline(&mut self.path).desired_width(480.0))
-                .labelled_by(l.id);
+            ui.horizontal(|ui| {
+                ui.add(TextEdit::singleline(&mut self.path).desired_width(400.0))
+                    .labelled_by(l.id);
+                crate::file_dialog::browse_button(
+                    ui,
+                    &mut self.path,
+                    crate::file_dialog::Pick::Save(crate::file_dialog::xva_filters()),
+                );
+            });
             ui.checkbox(&mut self.verify, x.verify);
             error_label(ui, &self.error);
             ui.add_space(8.0);
@@ -1142,15 +1156,25 @@ impl ImportWizard {
         ui.add_space(8.0);
         ui.add_enabled_ui(self.uncompress.is_none(), |ui| {
             let l = ui.label(x.label_filename);
-            if ui
-                .add(
-                    TextEdit::singleline(&mut self.path)
-                        .desired_width(560.0)
-                        .hint_text(x.path_hint),
-                )
-                .labelled_by(l.id)
-                .changed()
-            {
+            let changed = ui
+                .horizontal(|ui| {
+                    let typed = ui
+                        .add(
+                            TextEdit::singleline(&mut self.path)
+                                .desired_width(480.0)
+                                .hint_text(x.path_hint),
+                        )
+                        .labelled_by(l.id)
+                        .changed();
+                    let browsed = crate::file_dialog::browse_button(
+                        ui,
+                        &mut self.path,
+                        crate::file_dialog::Pick::Open(crate::file_dialog::import_filters()),
+                    );
+                    typed || browsed
+                })
+                .inner;
+            if changed {
                 self.error = None;
                 self.capacity = None;
             }

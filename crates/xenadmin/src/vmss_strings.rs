@@ -12,22 +12,11 @@
 use xen_core::operations::VmssKind;
 
 use crate::i18n::fill;
+use crate::locale::string_table;
 
-macro_rules! vmss_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct VmssStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+string_table! {
+    namespace = "vmss", struct VmssStrings, fn vmss_strings;
 
-        /// English.
-        pub static EN: VmssStrings = VmssStrings {
-            $( $field: $en, )*
-        };
-    };
-}
-
-vmss_strings! {
     // ---- menus -------------------------------------------------------------
     /// `VMSS_MAIN_MENU`.
     menu_manage = "VM Snapshot Schedules...",
@@ -57,6 +46,8 @@ vmss_strings! {
     button_delete = "Delete",
     button_close = "Close",
     enabled = "Enabled",
+    /// `{time}`: a time in UTC (this console's own).
+    time_utc = "{time} UTC",
     disabled = "Disabled",
     not_yet_run = "Not yet run",
     host_not_live = "Pool coordinator unreachable",
@@ -193,10 +184,6 @@ vmss_strings! {
     /// This console's own (one operation for the dialog's save).
     op_properties = "Saving the properties of snapshot schedule '{name}'",
     step_deleting = "Deleting snapshot schedule '{name}'",
-}
-
-pub fn vmss_strings() -> &'static VmssStrings {
-    &EN
 }
 
 /// The title of an F12b snapshot schedule operation.

@@ -1,9 +1,10 @@
 //! User-interface strings.
 //!
-//! Every user-visible string lives in a [`Strings`] table so the UI can be
-//! translated later by adding another table and selecting it in [`strings`].
-//! Only English exists today. Templates use `{name}` placeholders filled by
-//! [`fill`].
+//! The main window's strings (menus, tree, connect and certificate dialogs,
+//! status bar, Events panel, Options) are the `main` table of the message
+//! catalogue ([`crate::locale`]); every other area has its own table. This
+//! module also turns errors, operations and durations into text. Templates
+//! use `{name}` placeholders filled by [`fill`].
 
 use std::time::Duration;
 
@@ -16,315 +17,201 @@ use xen_core::{
 };
 
 use crate::friendly_errors::FRIENDLY_ERRORS;
+use crate::locale::string_table;
 use crate::ops_strings::ops_strings;
 
-/// One language's UI strings.
-pub struct Strings {
-    pub menu_file: &'static str,
-    pub menu_connect: &'static str,
-    pub menu_disconnect: &'static str,
-    pub menu_disconnect_all: &'static str,
-    pub menu_quit: &'static str,
-    pub menu_view: &'static str,
-    pub menu_events: &'static str,
-    pub menu_tools: &'static str,
-    pub menu_options: &'static str,
-    pub menu_vm: &'static str,
-    pub menu_help: &'static str,
-    pub menu_about: &'static str,
+string_table! {
+    namespace = "main", struct Strings, fn strings;
 
-    pub action_start: &'static str,
-    pub action_clean_shutdown: &'static str,
+    menu_file = "File",
+    menu_connect = "Connect…",
+    menu_disconnect = "Disconnect",
+    menu_disconnect_all = "Disconnect All",
+    menu_quit = "Quit",
+    menu_view = "View",
+    menu_events = "Events",
+    menu_tools = "Tools",
+    menu_options = "Options…",
+    menu_vm = "VM",
+    menu_help = "Help",
+    menu_about = "About",
 
-    pub tree_heading: &'static str,
-    pub tree_empty: &'static str,
-    pub tree_no_selection: &'static str,
+    action_start = "Start",
+    action_clean_shutdown = "Shut Down",
 
-    pub details_type_pool: &'static str,
-    pub details_type_host: &'static str,
-    pub details_type_vm: &'static str,
-    pub details_busy: &'static str,
+    tree_heading = "Infrastructure",
+    tree_empty = "Not connected. Use File > Connect… to add a server.",
+    /// `{platform}`: the welcome page under the product name (this
+    /// console's own; the original's home page was a web page).
+    welcome_blurb = "Manage {platform} pools, servers and virtual machines.",
+    /// The home page's button (`Add a Server`).
+    welcome_add_server = "Add a Server",
+    /// `{connected}`, `{saved}`
+    welcome_servers = "{connected} of {saved} saved servers connected.",
+    tree_no_selection = "Select a pool, host or VM in the tree.",
 
-    pub power_running: &'static str,
-    pub power_halted: &'static str,
-    pub power_suspended: &'static str,
-    pub power_paused: &'static str,
-    pub power_unknown: &'static str,
+    details_type_pool = "Pool",
+    details_type_host = "Host",
+    details_type_vm = "Virtual machine",
+    details_busy = "Operation in progress…",
 
-    pub connect_title: &'static str,
-    pub connect_server: &'static str,
-    pub connect_server_hint: &'static str,
-    pub connect_user: &'static str,
-    pub connect_password: &'static str,
-    pub connect_password_saved_hint: &'static str,
-    pub connect_remember: &'static str,
-    pub connect_button: &'static str,
-    pub cancel: &'static str,
+    power_running = "Running",
+    power_halted = "Halted",
+    power_suspended = "Suspended",
+    power_paused = "Paused",
+    power_unknown = "Unknown",
 
-    pub cert_title: &'static str,
+    connect_title = "Connect to Server",
+    connect_server = "Server:",
+    connect_server_hint = "host name or IP address",
+    connect_user = "User name:",
+    connect_password = "Password:",
+    connect_password_saved_hint = "leave empty to use the saved password",
+    connect_remember = "Remember password",
+    connect_button = "Connect",
+    cancel = "Cancel",
+
+    cert_title = "Security Certificate",
     /// `{server}`
-    pub cert_unknown: &'static str,
-    /// `{server}`
-    pub cert_changed: &'static str,
-    pub cert_fingerprint: &'static str,
-    pub cert_previous: &'static str,
-    pub cert_advice: &'static str,
-    pub cert_trust: &'static str,
-
-    pub about_title: &'static str,
-    /// `{version}`
-    pub about_version: &'static str,
-    pub about_summary: &'static str,
-    pub about_credits_heading: &'static str,
-    pub about_credits: &'static str,
-    /// `{license}`
-    pub about_license_heading: &'static str,
-
-    pub errors_title: &'static str,
-    pub errors_clear: &'static str,
-
-    pub status_disconnected: &'static str,
-    /// `{server}`
-    pub status_connecting: &'static str,
-    /// `{server}`, `{version}`
-    pub status_connected: &'static str,
-    /// `{server}`, `{error}`
-    pub status_failed: &'static str,
-    /// `{server}`, `{seconds}`, `{attempt}`
-    pub status_reconnect_wait: &'static str,
-    /// `{server}`, `{attempt}`
-    pub status_reconnecting: &'static str,
-    /// `{count}`
-    pub status_summary: &'static str,
-
-    pub server_connecting: &'static str,
-    pub server_connected: &'static str,
-    pub server_reconnecting: &'static str,
-    pub server_failed: &'static str,
-    pub server_disconnected: &'static str,
-    pub server_heading: &'static str,
-    pub server_status: &'static str,
-    pub server_user: &'static str,
-    pub server_error: &'static str,
-    pub server_connect: &'static str,
-    pub server_enter_password: &'static str,
-    pub server_retry_now: &'static str,
-    pub server_disconnect: &'static str,
-    pub server_forget: &'static str,
-    pub server_dismiss: &'static str,
-
-    pub events_title: &'static str,
-    pub events_clear: &'static str,
-    pub events_empty: &'static str,
-    pub events_server_tasks: &'static str,
-    pub events_cancel: &'static str,
-    pub events_col_status: &'static str,
-    pub events_col_description: &'static str,
-    pub events_col_server: &'static str,
-    pub events_col_progress: &'static str,
-    pub events_col_time: &'static str,
-    pub op_running: &'static str,
-    pub op_succeeded: &'static str,
-    pub op_cancelled: &'static str,
-    pub op_failed: &'static str,
-    /// `{server}`
-    pub op_connect: &'static str,
-    /// `{server}`
-    pub op_reconnect: &'static str,
-    /// `{task}`
-    pub op_cancel_task: &'static str,
-    pub op_not_connected: &'static str,
-    pub op_disconnected: &'static str,
-    /// `{time}`
-    pub time_ago: &'static str,
-    /// `{time}`
-    pub time_took: &'static str,
-    pub task_pending: &'static str,
-    pub task_success: &'static str,
-    pub task_failure: &'static str,
-    pub task_cancelling: &'static str,
-    pub task_cancelled: &'static str,
-
-    pub options_title: &'static str,
-    pub options_save_passwords: &'static str,
-    pub options_restore: &'static str,
-    pub options_settings_dir: &'static str,
-    pub options_log_dir: &'static str,
-    pub options_mode_user: &'static str,
-    pub options_mode_portable: &'static str,
-    pub options_mode_override: &'static str,
-    pub options_mode_memory: &'static str,
-    pub close: &'static str,
-
-    pub err_cert_rejected: &'static str,
-    pub err_password_required: &'static str,
-    /// `{error}`
-    pub err_password_unavailable: &'static str,
-    /// `{existing}`
-    pub err_already_connected: &'static str,
-    pub err_too_many_redirects: &'static str,
-    /// `{server}`, `{error}`
-    pub err_connection_refused: &'static str,
-    /// `{error}`
-    pub err_connect: &'static str,
-    /// `{error}`
-    pub err_lost: &'static str,
-    pub err_auth_failed: &'static str,
-    /// `{coordinator}`
-    pub err_host_is_member: &'static str,
-    pub err_host_booting: &'static str,
-    pub err_session_invalid: &'static str,
-    /// `{error}`
-    pub err_network: &'static str,
-}
-
-/// English strings.
-pub static EN: Strings = Strings {
-    menu_file: "File",
-    menu_connect: "Connect…",
-    menu_disconnect: "Disconnect",
-    menu_disconnect_all: "Disconnect All",
-    menu_quit: "Quit",
-    menu_view: "View",
-    menu_events: "Events",
-    menu_tools: "Tools",
-    menu_options: "Options…",
-    menu_vm: "VM",
-    menu_help: "Help",
-    menu_about: "About",
-
-    action_start: "Start",
-    action_clean_shutdown: "Shut Down",
-
-    tree_heading: "Infrastructure",
-    tree_empty: "Not connected. Use File > Connect… to add a server.",
-    tree_no_selection: "Select a pool, host or VM in the tree.",
-
-    details_type_pool: "Pool",
-    details_type_host: "Host",
-    details_type_vm: "Virtual machine",
-    details_busy: "Operation in progress…",
-
-    power_running: "Running",
-    power_halted: "Halted",
-    power_suspended: "Suspended",
-    power_paused: "Paused",
-    power_unknown: "Unknown",
-
-    connect_title: "Connect to Server",
-    connect_server: "Server:",
-    connect_server_hint: "host name or IP address",
-    connect_user: "User name:",
-    connect_password: "Password:",
-    connect_password_saved_hint: "leave empty to use the saved password",
-    connect_remember: "Remember password",
-    connect_button: "Connect",
-    cancel: "Cancel",
-
-    cert_title: "Security Certificate",
-    cert_unknown: "The server {server} presented a certificate that is not trusted yet. \
+    cert_unknown = "The server {server} presented a certificate that is not trusted yet. \
                    XCP-ng hosts use self-signed certificates by default.",
-    cert_changed: "WARNING: the certificate presented by {server} has CHANGED since you last trusted it. \
+    /// `{server}`
+    cert_changed = "WARNING: the certificate presented by {server} has CHANGED since you last trusted it. \
                    This can mean the host was reinstalled or its certificate renewed, or that someone \
                    is intercepting the connection.",
-    cert_fingerprint: "SHA-256 fingerprint:",
-    cert_previous: "Previously trusted fingerprint:",
-    cert_advice: "Compare the fingerprint with the one shown on the host console before trusting it.",
-    cert_trust: "Trust and Connect",
+    cert_fingerprint = "SHA-256 fingerprint:",
+    cert_previous = "Previously trusted fingerprint:",
+    cert_advice = "Compare the fingerprint with the one shown on the host console before trusting it.",
+    cert_trust = "Trust and Connect",
 
-    about_title: "About",
-    about_version: "Version {version}",
-    about_summary: "A cross-platform management console for XCP-ng pools.",
-    about_credits_heading: "Credits",
-    about_credits: "Based on XCP-ng Center, maintained by the XCP-ng community, which derives from \
+    about_title = "About",
+    /// `{version}`
+    about_version = "Version {version}",
+    about_summary = "A cross-platform management console for XCP-ng pools.",
+    about_credits_heading = "Credits",
+    about_credits = "Based on XCP-ng Center, maintained by the XCP-ng community, which derives from \
                     XenAdmin (Citrix XenCenter) by Citrix Systems, Inc. and Cloud Software Group, Inc. \
                     Thanks to the XenCenter and XCP-ng Center contributors listed in the original \
                     project's CREDITS.md.",
-    about_license_heading: "License ({license})",
+    /// `{license}`
+    about_license_heading = "License ({license})",
 
-    errors_title: "Errors",
-    errors_clear: "Clear",
+    errors_title = "Errors",
+    errors_clear = "Clear",
 
-    status_disconnected: "Not connected",
-    status_connecting: "Connecting to {server}…",
-    status_connected: "Connected to {server} (API {version})",
-    status_failed: "{server}: {error}",
-    status_reconnect_wait: "{server}: connection lost; retrying in {seconds} s (attempt {attempt})",
-    status_reconnecting: "{server}: reconnecting (attempt {attempt})…",
-    status_summary: "{count} connected",
+    status_disconnected = "Not connected",
+    /// `{server}`
+    status_connecting = "Connecting to {server}…",
+    /// `{server}`, `{version}`
+    status_connected = "Connected to {server} (API {version})",
+    /// `{server}`, `{error}`
+    status_failed = "{server}: {error}",
+    /// `{server}`, `{seconds}`, `{attempt}`
+    status_reconnect_wait = "{server}: connection lost; retrying in {seconds} s (attempt {attempt})",
+    /// `{server}`, `{attempt}`
+    status_reconnecting = "{server}: reconnecting (attempt {attempt})…",
+    /// `{count}`
+    status_summary = "{count} connected",
 
-    server_connecting: "Connecting…",
-    server_connected: "Connected",
-    server_reconnecting: "Reconnecting…",
-    server_failed: "Not connected",
-    server_disconnected: "Disconnected",
-    server_heading: "Server",
-    server_status: "Status",
-    server_user: "User name",
-    server_error: "Last error",
-    server_connect: "Connect",
-    server_enter_password: "Enter Password…",
-    server_retry_now: "Retry Now",
-    server_disconnect: "Disconnect",
-    server_forget: "Forget Server",
-    server_dismiss: "Dismiss",
+    server_connecting = "Connecting…",
+    server_connected = "Connected",
+    server_reconnecting = "Reconnecting…",
+    server_failed = "Not connected",
+    server_disconnected = "Disconnected",
+    server_heading = "Server",
+    server_status = "Status",
+    server_user = "User name",
+    server_error = "Last error",
+    server_connect = "Connect",
+    server_enter_password = "Enter Password…",
+    server_retry_now = "Retry Now",
+    server_disconnect = "Disconnect",
+    server_forget = "Forget Server",
+    server_dismiss = "Dismiss",
 
-    events_title: "Events",
-    events_clear: "Clear Finished",
-    events_empty: "No events yet.",
-    events_server_tasks: "Server tasks",
-    events_cancel: "Cancel",
-    events_col_status: "Status",
-    events_col_description: "Description",
-    events_col_server: "Server",
-    events_col_progress: "Progress",
-    events_col_time: "Time",
-    op_running: "In progress",
-    op_succeeded: "Completed",
-    op_cancelled: "Cancelled",
-    op_failed: "Failed",
-    op_connect: "Connect to {server}",
-    op_reconnect: "Reconnect to {server}",
-    op_cancel_task: "Cancel task '{task}'",
-    op_not_connected: "the server is not connected",
-    op_disconnected: "disconnected while running",
-    time_ago: "{time} ago",
-    time_took: "took {time}",
-    task_pending: "In progress",
-    task_success: "Completed",
-    task_failure: "Failed",
-    task_cancelling: "Cancelling…",
-    task_cancelled: "Cancelled",
+    events_title = "Events",
+    events_clear = "Clear Finished",
+    events_empty = "No events yet.",
+    events_server_tasks = "Server tasks",
+    events_cancel = "Cancel",
+    events_col_status = "Status",
+    events_col_description = "Description",
+    events_col_server = "Server",
+    events_col_progress = "Progress",
+    events_col_time = "Time",
+    op_running = "In progress",
+    op_succeeded = "Completed",
+    op_cancelled = "Cancelled",
+    op_failed = "Failed",
+    /// `{server}`
+    op_connect = "Connect to {server}",
+    /// `{server}`
+    op_reconnect = "Reconnect to {server}",
+    /// `{task}`
+    op_cancel_task = "Cancel task '{task}'",
+    op_not_connected = "the server is not connected",
+    op_disconnected = "disconnected while running",
+    /// `{time}`
+    time_ago = "{time} ago",
+    /// `{time}`
+    time_took = "took {time}",
+    task_pending = "In progress",
+    task_success = "Completed",
+    task_failure = "Failed",
+    task_cancelling = "Cancelling…",
+    task_cancelled = "Cancelled",
 
-    options_title: "Options",
-    options_save_passwords: "Remember passwords in the system keyring by default",
-    options_restore: "Reconnect to the servers that were connected when the app last closed",
-    options_settings_dir: "Settings folder",
-    options_log_dir: "Log folder",
-    options_mode_user: "per-user settings",
-    options_mode_portable: "portable mode (next to the program)",
-    options_mode_override: "set by XENADMIN_CONFIG_DIR",
-    options_mode_memory: "Settings are kept in memory only (no configuration folder).",
-    close: "Close",
+    options_title = "Options",
+    options_save_passwords = "Remember passwords in the system keyring by default",
+    options_restore = "Reconnect to the servers that were connected when the app last closed",
+    options_settings_dir = "Settings folder",
+    options_log_dir = "Log folder",
+    options_mode_user = "per-user settings",
+    options_mode_portable = "portable mode (next to the program)",
+    options_mode_override = "set by XENADMIN_CONFIG_DIR",
+    /// The button beside a path field (`BROWSE`).
+    browse = "Browse...",
+    filter_all = "All Files",
+    filter_xva = "XVA files",
+    filter_import_all = "All import options",
+    filter_ovf = "OVF/OVA Package files",
+    filter_disk_images = "Virtual Hard Disk images",
+    filter_certificates = "TLS certificate files",
+    filter_keys = "TLS key files",
+    /// This console's own.
+    filter_backups = "Server backup files",
+    filter_searches = "Saved Searches",
+    options_appearance = "Appearance",
+    options_theme = "Theme:",
+    options_theme_system = "Use system setting",
+    options_theme_light = "Light",
+    options_theme_dark = "Dark",
+    options_language = "Language:",
+    /// `{language}`: the system's language, as shipped.
+    options_language_system = "System default ({language})",
+    options_mode_memory = "Settings are kept in memory only (no configuration folder).",
+    close = "Close",
 
-    err_cert_rejected: "Connection cancelled: certificate not trusted.",
-    err_password_required: "No saved password for this server. Enter the password to connect.",
-    err_password_unavailable: "Could not read the saved password from the system keyring: {error}",
-    err_already_connected: "Already connected to this server or pool (as {existing}).",
-    err_too_many_redirects: "The pool members kept redirecting to each other; no pool coordinator was found.",
-    err_connection_refused: "{server}: {error}",
-    err_connect: "Could not connect: {error}",
-    err_lost: "Connection lost: {error}",
-    err_auth_failed: "Authentication failed. Check the user name and password.",
-    err_host_is_member: "This host is a pool member. Connect to the pool coordinator ({coordinator}) instead.",
-    err_host_booting: "The host is still booting. Try again shortly.",
-    err_session_invalid: "The session has expired or was closed on the server.",
-    err_network: "network error ({error})",
-};
-
-/// The active string table.
-pub fn strings() -> &'static Strings {
-    &EN
+    err_cert_rejected = "Connection cancelled: certificate not trusted.",
+    err_password_required = "No saved password for this server. Enter the password to connect.",
+    /// `{error}`
+    err_password_unavailable = "Could not read the saved password from the system keyring: {error}",
+    /// `{existing}`
+    err_already_connected = "Already connected to this server or pool (as {existing}).",
+    err_too_many_redirects = "The pool members kept redirecting to each other; no pool coordinator was found.",
+    /// `{server}`, `{error}`
+    err_connection_refused = "{server}: {error}",
+    /// `{error}`
+    err_connect = "Could not connect: {error}",
+    /// `{error}`
+    err_lost = "Connection lost: {error}",
+    err_auth_failed = "Authentication failed. Check the user name and password.",
+    /// `{coordinator}`
+    err_host_is_member = "This host is a pool member. Connect to the pool coordinator ({coordinator}) instead.",
+    err_host_booting = "The host is still booting. Try again shortly.",
+    err_session_invalid = "The session has expired or was closed on the server.",
+    /// `{error}`
+    err_network = "network error ({error})",
 }
 
 /// Replaces `{name}` placeholders in `template`.
@@ -347,7 +234,10 @@ pub fn friendly_error(code: &str, params: &[String]) -> Option<String> {
     let i = FRIENDLY_ERRORS
         .binary_search_by(|(k, _)| k.as_bytes().cmp(code.as_bytes()))
         .ok()?;
-    let mut text = FRIENDLY_ERRORS[i].1.to_owned();
+    let english = FRIENDLY_ERRORS[i].1;
+    let mut text = crate::locale::translated(&crate::locale::ERRORS, code)
+        .unwrap_or(english)
+        .to_owned();
     for n in 0..10 {
         let placeholder = format!("{{{n}}}");
         if text.contains(&placeholder) {

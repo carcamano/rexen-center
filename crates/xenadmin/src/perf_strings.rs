@@ -7,21 +7,11 @@
 //! `PerfmonAlertEditPage.resx`). Templates use `{name}` placeholders
 //! filled by [`crate::i18n::fill`].
 
-macro_rules! perf_strings {
-    ($( $(#[$doc:meta])* $field:ident = $en:literal, )*) => {
-        /// One language's strings.
-        pub struct PerfStrings {
-            $( $(#[$doc])* pub $field: &'static str, )*
-        }
+use crate::locale::string_table;
 
-        /// English.
-        pub static EN: PerfStrings = PerfStrings {
-            $( $field: $en, )*
-        };
-    };
-}
+string_table! {
+    namespace = "perf", struct PerfStrings, fn perf_strings;
 
-perf_strings! {
     tab_performance = "Performance",
     hdr_performance = "Performance Graphs",
     zoom = "Zoom",
@@ -56,6 +46,14 @@ perf_strings! {
     ds_nic_rx = "NIC {0} Receive",
     ds_nic_tx = "NIC {0} Send",
     ds_vif_rx = "{0} Receive",
+    /// `{device}`: a VM interface without a network name.
+    ds_vif_default = "VIF {device}",
+    /// `{count}`: an alert period.
+    period_hours = "{count} hour(s)",
+    /// `{count}`
+    period_minutes = "{count} minute(s)",
+    /// `{count}`
+    period_seconds = "{count} seconds",
     ds_vif_tx = "{0} Send",
     ds_vbd_read = "Disk {0} Read",
     ds_vbd_write = "Disk {0} Write",
@@ -145,9 +143,4 @@ perf_strings! {
     pm_sub_disk = "When disk usage exceeds {level} for {minutes} min(s)",
     pm_sub_memory = "When free memory falls below {level} for {minutes} min(s)",
     pm_sub_sr = "When storage throughput exceeds {level} for {minutes} min(s)",
-}
-
-/// The strings of the current language.
-pub fn perf_strings() -> &'static PerfStrings {
-    &EN
 }

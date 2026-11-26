@@ -1,7 +1,8 @@
 //! The performance figures of the Search tab's columns (CPU usage, used
 //! memory, disk and network throughput), as the original's
 //! `MetricUpdater`: every 30 seconds (six performance intervals) one
-//! `rrd_updates?host=true` request per live host of the connection, whose
+//! `rrd_updates?host=true` request per live host of the connection, all at
+//! once, whose
 //! newest row gives the latest value of every data source of that host
 //! and of the VMs running on it.
 //!
@@ -110,6 +111,10 @@ pub(crate) async fn run(env: PerfEnv, link: MetricsLink) {
                 .unwrap_or_else(PoisonError::into_inner)
                 .values
                 .clone();
+            // Every host at once, as the original's `Parallel.ForEach`: a
+            // server that does not answer must not hold up the others'
+            // figures until its request times out.
+            let mut requests = tokio::task::JoinSet::new();
             for (host_ref, host) in &model.hosts {
                 if !crate::objects::host_is_live(&model, host) {
                     continue;
@@ -136,7 +141,17 @@ pub(crate) async fn run(env: PerfEnv, link: MetricsLink) {
                     host: true,
                     vm_uuid: None,
                 };
-                match client.updates(session.session_ref().as_str(), &query).await {
+                let session = session.clone();
+                requests.spawn(async move {
+                    let result = client.updates(session.session_ref().as_str(), &query).await;
+                    (key, result)
+                });
+            }
+            while let Some(done) = requests.join_next().await {
+                let Ok((key, result)) = done else {
+                    continue;
+                };
+                match result {
                     Ok(updates) => {
                         // Rows come newest first; take each column's newest value.
                         let mut newest: Vec<Option<f64>> = vec![None; updates.legend.len()];
@@ -174,6 +189,9 @@ pub(crate) async fn run(env: PerfEnv, link: MetricsLink) {
                         tracing::debug!(error = %e, "search metrics: request failed");
                         clients.remove(&key);
                     }
+                }
+                if shared.closed.load(Ordering::Relaxed) {
+                    return;
                 }
             }
             let mut data = shared.data.lock().unwrap_or_else(PoisonError::into_inner);

@@ -133,7 +133,7 @@ pub fn form_ui(ui: &mut Ui, form: &mut PerfmonForm) {
     });
     if !form.is_valid() {
         ui.colored_label(
-            egui::Color32::from_rgb(0xc0, 0x39, 0x2b),
+            crate::theme::tone(ui, crate::theme::Tone::Error),
             p.pm_interval_multiple,
         );
     }
