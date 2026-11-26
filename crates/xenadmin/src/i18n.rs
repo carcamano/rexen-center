@@ -456,6 +456,7 @@ pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error
         && let Some(text) = crate::sr_strings::storage_error(code, params)
             .or_else(|| crate::net_strings::network_error(code))
             .or_else(|| crate::pool_strings::pool_error(code, params))
+            .or_else(|| crate::ha_strings::ha_error(code, params))
     {
         return text;
     }
@@ -621,6 +622,8 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         OperationKind::Storage(kind) => storage_title(kind),
         OperationKind::Network(kind) => network_title(kind),
         OperationKind::Pool(kind) => pool_title(kind),
+        OperationKind::Ha(kind) => crate::ha_strings::ha_title(kind),
+        OperationKind::Ad(kind) => crate::ha_strings::ad_title(kind),
     }
 }
 
@@ -859,6 +862,26 @@ fn pool_step(step: &OperationStep) -> String {
             &[("received", &xen_core::format::memory_size(*received, false))],
         ),
         OperationStep::WaitingForCertificate => p.step_certificate.to_owned(),
+        OperationStep::SettingHaPriority { vm } => fill(
+            crate::ha_strings::ha_strings().step_priority_on,
+            &[("vm", vm)],
+        ),
+        OperationStep::LoweringNtol => crate::ha_strings::ha_strings()
+            .step_lowering_ntol
+            .to_owned(),
+        OperationStep::UnprotectingVm { vm } => fill(
+            crate::ha_strings::ha_strings().step_unprotect,
+            &[
+                ("vm", vm),
+                (
+                    "priority",
+                    crate::ha_strings::priority_name(xen_core::ha::RestartPriority::DoNotRestart),
+                ),
+            ],
+        ),
+        OperationStep::JoiningDomain => crate::ha_strings::ha_strings()
+            .step_joining_domain
+            .to_owned(),
         _ => String::new(),
     }
 }

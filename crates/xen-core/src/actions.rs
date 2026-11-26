@@ -8,9 +8,11 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Sr, Vbd, Vdi,
-    Vif, Vm, VmOperations, VmPowerState, VmRecord,
+    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Role, Sr,
+    Subject, Vbd, Vdi, Vif, Vm, VmOperations, VmPowerState, VmRecord,
 };
+
+use crate::ha::VmStartup;
 
 use crate::backend::Password;
 use crate::properties::{ClusteringChange, PropertiesTarget, PropertyChanges};
@@ -344,9 +346,175 @@ pub enum ActionRequest {
         host: Ref<Host>,
         path: String,
     },
+    /// The Configure HA wizard (`EnableHAAction`): the VMs' startup
+    /// options, the ntol, then `pool.enable_ha` with the heartbeat SR.
+    EnableHa {
+        heartbeat_sr: Ref<Sr>,
+        ntol: i64,
+        startup: Vec<VmStartup>,
+    },
+    /// Disable HA (`DisableHAAction`).
+    DisableHa,
+    /// The HA settings dialog (`SetHaPrioritiesAction`).
+    SetHaPriorities {
+        startup: Vec<VmStartup>,
+        ntol: i64,
+    },
+    /// Raise (or set) the pool's ntol, after the question asked once a
+    /// server came out of maintenance mode (`EnableNtolDialog`).
+    SetHaNtol {
+        ntol: i64,
+    },
+    /// A server operation of an HA pool that first lowers the ntol to
+    /// `ntol` (`MaybeReduceNtolBeforeOp`, after `NtolDialog`).
+    HaHost {
+        host: Ref<Host>,
+        action: HostAction,
+        ntol: i64,
+    },
+    /// Start or resume a VM of an HA pool after fixing what HA refused:
+    /// `unprotect` sets "do not restart" first (`HAUnprotectVMAction`, the
+    /// VM is protected but not agile); `ntol` lowers the pool's ntol first
+    /// (`HA_LOWERING_NTOL`, the start broke the failover plan).
+    HaVm {
+        vm: Ref<Vm>,
+        action: VmAction,
+        unprotect: bool,
+        ntol: Option<i64>,
+    },
+    /// Join a domain (`EnableAdAction`).
+    EnableAd {
+        domain: String,
+        user: String,
+        password: Password,
+    },
+    /// Leave the domain (`DisableAdAction`), with the domain credentials to
+    /// remove the machine accounts, or without ("Skip").
+    DisableAd {
+        credentials: Option<(String, Password)>,
+    },
+    /// Add users and groups (`AddRemoveSubjectsAction` from the Add Users
+    /// dialog): each name is resolved, then given access.
+    AddSubjects {
+        names: Vec<String>,
+    },
+    /// Remove access (`AddRemoveSubjectsAction`): their sessions are logged
+    /// out and the subjects destroyed.
+    RemoveSubjects {
+        subjects: Vec<Ref<Subject>>,
+    },
+    /// Change Role (`AddRemoveRolesAction` per subject): each ends with
+    /// exactly `roles`; then the logged-in ones in `log_out` are logged out.
+    SetSubjectRoles {
+        subjects: Vec<Ref<Subject>>,
+        roles: Vec<Ref<Role>>,
+        log_out: Vec<Ref<Subject>>,
+    },
+    /// Log Out (`Session.logout_subject_identifier` per subject).
+    LogoutSubjects {
+        subjects: Vec<Ref<Subject>>,
+    },
 }
 
 impl ActionRequest {
+    /// An HA request (run by [`crate::ha_run`]).
+    pub fn is_ha(&self) -> bool {
+        matches!(
+            self,
+            Self::EnableHa { .. }
+                | Self::DisableHa
+                | Self::SetHaPriorities { .. }
+                | Self::SetHaNtol { .. }
+                | Self::HaHost { .. }
+                | Self::HaVm { .. }
+        )
+    }
+
+    /// An Active Directory request (run by [`crate::ha_run`]).
+    pub fn is_ad(&self) -> bool {
+        matches!(
+            self,
+            Self::EnableAd { .. }
+                | Self::DisableAd { .. }
+                | Self::AddSubjects { .. }
+                | Self::RemoveSubjects { .. }
+                | Self::SetSubjectRoles { .. }
+                | Self::LogoutSubjects { .. }
+        )
+    }
+
+    /// The RBAC calls of an HA or AD request (the original's
+    /// `ApiMethodsToRoleCheck`).
+    fn ha_ad_rbac_methods(&self) -> Vec<&'static str> {
+        const PRIORITIES: [&str; 3] = [
+            "vm.set_ha_restart_priority",
+            "vm.set_order",
+            "vm.set_start_delay",
+        ];
+        const NTOL: &str = "pool.set_ha_host_failures_to_tolerate";
+        let mut m: Vec<&'static str> = match self {
+            Self::EnableHa { .. } => {
+                let mut m = PRIORITIES.to_vec();
+                m.extend([NTOL, "pool.enable_ha"]);
+                m
+            }
+            Self::DisableHa => vec!["pool.disable_ha"],
+            Self::SetHaPriorities { .. } => {
+                let mut m = PRIORITIES.to_vec();
+                m.extend([NTOL, "pool.sync_database"]);
+                m
+            }
+            Self::SetHaNtol { .. } => vec![NTOL],
+            Self::HaHost { host, action, .. } => {
+                let mut m = Self::Host {
+                    host: host.clone(),
+                    action: *action,
+                }
+                .rbac_methods();
+                m.push(NTOL);
+                return m;
+            }
+            Self::HaVm {
+                vm,
+                action,
+                unprotect,
+                ntol,
+            } => {
+                let mut m = Self::Vm {
+                    vm: vm.clone(),
+                    action: action.clone(),
+                }
+                .rbac_methods();
+                if *unprotect {
+                    m.push("vm.set_ha_restart_priority");
+                }
+                if ntol.is_some() {
+                    m.push(NTOL);
+                }
+                return m;
+            }
+            // The original lists no call for joining; joining replaces any
+            // earlier configuration first.
+            Self::EnableAd { .. } => {
+                return vec!["pool.disable_external_auth", "pool.enable_external_auth"];
+            }
+            Self::DisableAd { .. } => return crate::ad::rbac_calls::LEAVE.to_vec(),
+            Self::AddSubjects { .. } => return crate::ad::rbac_calls::ADD.to_vec(),
+            Self::RemoveSubjects { .. } => return crate::ad::rbac_calls::REMOVE.to_vec(),
+            Self::SetSubjectRoles { log_out, .. } => {
+                let mut m = vec!["subject.add_to_roles", "subject.remove_from_roles"];
+                if !log_out.is_empty() {
+                    m.extend(crate::ad::rbac_calls::LOGOUT);
+                }
+                return m;
+            }
+            Self::LogoutSubjects { .. } => return crate::ad::rbac_calls::LOGOUT.to_vec(),
+            _ => return Vec::new(),
+        };
+        m.push("task.destroy");
+        m
+    }
+
     /// An F10a pool or properties request (run by [`crate::pool_run`]).
     pub fn is_pool(&self) -> bool {
         matches!(
@@ -615,6 +783,9 @@ impl ActionRequest {
     /// (lowercase `class.method`, without `async_`). The original lists the
     /// same calls in each action's `ApiMethodsToRoleCheck`.
     pub fn rbac_methods(&self) -> Vec<&'static str> {
+        if self.is_ha() || self.is_ad() {
+            return self.ha_ad_rbac_methods();
+        }
         if self.is_pool() {
             let mut m = self.pool_rbac_methods();
             m.push("task.destroy");
@@ -834,6 +1005,18 @@ impl ActionRequest {
             | Self::ResetCertificate { .. }
             | Self::BackupHost { .. }
             | Self::RestoreHost { .. } => &[],
+            Self::EnableHa { .. }
+            | Self::DisableHa
+            | Self::SetHaPriorities { .. }
+            | Self::SetHaNtol { .. }
+            | Self::HaHost { .. }
+            | Self::HaVm { .. }
+            | Self::EnableAd { .. }
+            | Self::DisableAd { .. }
+            | Self::AddSubjects { .. }
+            | Self::RemoveSubjects { .. }
+            | Self::SetSubjectRoles { .. }
+            | Self::LogoutSubjects { .. } => &[],
             Self::ChangeCd { .. } | Self::InstallTools { .. } => &["vbd.eject", "vbd.insert"],
             Self::NewCdDrive { .. } => &["vbd.create", "vbd.plug"],
             Self::Vm { action, .. } => match action {

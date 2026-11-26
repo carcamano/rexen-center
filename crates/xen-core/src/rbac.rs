@@ -26,6 +26,11 @@ pub struct SessionRbac {
     pub is_local_superuser: bool,
     /// Permission and role names held (lowercase).
     pub permissions: HashSet<String>,
+    /// An Active Directory user: their SID (`session.get_auth_user_sid`).
+    pub user_sid: Option<String>,
+    /// The subject that gave them access (`session.get_subject`; the
+    /// user's own, or one of their groups').
+    pub subject: Option<Ref<xapi::Subject>>,
 }
 
 impl SessionRbac {
@@ -33,7 +38,7 @@ impl SessionRbac {
     pub fn superuser() -> Self {
         Self {
             is_local_superuser: true,
-            permissions: HashSet::new(),
+            ..Self::default()
         }
     }
 
@@ -63,9 +68,20 @@ pub async fn fetch(session: &Session) -> xapi::Result<SessionRbac> {
         Err(e) => return Err(e),
     }
     let permissions = xapi::session::get_rbac_permissions(session, &me).await?;
+    // Who the user is, for the Users tab (a local RBAC account has none).
+    let user_sid = xapi::session::get_auth_user_sid(session, &me)
+        .await
+        .ok()
+        .filter(|s| !s.is_empty());
+    let subject = xapi::session::get_subject(session, &me)
+        .await
+        .ok()
+        .filter(|s| !s.is_null());
     Ok(SessionRbac {
         is_local_superuser: false,
         permissions: permissions.iter().map(|p| p.to_lowercase()).collect(),
+        user_sid,
+        subject,
     })
 }
 
@@ -203,6 +219,7 @@ mod tests {
         let operator = SessionRbac {
             is_local_superuser: false,
             permissions: ["vm-operator", "vm.start"].map(String::from).into(),
+            ..SessionRbac::default()
         };
         assert_eq!(
             check(&m, Some(&operator), &["VM.async_start"]),

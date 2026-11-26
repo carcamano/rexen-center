@@ -152,6 +152,9 @@ pub(crate) struct World {
     pub(crate) after: Vec<After>,
     /// The coordinator a `pool.join` in progress joins (from [`check_join`]).
     pub(crate) join_target: Option<String>,
+    /// The coordinator's external authentication (type, service name),
+    /// found with `join_target`.
+    pub(crate) join_auth: Option<(String, String)>,
     pub(crate) secret_rotations: u32,
     /// `PUT /host_restore` bodies accepted, by host.
     pub(crate) restored: Vec<String>,
@@ -504,6 +507,20 @@ impl Db {
 
     /// The joining server's side of `pool.join`, after the coordinator's
     /// checks passed (see [`check_join`]).
+    /// The first server's external authentication (type, service name).
+    pub(crate) fn external_auth(&self) -> (String, String) {
+        let host = self.refs_of_class("host").into_iter().next();
+        let get = |f: &str| {
+            host.as_ref()
+                .and_then(|h| self.rec("host", h))
+                .and_then(|r| r.get(f))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        (get("external_auth_type"), get("external_auth_service_name"))
+    }
+
     fn join(&mut self) -> Reply {
         let hosts = self.refs_of_class("host");
         if hosts.len() != 1 {
@@ -532,6 +549,14 @@ impl Db {
         let Some(coordinator) = self.pool.join_target.take() else {
             return api_error("POOL_JOINING_HOST_CONNECTION_FAILED", &[]);
         };
+        if self
+            .pool
+            .join_auth
+            .take()
+            .is_some_and(|a| a != self.external_auth())
+        {
+            return api_error("POOL_JOINING_EXTERNAL_AUTH_MISMATCH", &[]);
+        }
         let objects = self.host_objects(&host);
         self.pool.standalone = Some(self.objects.clone());
         self.pool.after.push(After::JoinInto {
@@ -908,7 +933,11 @@ impl Db {
 /// The coordinator's checks of `pool.join(address, user, password)`, made
 /// before the joining server does anything: `Ok(address)` of the
 /// coordinator, or the error the join fails with.
-pub(crate) fn check_join(params: &[Value]) -> Result<String, (String, Vec<String>)> {
+/// The coordinator found by [`check_join`]: its address and its external
+/// authentication (type, service name).
+pub(crate) type JoinTarget = (String, (String, String));
+
+pub(crate) fn check_join(params: &[Value]) -> Result<JoinTarget, (String, Vec<String>)> {
     let (address, user, password) = (
         str_param(params, 1),
         str_param(params, 2),
@@ -939,7 +968,7 @@ pub(crate) fn check_join(params: &[Value]) -> Result<String, (String, Vec<String
     if ha {
         return Err(err("HA_IS_ENABLED", &[]));
     }
-    Ok(db.pool.authority.clone())
+    Ok((db.pool.authority.clone(), db.external_auth()))
 }
 
 /// Runs the cross-server work left by the last call of `state`.

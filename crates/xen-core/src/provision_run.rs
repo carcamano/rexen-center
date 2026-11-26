@@ -162,7 +162,19 @@ pub(crate) async fn run(
         | ActionRequest::InstallCertificate { .. }
         | ActionRequest::ResetCertificate { .. }
         | ActionRequest::BackupHost { .. }
-        | ActionRequest::RestoreHost { .. } => {
+        | ActionRequest::RestoreHost { .. }
+        | ActionRequest::EnableHa { .. }
+        | ActionRequest::DisableHa
+        | ActionRequest::SetHaPriorities { .. }
+        | ActionRequest::SetHaNtol { .. }
+        | ActionRequest::HaHost { .. }
+        | ActionRequest::HaVm { .. }
+        | ActionRequest::EnableAd { .. }
+        | ActionRequest::DisableAd { .. }
+        | ActionRequest::AddSubjects { .. }
+        | ActionRequest::RemoveSubjects { .. }
+        | ActionRequest::SetSubjectRoles { .. }
+        | ActionRequest::LogoutSubjects { .. } => {
             unreachable!("run by crate::operations")
         }
     }

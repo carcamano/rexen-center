@@ -91,6 +91,10 @@ pub enum DialogRequest {
     InstallCertificate(Ref<xapi::Host>),
     Backup(Ref<xapi::Host>),
     Restore(Ref<xapi::Host>),
+    /// Configure HA: the wizard, or the settings dialog when HA is on.
+    ConfigureHa,
+    /// Disable HA (checked, then asked).
+    DisableHa,
 }
 
 impl DialogRequest {
@@ -110,6 +114,11 @@ impl DialogRequest {
                 | Self::Backup(_)
                 | Self::Restore(_)
         )
+    }
+
+    /// An HA dialog ([`crate::ha_ui`]).
+    pub fn is_ha(&self) -> bool {
+        matches!(self, Self::ConfigureHa | Self::DisableHa)
     }
 
     /// A storage dialog ([`crate::storage_ui`]).
@@ -600,7 +609,9 @@ impl ProvisionUi {
             | DialogRequest::Dom0Memory(_)
             | DialogRequest::InstallCertificate(_)
             | DialogRequest::Backup(_)
-            | DialogRequest::Restore(_) => {
+            | DialogRequest::Restore(_)
+            | DialogRequest::ConfigureHa
+            | DialogRequest::DisableHa => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(

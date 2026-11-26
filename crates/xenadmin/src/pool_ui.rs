@@ -212,7 +212,7 @@ pub fn pool_entries(state: &AppState, conn: &ConnectionView) -> Vec<Entry> {
         })
         .collect();
     let standalone = pool::standalone_problem(&conn.model);
-    vec![
+    let mut entries = vec![
         Entry::Dialog {
             label: s.new_pool,
             enabled: true,
@@ -230,6 +230,11 @@ pub fn pool_entries(state: &AppState, conn: &ConnectionView) -> Vec<Entry> {
             entries: removable,
         },
         Entry::Separator,
+    ];
+    // `highAvailabilityToolStripMenuItem`, after the vApp entries.
+    entries.extend(crate::ha_ui::pool_entries(state, conn));
+    entries.push(Entry::Separator);
+    entries.extend([
         Entry::Named {
             label: s.change_password.to_owned(),
             enabled: may_change_password(conn),
@@ -269,7 +274,8 @@ pub fn pool_entries(state: &AppState, conn: &ConnectionView) -> Vec<Entry> {
                     .unwrap_or_default(),
             )),
         },
-    ]
+    ]);
+    entries
 }
 
 fn rotate_hint(conn: &ConnectionView) -> Option<String> {
@@ -473,6 +479,111 @@ enum FlowEnd {
 struct Flow {
     questions: VecDeque<Question>,
     end: Option<FlowEnd>,
+    /// Servers must join the pool's domain first: its account is asked
+    /// last (`AddHostToPoolCommand.GetAdPrompt`).
+    ad: Option<AdPrompt>,
+}
+
+/// `AdPasswordPrompt` for the pool's domain (the domain is not asked).
+struct AdPrompt {
+    domain: String,
+    username: String,
+    password: String,
+    /// Why it is asked again (the account was refused).
+    error: Option<String>,
+}
+
+impl AdPrompt {
+    fn new(domain: String) -> Self {
+        Self {
+            domain,
+            username: String::new(),
+            password: String::new(),
+            error: None,
+        }
+    }
+}
+
+/// The pool's domain, when some of `members` must join it before joining
+/// the pool (`PoolJoinRules.CompatibleAdConfig`, as `FixAd` checks).
+fn ad_domain(members: &[&ConnectionView], coordinator: &ConnectionView) -> Option<String> {
+    let c = coordinator.model.coordinator()?;
+    if c.external_auth_type.is_empty() {
+        return None;
+    }
+    members
+        .iter()
+        .any(|m| {
+            m.model
+                .coordinator()
+                .is_some_and(|h| !pool::compatible_ad_config(h, c, false))
+        })
+        .then(|| c.external_auth_service_name.clone())
+}
+
+/// Why the sessions involved may not run `command` (New Pool, Add
+/// Server), worded as the RBAC denial with the roles that could.
+fn join_rbac_problem(state: &AppState, command: &Command) -> Option<String> {
+    use xen_core::rbac::{self, RbacCheck};
+    const POOL: &[&str] = &[
+        "pool.set_name_label",
+        "pool.set_name_description",
+        "pool.set_default_sr",
+        "pool.set_suspend_image_sr",
+        "pool.set_crash_dump_sr",
+    ];
+    const JOIN: &[&str] = &["pool.join"];
+    let (coordinator, members): (ConnectionId, &[ConnectionId]) = match command {
+        Command::NewPool {
+            coordinator,
+            members,
+            ..
+        } => (*coordinator, members),
+        Command::JoinPool { pool, hosts, .. } => (*pool, hosts),
+        _ => return None,
+    };
+    let checks = std::iter::once((coordinator, POOL)).chain(members.iter().map(|m| (*m, JOIN)));
+    for (c, methods) in checks {
+        let Some(conn) = state.connection(c) else {
+            continue;
+        };
+        if let RbacCheck::Denied { authorized } =
+            rbac::check(&conn.model, conn.rbac.as_deref(), methods)
+        {
+            let authorized = authorized
+                .iter()
+                .map(|r| crate::i18n::role_name(&r.name_label))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(format!(
+                "{}: {}",
+                connection_name(conn),
+                fill(
+                    crate::ops_strings::ops_strings().rbac_denied,
+                    &[
+                        ("roles", &crate::i18n::session_roles_text(conn)),
+                        ("authorized", &authorized),
+                    ],
+                )
+            ));
+        }
+    }
+    None
+}
+
+/// What to send again when the domain account was refused.
+#[derive(Clone)]
+enum AdRetry {
+    Join {
+        pool: ConnectionId,
+        hosts: Vec<ConnectionId>,
+    },
+    NewPool {
+        coordinator: ConnectionId,
+        members: Vec<ConnectionId>,
+        name: String,
+        description: String,
+    },
 }
 
 /// What "Add New Server" waits for: a new connection to come up.
@@ -613,6 +724,10 @@ pub struct PoolUi {
     next_id: u64,
     /// The window should open its connect dialog (Add New Server).
     pub open_connect: bool,
+    /// The last Add Server / New Pool sent with a domain account: the
+    /// newest operation id then, what was sent and the domain. A refused
+    /// account asks again (`PoolAbstractAction.FixAd`).
+    ad_sent: Option<(xen_core::OperationId, AdRetry, String)>,
     /// Messages for the window's error list.
     pub errors: Vec<String>,
 }
@@ -812,7 +927,9 @@ impl PoolUi {
             end: Some(FlowEnd::Send(Command::JoinPool {
                 pool,
                 hosts: hosts.to_vec(),
+                ad: None,
             })),
+            ad: ad_domain(&members, pool_view).map(AdPrompt::new),
         });
     }
 
@@ -853,7 +970,7 @@ impl PoolUi {
         self.watch_new_connections(state);
         self.watch_operations(state);
         self.new_pool_window(ctx, state);
-        self.flow_window(ctx, backend);
+        self.flow_window(ctx, state, backend);
         self.password_window(ctx, state, ops, backend);
         self.dom0_window(ctx, state, ops, backend);
         self.install_window(ctx, state, ops, backend);
@@ -915,8 +1032,72 @@ impl PoolUi {
         self.awaiting = None;
     }
 
-    /// The restore's next steps once it worked (`RestoreAction_Completed`).
+    /// The restore's next steps once it worked (`RestoreAction_Completed`);
+    /// a refused domain account is asked again (`FixAd`).
     fn watch_operations(&mut self, state: &AppState) {
+        if let Some((floor, retry, domain)) = self.ad_sent.clone() {
+            let refused = state.operations.iter().find(|o| {
+                o.id > floor
+                    && matches!(
+                        o.kind,
+                        OperationKind::Pool(PoolKind::AddHost { .. } | PoolKind::CreatePool { .. })
+                    )
+                    && matches!(&o.status, OperationStatus::Failed(xen_core::OperationFailure::Xapi(e))
+                        if xen_core::ad::is_credentials_failure(e))
+            });
+            let all_done = state
+                .operations
+                .iter()
+                .filter(|o| o.id > floor)
+                .all(|o| !o.is_running());
+            if let Some(op) = refused
+                && all_done
+                && self.flow.is_none()
+            {
+                let error = match &op.status {
+                    OperationStatus::Failed(xen_core::OperationFailure::Xapi(e)) => {
+                        crate::i18n::describe_xapi_error(e)
+                    }
+                    _ => String::new(),
+                };
+                // Only the servers still on their own are sent again.
+                let standalone = |c: &ConnectionId| {
+                    state
+                        .connection(*c)
+                        .is_some_and(|v| pool::visible_pool(&v.model).is_none())
+                };
+                let command = match retry {
+                    AdRetry::Join { pool, hosts } => Command::JoinPool {
+                        pool,
+                        hosts: hosts.into_iter().filter(standalone).collect(),
+                        ad: None,
+                    },
+                    AdRetry::NewPool {
+                        coordinator,
+                        members,
+                        name,
+                        description,
+                    } => Command::NewPool {
+                        coordinator,
+                        members: members.into_iter().filter(standalone).collect(),
+                        name,
+                        description,
+                        ad: None,
+                    },
+                };
+                let mut prompt = AdPrompt::new(domain);
+                prompt.error = Some(error);
+                self.flow = Some(Flow {
+                    questions: VecDeque::new(),
+                    end: Some(FlowEnd::Send(command)),
+                    ad: Some(prompt),
+                });
+                self.ad_sent = None;
+            } else if all_done && refused.is_none() && state.operations.iter().any(|o| o.id > floor)
+            {
+                self.ad_sent = None;
+            }
+        }
         let s = pool_strings();
         for op in state.operations.iter().filter(|o| o.id > self.seen_ops) {
             if op.is_running() {
@@ -958,12 +1139,92 @@ impl PoolUi {
         }
     }
 
-    fn flow_window(&mut self, ctx: &Context, backend: &BackendHandle) {
+    fn flow_window(&mut self, ctx: &Context, state: &AppState, backend: &BackendHandle) {
         let Some(flow) = self.flow.as_mut() else {
             return;
         };
         let Some(q) = flow.questions.front() else {
-            if let Some(FlowEnd::Send(command)) = flow.end.take() {
+            let mut account = None;
+            if let Some(p) = flow.ad.as_mut() {
+                let h = crate::ha_strings::ha_strings();
+                let (mut ok, mut cancel) = (false, false);
+                window(h.join_title.to_owned()).show(ctx, |ui| {
+                    ui.set_max_width(460.0);
+                    ui.label(fill(h.joining_ad, &[("domain", &p.domain)]));
+                    if let Some(e) = &p.error {
+                        ui.colored_label(ui.visuals().error_fg_color, e);
+                    }
+                    ui.add_space(6.0);
+                    Grid::new("pool-ad-prompt")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            let l = ui.label(h.username);
+                            ui.text_edit_singleline(&mut p.username).labelled_by(l.id);
+                            ui.end_row();
+                            let l = ui.label(h.password);
+                            ui.add(TextEdit::singleline(&mut p.password).password(true))
+                                .labelled_by(l.id);
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ok = ui
+                            .add_enabled(!p.username.trim().is_empty(), Button::new(h.ok))
+                            .clicked();
+                        cancel = ui.button(h.cancel).clicked();
+                    });
+                });
+                if cancel {
+                    self.flow = None;
+                    return;
+                }
+                if !ok {
+                    return;
+                }
+                account = Some((
+                    p.username.trim().to_owned(),
+                    Password::new(p.password.clone()),
+                    p.domain.clone(),
+                ));
+            }
+            if let Some(FlowEnd::Send(mut command)) = flow.end.take() {
+                // The roles each server's session needs (`AddHostToPoolAction`,
+                // `CreatePoolAction`): refused with the roles that could.
+                if let Some(text) = join_rbac_problem(state, &command) {
+                    self.errors.push(text);
+                    self.flow = None;
+                    return;
+                }
+                if let Some((user, password, domain)) = account {
+                    let floor = state.operations.iter().map(|o| o.id).max().unwrap_or(0);
+                    let retry = match &mut command {
+                        Command::JoinPool { pool, hosts, ad } => {
+                            *ad = Some((user, password));
+                            Some(AdRetry::Join {
+                                pool: *pool,
+                                hosts: hosts.clone(),
+                            })
+                        }
+                        Command::NewPool {
+                            coordinator,
+                            members,
+                            name,
+                            description,
+                            ad,
+                        } => {
+                            *ad = Some((user, password));
+                            Some(AdRetry::NewPool {
+                                coordinator: *coordinator,
+                                members: members.clone(),
+                                name: name.clone(),
+                                description: description.clone(),
+                            })
+                        }
+                        _ => None,
+                    };
+                    self.ad_sent = retry.map(|r| (floor, r, domain));
+                }
                 backend.send(command);
             }
             self.flow = None;
@@ -1093,11 +1354,13 @@ impl PoolUi {
                 questions: warning_questions(&views, coordinator, true)
                     .into_iter()
                     .collect(),
+                ad: ad_domain(&views, coordinator).map(AdPrompt::new),
                 end: Some(FlowEnd::Send(Command::NewPool {
                     coordinator: coordinator.id,
                     members,
                     name: d.name.trim().to_owned(),
                     description: d.description.clone(),
+                    ad: None,
                 })),
             });
         }

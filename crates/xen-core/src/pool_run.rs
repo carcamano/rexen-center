@@ -52,7 +52,9 @@ use xapi::error::codes;
 use xapi::{Host, Network, Pool, Ref, Session, Sr};
 
 use crate::actions::{ActionRequest, HostAction};
-use crate::backend::{Command, ConnectionError, ConnectionId, Notification, OperationId, Shared};
+use crate::backend::{
+    Command, ConnectionError, ConnectionId, Notification, OperationId, Password, Shared,
+};
 use crate::model::ConnectionModel;
 use crate::objects;
 use crate::operations::{
@@ -69,6 +71,9 @@ use crate::storage_run::{done, model, outcome, step};
 
 /// The errors this module reports itself (worded by the UI).
 pub mod errors {
+    /// A server must join the pool's domain first and no domain account
+    /// was given.
+    pub const AD_CREDENTIALS: &str = "XENADMIN_AD_CREDENTIALS_REQUIRED";
     /// The password of the coordinator's connection could not be read.
     pub const NO_PASSWORD: &str = "XENADMIN_POOL_NO_PASSWORD";
     /// The server joined, but the console lost it before the pool listed
@@ -236,6 +241,7 @@ pub(crate) fn start_new_pool(
     members: Vec<Option<Member>>,
     name: String,
     description: String,
+    ad: Option<(String, Password)>,
 ) {
     let (conn_id, session) = match coordinator {
         Some(c) => c,
@@ -260,8 +266,16 @@ pub(crate) fn start_new_pool(
     );
     let shared = shared.clone();
     tokio::spawn(async move {
-        let result =
-            create_pool(&shared, conn_id, op, &session, members, &name, &description).await;
+        let result = create_pool(
+            &shared,
+            conn_id,
+            op,
+            &session,
+            members,
+            (&name, &description),
+            ad.as_ref(),
+        )
+        .await;
         finish(&shared, conn_id, op, result);
     });
 }
@@ -272,8 +286,8 @@ async fn create_pool(
     op: OperationId,
     s: &Session,
     members: Vec<Option<Member>>,
-    name: &str,
-    description: &str,
+    (name, description): (&str, &str),
+    ad: Option<&(String, Password)>,
 ) -> TaskOutcome {
     let m = model(shared, conn_id);
     let Some((pool_ref, _)) = m.pool() else {
@@ -317,7 +331,7 @@ async fn create_pool(
             0.1 + 0.9 * (i + 1) as f64 / count,
         );
         let result = match member {
-            Some(member) => join(shared, conn_id, op, member, span).await,
+            Some(member) => join(shared, conn_id, op, member, span, ad).await,
             None => Err(TaskOutcome::Failed(xapi::Error::Protocol(
                 "a member is no longer connected".to_owned(),
             ))),
@@ -337,7 +351,12 @@ async fn create_pool(
 
 /// Starts Add Server: each of `hosts` joins the pool of `pool`
 /// (`AddHostToPoolAction`, one history entry per server).
-pub(crate) fn start_join(shared: &Arc<Shared>, pool: Option<Member>, hosts: Vec<Option<Member>>) {
+pub(crate) fn start_join(
+    shared: &Arc<Shared>,
+    pool: Option<Member>,
+    hosts: Vec<Option<Member>>,
+    ad: Option<(String, Password)>,
+) {
     let Some((pool_conn, pool_session)) = pool else {
         return;
     };
@@ -365,10 +384,11 @@ pub(crate) fn start_join(shared: &Arc<Shared>, pool: Option<Member>, hosts: Vec<
         );
         let shared = shared.clone();
         let pool_session = pool_session.clone();
+        let ad = ad.clone();
         tokio::spawn(async move {
             let result = async {
                 step(&shared, op, OperationStep::Joining);
-                join(&shared, pool_conn, op, member, Span::FULL).await?;
+                join(&shared, pool_conn, op, member, Span::FULL, ad.as_ref()).await?;
                 let m = model(&shared, pool_conn);
                 clear_non_shared_srs(&m, &pool_session).await?;
                 Ok(())
@@ -388,6 +408,7 @@ async fn join(
     op: OperationId,
     (member, member_session): Member,
     span: Span,
+    ad: Option<&(String, Password)>,
 ) -> Result<(), TaskOutcome> {
     let state = shared.state();
     let (Some(pool_view), Some(member_view)) = (
@@ -410,6 +431,39 @@ async fn join(
             return Err(TaskOutcome::Failed(client_error(errors::NO_PASSWORD, &[])));
         }
     };
+    // `PoolAbstractAction.FixAd`: a server without the coordinator's AD
+    // configuration joins its domain first.
+    if let (Some(c), Some(h)) = (
+        pool_view.model.coordinator(),
+        member_view.model.coordinator(),
+    ) && !pool::compatible_ad_config(h, c, false)
+        && !c.external_auth_type.is_empty()
+    {
+        let Some((user, password)) = ad else {
+            return Err(TaskOutcome::Failed(client_error(
+                errors::AD_CREDENTIALS,
+                &[],
+            )));
+        };
+        let Some((member_pool, _)) = member_view.model.pool() else {
+            return Err(TaskOutcome::Failed(client_error(
+                codes::HANDLE_INVALID,
+                &["pool"],
+            )));
+        };
+        step(shared, op, OperationStep::JoiningDomain);
+        tracing::info!(member = %member_view.server, "joining the pool's domain first");
+        crate::ha_run::join_domain(
+            &member_session,
+            member_pool,
+            &c.external_auth_service_name,
+            user,
+            password.expose(),
+        )
+        .await
+        .map_err(TaskOutcome::Failed)?;
+        step(shared, op, OperationStep::Joining);
+    }
     let address = pool::pool_join_address(&pool_view);
     tracing::info!(member = %member_view.server, "joining the pool");
     let start = xapi::pool::async_join(

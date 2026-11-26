@@ -8,10 +8,11 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F10a (pools, pool and server properties) on top of F1–F9
-(base, connection and model, detail tabs, VM and host operations, VNC
-console, performance graphs and alerts, VM creation, templates, snapshots
-and disks, storage repositories, networking).** What works:
+**Status: phase F10b (high availability, Active Directory and RBAC) on top
+of F1–F10a (base, connection and model, detail tabs, VM and host
+operations, VNC console, performance graphs and alerts, VM creation,
+templates, snapshots and disks, storage repositories, networking, pools
+and pool and server properties).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -68,7 +69,8 @@ and disks, storage repositories, networking).** What works:
   messages (`FriendlyErrorNames`). The server submenus check each server
   with `VM.assert_can_boot_here`, and maintenance mode lists the VMs that
   cannot be migrated (`host.get_vms_which_prevent_evacuation`);
-- **RBAC**: the session's rights are read after login, each operation is
+- **RBAC**: the session's rights (and, for an Active Directory user, who
+  they are) are read after login, each operation is
   checked against them before it runs, and a user whose role is not enough
   is offered the role elevation dialog (another user's credentials, checked
   and used for that operation only);
@@ -236,6 +238,31 @@ and disks, storage repositories, networking).** What works:
   through `GET /host_backup` and `PUT /host_restore`; paths are typed, there
   is no native file dialog), and the Pool menu's **Rotate Pool Secret** and
   **Enable Certificate Verification**;
+- **high availability** (the Pool menu's **High Availability**, the pool's
+  **HA** tab): the **Configure HA** wizard (prerequisites; a blocking RBAC
+  page for users who may not configure HA; the **heartbeat SR**, each
+  shared SR checked with `SR.assert_can_host_ha_statefile`; each VM's
+  **restart priority**, **start order** and **delay**, with its agility
+  from `VM.assert_agile` and the original's proposals; the **number of
+  server failures to tolerate**, its maximum computed by the server for
+  the chosen priorities and capped by the pool's HCI limit; the summary),
+  the **HA settings** dialog once HA is on, **Disable HA** (confirmed), and
+  the HA tab (configured and current failure capacity, heartbeating per
+  server and heartbeat SR). Other operations ask what the original asks:
+  maintenance mode, reboot and shut down of a server lower the tolerance
+  first (after a question), it can be raised again once a server leaves
+  maintenance mode, a VM start that breaks the failover plan offers a
+  lower tolerance, a protected VM that is not agile has its priority
+  cleared before it starts; and HA blocks what the original blocks;
+- **Active Directory** (the **Users** tab of a pool or standalone server):
+  **Join Domain** / **Leave Domain** (with the domain account, or
+  "Ignore"), **Add** users and groups (each name resolved, then given
+  access, with its progress), **Remove**, **Change Role** (one role;
+  logged-in users whose role changes are logged out), **Logout User**,
+  who is logged in (every 5 seconds), and the original's questions,
+  including removing or logging out oneself. **Add Server** and **New
+  Pool** join a server to the pool's domain first, asking for a domain
+  account (asked again when refused);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -243,7 +270,10 @@ and disks, storage repositories, networking).** What works:
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
 
-Editing from the tabs (VM properties), custom graphs
+The original 25.04 still has the HA and Users pages but no longer adds them
+to the tab list; they are shown as the earlier XenCenter showed them (HA on
+a pool, Users on a pool or a live standalone server). Editing from the tabs
+(VM properties, so also a VM's own HA page), custom graphs
 (New/Edit Graph), import/export and cross-pool migration come in later
 phases (RDP is not embedded). The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
@@ -463,6 +493,20 @@ end to end:
   the window: the Pool menu, the New Pool dialog, Remove and Add Server,
   the new coordinator choice, every Properties page with its checks, and
   the server dialogs;
+- high availability and Active Directory against the mock
+  (`xapi_mock::ha`, `xapi_mock::ad`: a planner, statefiles, agility, a
+  simulated domain `lab.example` with users and groups, domain logins with
+  their roles): HA turned on and off on the fixture's 2-host pool, its
+  settings changed, the plan refusing a VM start and a server leaving and
+  the lowered or raised tolerance, failures (SR not shared, the HA daemon,
+  a missing statefile disk, a non-agile VM, a tolerance above the plan);
+  joining and leaving the domain (wrong account, unknown domain), users
+  and groups added, roles changed, sessions logged out and access removed,
+  a domain user with the VM Operator role offered role elevation, and Add
+  Server joining the domain first; in the window: the wizard, the HA tab,
+  the settings dialog and Disable HA, the questions of other operations,
+  the Users tab and its dialogs, and role elevation for a domain VM
+  Operator;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -556,6 +600,15 @@ Domain Memory, Install Certificate, Back Up and Restore. No operation
 runs. `f10a_real_run_on_the_mock` rehearses it on the capture and checks
 every call made is a read.
 
+High availability and users on a real host, strictly read only
+(`app/tests/ha_real.rs`, same variables plus `XENADMIN_REAL_LOG`):
+`real_f10b_ha_and_users_read_only` checks the pool's HA tab and Pool menu
+against the cache, opens the Configure HA wizard as far as its priorities
+page (the heartbeat SR, agility and planner checks change nothing) and
+cancels it, checks the Users tab and opens and cancels the Join (or Leave)
+Domain prompt. No operation runs. `f10b_real_run_on_the_mock` rehearses it
+on the capture and checks every call made is a read or one of those checks.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -591,7 +644,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

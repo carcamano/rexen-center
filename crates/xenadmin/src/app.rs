@@ -136,6 +136,9 @@ pub struct XenAdminApp {
     /// Pools and server settings: New Pool, Add Server, the Properties
     /// dialog and the server dialogs.
     pool: PoolUi,
+    /// High availability and Active Directory: the HA wizard and settings,
+    /// the HA and Users tabs.
+    ha: crate::ha_ui::HaUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -178,6 +181,7 @@ impl XenAdminApp {
             storage: StorageUi::default(),
             network: NetUi::default(),
             pool: PoolUi::default(),
+            ha: crate::ha_ui::HaUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -188,7 +192,10 @@ impl XenAdminApp {
     fn drain_notifications(&mut self) {
         let state = self.backend.state();
         while let Some(notification) = self.backend.try_recv() {
-            let Some(notification) = self.ops.on_notification(notification, &state) else {
+            let Some(notification) = self
+                .ops
+                .on_notification(notification, &state, &self.backend)
+            else {
                 continue;
             };
             match notification {
@@ -204,7 +211,9 @@ impl XenAdminApp {
                 }
                 // The New SR wizard's probes, the pool dialogs' questions.
                 Notification::Precheck { id, result, .. } => {
-                    if !self.pool.on_precheck(id, &result) {
+                    if !self.ha.on_precheck(&state, id, &result)
+                        && !self.pool.on_precheck(id, &result)
+                    {
                         self.storage.on_precheck(&state, id, result);
                     }
                 }
@@ -215,7 +224,9 @@ impl XenAdminApp {
                     ));
                 }
                 // Taken by `OpsUi`.
-                Notification::ActionFailed { .. } | Notification::Elevation { .. } => {}
+                Notification::ActionFailed { .. }
+                | Notification::Elevation { .. }
+                | Notification::HaNtolRaise { .. } => {}
             }
         }
         self.errors.append(&mut self.ops.errors);
@@ -1270,6 +1281,26 @@ impl XenAdminApp {
             }
             return;
         }
+        if self.tab == Tab::Ha {
+            let hidden = state.settings.preferences.show_hidden_objects;
+            ScrollArea::vertical()
+                .id_salt("ha-tab-scroll")
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    self.ha
+                        .ha_tab(ui, state, conn, &mut self.ops, &self.backend, hidden);
+                });
+            return;
+        }
+        if self.tab == Tab::Users {
+            ScrollArea::vertical()
+                .id_salt("users-tab-scroll")
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    self.ha.ad.users_tab(ui, state, conn, &self.backend);
+                });
+            return;
+        }
         if self.tab == Tab::Console {
             let (key, title) = match subject {
                 Subject::Vm(r, vm) => (
@@ -1745,7 +1776,11 @@ impl eframe::App for XenAdminApp {
         self.ops.windows(&ctx, &state, &self.backend);
         for (c, request) in std::mem::take(&mut self.ops.dialog_requests) {
             if let Some(conn) = state.connection(c) {
-                if request.is_pool() {
+                if request.is_ha() {
+                    let hidden = state.settings.preferences.show_hidden_objects;
+                    self.ha
+                        .open(conn, request, &mut self.ops, &self.backend, hidden);
+                } else if request.is_pool() {
                     self.pool.open(&state, conn, request, &self.backend);
                 } else if request.is_storage() {
                     self.storage.open(conn, request);
@@ -1766,6 +1801,8 @@ impl eframe::App for XenAdminApp {
         self.pool
             .windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.pool.errors);
+        self.ha.windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.ha.errors);
         if std::mem::take(&mut self.pool.open_connect) {
             self.open_connect_dialog(&state, None);
         }
@@ -1949,6 +1986,10 @@ mod tests {
     // read only (`app/tests/pool_real.rs`).
     mod pool;
     mod pool_real;
+    // F10b: HA and AD/RBAC (`app/tests/ha.rs`), and the real host's HA and
+    // Users tabs read only (`app/tests/ha_real.rs`).
+    mod ha;
+    mod ha_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

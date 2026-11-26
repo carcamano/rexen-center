@@ -168,12 +168,17 @@ pub enum Command {
         members: Vec<ConnectionId>,
         name: String,
         description: String,
+        /// The domain account that joins members without the coordinator's
+        /// AD configuration to its domain first (`FixAd`).
+        ad: Option<(String, Password)>,
     },
     /// Add Server (`AddHostToPoolAction`): the servers of `hosts` join the
     /// pool of connection `pool`.
     JoinPool {
         pool: ConnectionId,
         hosts: Vec<ConnectionId>,
+        /// As for [`Command::NewPool`].
+        ad: Option<(String, Password)>,
     },
     /// Drop finished entries from the operation history.
     ClearFinishedOperations,
@@ -347,6 +352,16 @@ pub enum Notification {
     /// A server removed from its pool did not come back in time to be
     /// connected to (`MESSAGEBOX_RECONNECT_FAIL`).
     ReconnectFailed { server: String },
+    /// A server of an HA pool came out of maintenance mode and the pool
+    /// could now tolerate `max` failures instead of `current`: ask whether
+    /// to raise it (`HA_HOST_ENABLE_NTOL_RAISE_QUERY`), then send
+    /// [`ActionRequest::SetHaNtol`].
+    HaNtolRaise {
+        connection: ConnectionId,
+        host: Ref<Host>,
+        current: i64,
+        max: i64,
+    },
     /// A connection could not even start (bad address, already connected…).
     ConnectionRefused {
         server: String,
@@ -799,6 +814,7 @@ impl Shared {
             elevated_as: None,
             created: None,
             notice: None,
+            subjects: Vec::new(),
             started: SystemTime::now(),
             finished: None,
         };
@@ -1028,6 +1044,7 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 members,
                 name,
                 description,
+                ad,
             } => {
                 let member_of = |c: ConnectionId| {
                     active
@@ -1042,9 +1059,10 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                     members,
                     name,
                     description,
+                    ad,
                 );
             }
-            Command::JoinPool { pool, hosts } => {
+            Command::JoinPool { pool, hosts, ad } => {
                 let member_of = |c: ConnectionId| {
                     active
                         .get(&c)
@@ -1052,7 +1070,7 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                         .map(|s| (c, s))
                 };
                 let hosts = hosts.into_iter().map(member_of).collect();
-                crate::pool_run::start_join(&shared, member_of(pool), hosts);
+                crate::pool_run::start_join(&shared, member_of(pool), hosts, ad);
             }
             Command::ClearFinishedOperations => shared.update(|s| {
                 Arc::make_mut(&mut s.operations).retain(|o| o.is_running());

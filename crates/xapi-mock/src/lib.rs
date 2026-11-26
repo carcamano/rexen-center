@@ -34,6 +34,8 @@
 //! * VM creation, templates, snapshots and disks (see [`provisioning`]);
 //! * storage repositories (see [`storage`]) and networking (see
 //!   [`networking`]);
+//! * high availability (see [`ha`]) and a simulated Active Directory
+//!   domain whose users log in with their subjects' roles (see [`ad`]);
 //! * messages: `message.create` and `message.destroy` (with their events),
 //!   and `host.call_plugin` for perfmon's `refresh` / `start`.
 //!
@@ -53,6 +55,8 @@
 //! behind a dead network link) and [`MockServer::fail_method`] (a call or
 //! its task fails with a given XAPI error).
 
+pub mod ad;
+pub mod ha;
 pub mod networking;
 pub mod ops;
 pub mod pool;
@@ -60,6 +64,7 @@ pub mod provisioning;
 pub mod rrd;
 pub mod storage;
 
+pub use ad::{AD_ADMIN, AD_DOMAIN, AD_USERS};
 pub use ops::RBAC_USERS;
 pub use pool::lab_records;
 
@@ -825,8 +830,8 @@ struct Db {
     objects: BTreeMap<(String, String), Value>,
     events: Vec<StoredEvent>,
     seq: u64,
-    /// Session → its role (`None`: a local superuser).
-    sessions: HashMap<String, Option<&'static str>>,
+    /// Session → who logged in and with which role.
+    sessions: HashMap<String, ops::MockSession>,
     calls: Vec<String>,
     next_session: u64,
     lose_events: bool,
@@ -1337,25 +1342,27 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     match method {
         "session.login_with_password" => {
             let (user, password) = (str_param(params, 0), str_param(params, 1));
-            let root = state.db().pool.root_password().to_owned();
-            let role = if user == USERNAME {
-                (password == root).then_some(None)
-            } else {
-                ops::login(user, password)
-            };
-            let Some(role) = role else {
-                return api_error(
-                    "SESSION_AUTHENTICATION_FAILED",
-                    &[str_param(params, 0), "Authentication failure"],
-                );
-            };
             let mut db = state.db();
+            let root = db.pool.root_password().to_owned();
+            let login = if user == USERNAME {
+                (password == root)
+                    .then(ops::MockSession::superuser)
+                    .ok_or("SESSION_AUTHENTICATION_FAILED")
+            } else if let Some(role) = ops::login(user, password).flatten() {
+                Ok(ops::MockSession::local(user, role))
+            } else {
+                db.ad_login(user, password)
+            };
+            let login = match login {
+                Ok(login) => login,
+                Err(code) => return api_error(code, &[user, "Authentication failure"]),
+            };
             if let Some(coordinator) = db.coordinator.clone() {
                 return api_error("HOST_IS_SLAVE", &[&coordinator]);
             }
             let session = format!("OpaqueRef:mock-session-{}", db.next_session);
             db.next_session += 1;
-            db.sessions.insert(session.clone(), role);
+            db.sessions.insert(session.clone(), login);
             return Ok(json!(session));
         }
         "event.from" => return event_from(state, params).await,
@@ -1373,9 +1380,10 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     if db.unknown_classes.contains(&class) {
         return api_error("MESSAGE_METHOD_UNKNOWN", &[method]);
     }
-    let Some(role) = db.sessions.get(&session).copied() else {
+    let Some(me) = db.sessions.get(&session).cloned() else {
         return api_error("SESSION_INVALID", &[&session]);
     };
+    let role = me.role.as_deref();
     if let Some(permission) = ops::required_permission(method)
         && !ops::may(role, permission)
     {
@@ -1388,7 +1396,10 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     let mut failure = db.failures.get(sync).cloned();
     match join {
         Some(Err(e)) if failure.is_none() => failure = Some(e),
-        Some(Ok(target)) => db.pool.join_target = Some(target),
+        Some(Ok((target, auth))) => {
+            db.pool.join_target = Some(target);
+            db.pool.join_auth = Some(auth);
+        }
         _ => {}
     }
     if let Some((code, params)) = failure.clone()
@@ -1416,8 +1427,11 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 None => api_error("HANDLE_INVALID", &[&class, r]),
             }
         }
-        "session.get_is_local_superuser" => Ok(json!(role.is_none())),
+        "session.get_is_local_superuser" => Ok(json!(me.is_superuser())),
         "session.get_rbac_permissions" => Ok(json!(ops::permissions_of(role))),
+        _ if class == "session" && ad::session_call(call) => {
+            db.ad_session_call(call, params, &session, &me)
+        }
         "VM.assert_can_boot_here" => db.assert_can_boot_here(params),
         "host.get_vms_which_prevent_evacuation" => {
             let host = str_param(params, 1);

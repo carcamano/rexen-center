@@ -86,6 +86,40 @@ pub enum OperationKind {
     Network(NetworkKind),
     /// A pool, server settings or server maintenance operation (F10a).
     Pool(PoolKind),
+    /// A high availability operation (F10b).
+    Ha(HaKind),
+    /// An Active Directory operation (F10b).
+    Ad(AdKind),
+}
+
+/// The HA operations, with the names their titles show (the original's
+/// action titles).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HaKind {
+    /// "Enabling HA on pool '{pool}'".
+    Enable { pool: String },
+    /// "Disabling HA on pool '{pool}'".
+    Disable { pool: String },
+    /// "Setting HA restart priorities".
+    SetPriorities,
+    /// "Changing the number of server failures to tolerate on '{pool}'".
+    SetNtol { pool: String },
+}
+
+/// The Active Directory operations, with the names their titles show.
+/// `pool` is `Helpers.GetName(connection)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdKind {
+    /// "Enabling AD on '{pool}'".
+    Enable { pool: String },
+    /// "Disabling AD on '{pool}'".
+    Disable { pool: String },
+    /// "Adding/removing users on '{pool}'".
+    AddRemove { pool: String },
+    /// "Changing roles for {subjects}".
+    Roles { subjects: Vec<String> },
+    /// "Terminating session for {subjects}".
+    Logout { subjects: Vec<String> },
 }
 
 /// The pool and server operations of F10a, with the names their titles
@@ -333,6 +367,14 @@ pub enum OperationStep {
     /// Install Certificate: waiting for the server to present the new
     /// certificate.
     WaitingForCertificate,
+    /// HA: "Setting HA restart priority on {vm}".
+    SettingHaPriority { vm: String },
+    /// HA: "Lowering the number of server failures to tolerate".
+    LoweringNtol,
+    /// Add Server: joining the pool's domain first.
+    JoiningDomain,
+    /// HA: "Setting HA restart priority on {vm} to 'Do not restart'".
+    UnprotectingVm { vm: String },
 }
 
 /// How an operation ended (or that it has not).
@@ -388,6 +430,8 @@ pub struct Operation {
     pub created: Option<Ref<Vm>>,
     /// What the user must know after it succeeded.
     pub notice: Option<OperationNotice>,
+    /// Add Users: each entered name and what became of it.
+    pub subjects: Vec<crate::ad::SubjectEntry>,
     pub started: SystemTime,
     pub finished: Option<SystemTime>,
 }
@@ -438,10 +482,21 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
                 target: action.target().map(host_name),
             }
         }
-        ActionRequest::Host { host, action } => OperationKind::HostAction {
-            host_name: host_name(host),
-            action: *action,
-        },
+        ActionRequest::Host { host, action } | ActionRequest::HaHost { host, action, .. } => {
+            OperationKind::HostAction {
+                host_name: host_name(host),
+                action: *action,
+            }
+        }
+        ActionRequest::HaVm { vm, action, .. } => operation_kind(
+            model,
+            &ActionRequest::Vm {
+                vm: vm.clone(),
+                action: action.clone(),
+            },
+        ),
+        request if request.is_ha() => OperationKind::Ha(ha_kind(model, request)),
+        request if request.is_ad() => OperationKind::Ad(ad_kind(model, request)),
         ActionRequest::DismissAlerts { messages } => OperationKind::DismissAlerts {
             count: messages.len(),
             title: match messages.as_slice() {
@@ -469,6 +524,46 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         },
         request if request.is_pool() => OperationKind::Pool(pool_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an HA request.
+fn ha_kind(model: &ConnectionModel, request: &ActionRequest) -> HaKind {
+    let pool = model
+        .pool()
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    match request {
+        ActionRequest::EnableHa { .. } => HaKind::Enable { pool },
+        ActionRequest::DisableHa => HaKind::Disable { pool },
+        ActionRequest::SetHaPriorities { .. } => HaKind::SetPriorities,
+        _ => HaKind::SetNtol { pool },
+    }
+}
+
+/// The history entry of an AD request.
+fn ad_kind(model: &ConnectionModel, request: &ActionRequest) -> AdKind {
+    let pool = model
+        .pool()
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    let names = |subjects: &[Ref<xapi::Subject>]| -> Vec<String> {
+        subjects
+            .iter()
+            .filter_map(|s| model.subjects.get(s))
+            .map(|s| crate::ad::shown_name(s).to_owned())
+            .collect()
+    };
+    match request {
+        ActionRequest::EnableAd { .. } => AdKind::Enable { pool },
+        ActionRequest::DisableAd { .. } => AdKind::Disable { pool },
+        ActionRequest::SetSubjectRoles { subjects, .. } => AdKind::Roles {
+            subjects: names(subjects),
+        },
+        ActionRequest::LogoutSubjects { subjects } => AdKind::Logout {
+            subjects: names(subjects),
+        },
+        _ => AdKind::AddRemove { pool },
     }
 }
 
@@ -733,8 +828,21 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
             .find(|v| model.vms.contains_key(v))
     };
     let vm = match request {
-        ActionRequest::Vm { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::Vm { vm, .. } | ActionRequest::HaVm { vm, .. } => {
+            return Some(OperationObject::Vm(vm.clone()));
+        }
+        ActionRequest::EnableHa { .. }
+        | ActionRequest::DisableHa
+        | ActionRequest::SetHaPriorities { .. }
+        | ActionRequest::SetHaNtol { .. }
+        | ActionRequest::EnableAd { .. }
+        | ActionRequest::DisableAd { .. }
+        | ActionRequest::AddSubjects { .. }
+        | ActionRequest::RemoveSubjects { .. }
+        | ActionRequest::SetSubjectRoles { .. }
+        | ActionRequest::LogoutSubjects { .. } => None,
         ActionRequest::Host { host, .. }
+        | ActionRequest::HaHost { host, .. }
         | ActionRequest::EjectHost { host }
         | ActionRequest::EvacuateCoordinator { host, .. }
         | ActionRequest::SetDom0Memory { host, .. }
@@ -869,6 +977,9 @@ pub(crate) fn start_action(
             request if request.is_pool() => {
                 crate::pool_run::run(&shared, connection, op, &session, request).await
             }
+            request if request.is_ha() || request.is_ad() => {
+                crate::ha_run::run(&shared, connection, op, &session, request).await
+            }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
         if let Some(object) = &object {
@@ -902,7 +1013,7 @@ pub(crate) fn start_action(
     op
 }
 
-async fn run_vm_action(
+pub(crate) async fn run_vm_action(
     shared: &Shared,
     connection: ConnectionId,
     op: OperationId,
@@ -1082,7 +1193,7 @@ async fn cancel_running_on(
     }
 }
 
-async fn run_host_action(
+pub(crate) async fn run_host_action(
     shared: &Shared,
     connection: ConnectionId,
     op: OperationId,
@@ -1105,7 +1216,13 @@ async fn run_host_action(
             run_task(shared, op, session, start, Span::FULL, coordinator).await
         }
         HostAction::EnterMaintenance => enter_maintenance(shared, op, session, host, None).await,
-        HostAction::ExitMaintenance => enable(shared, op, session, host).await,
+        HostAction::ExitMaintenance => {
+            let outcome = enable(shared, op, session, host).await;
+            if matches!(outcome, TaskOutcome::Succeeded) {
+                crate::ha_run::offer_ntol_raise(shared, connection, session, host).await;
+            }
+            outcome
+        }
     }
 }
 
@@ -1496,6 +1613,20 @@ pub enum Precheck {
     /// Whether `password` is the one this connection logged in with
     /// (Change Server Password's check of the current password).
     CurrentPassword { password: crate::backend::Password },
+    /// Which of `srs` can hold an HA statefile
+    /// (`SR.assert_can_host_ha_statefile`, `GetHeartbeatSRsAction`).
+    HeartbeatSrs { srs: Vec<Ref<Sr>> },
+    /// The most server failures the pool can tolerate if `restart` VMs are
+    /// restarted (`pool.ha_compute_hypothetical_max_host_failures_to_tolerate`,
+    /// then the pool's HCI limit: `Pool.GetMaximumTolerableHostFailures`).
+    HaMaxFailures {
+        restart: std::collections::BTreeMap<Ref<Vm>, String>,
+    },
+    /// Whether each VM is agile (`VM.assert_agile`).
+    Agility { vms: Vec<Ref<Vm>> },
+    /// The SIDs of the users logged in now
+    /// (`session.get_all_subject_identifiers`).
+    LoggedInSubjects,
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -1519,6 +1650,12 @@ pub enum PrecheckResult {
     PowerOnSecrets(Vec<(Ref<Host>, String)>),
     ClusterNetwork(Option<Ref<xapi::Network>>),
     CurrentPassword(bool),
+    /// Per SR: `None` if it can hold the statefile, else why not.
+    HeartbeatSrs(Vec<(Ref<Sr>, Option<Arc<xapi::Error>>)>),
+    HaMaxFailures(Result<i64, Arc<xapi::Error>>),
+    /// Per VM: `None` if agile, else the error code that says why not.
+    Agility(Vec<(Ref<Vm>, Option<String>)>),
+    LoggedInSubjects(Result<Vec<String>, Arc<xapi::Error>>),
 }
 
 pub(crate) fn run_precheck(
@@ -1596,6 +1733,47 @@ pub(crate) fn run_precheck(
                     .connection_password(connection)
                     .await
                     .is_ok_and(|p| p == password),
+            ),
+            Precheck::HeartbeatSrs { srs } => {
+                let mut out = Vec::new();
+                for sr in srs {
+                    // The plain call: the check needs no task.
+                    let error = xapi::sr::assert_can_host_ha_statefile(&session, &sr)
+                        .await
+                        .err()
+                        .map(Arc::new);
+                    out.push((sr, error));
+                }
+                PrecheckResult::HeartbeatSrs(out)
+            }
+            Precheck::HaMaxFailures { restart } => {
+                let config: HashMap<Ref<Vm>, String> = restart.into_iter().collect();
+                let model = crate::storage_run::model(&shared, connection);
+                PrecheckResult::HaMaxFailures(
+                    xapi::pool::ha_compute_hypothetical_max_host_failures_to_tolerate(
+                        &session, &config,
+                    )
+                    .await
+                    .map(|max| crate::ha::tolerable(model.pool().map(|(_, p)| &**p), max))
+                    .map_err(Arc::new),
+                )
+            }
+            Precheck::Agility { vms } => {
+                let mut out = Vec::new();
+                for vm in vms {
+                    let why = match xapi::vm::assert_agile(&session, &vm).await {
+                        Ok(()) => None,
+                        Err(xapi::Error::Api { code, .. }) => Some(code),
+                        Err(e) => Some(e.to_string()),
+                    };
+                    out.push((vm, why));
+                }
+                PrecheckResult::Agility(out)
+            }
+            Precheck::LoggedInSubjects => PrecheckResult::LoggedInSubjects(
+                xapi::session::get_all_subject_identifiers(&session)
+                    .await
+                    .map_err(Arc::new),
             ),
         };
         shared.notify(Notification::Precheck {

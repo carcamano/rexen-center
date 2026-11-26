@@ -11,6 +11,7 @@
 //! passwords in the OS keyring (service name `xenadmin-rs`, or
 //! `XENADMIN_KEYRING_SERVICE`), and logs in its `logs` folder.
 
+mod ad_ui;
 mod alerts_view;
 mod app;
 mod branding;
@@ -19,6 +20,8 @@ mod console_keys;
 mod console_view;
 mod events;
 mod friendly_errors;
+mod ha_strings;
+mod ha_ui;
 mod i18n;
 mod icons;
 mod logging;

@@ -274,6 +274,7 @@ async fn a_two_host_pool_is_made_split_and_joined_again() {
         members: vec![cb],
         name: "F10a pool".into(),
         description: "made by the tests".into(),
+        ad: None,
     });
     let op = ended_after(&h, before).await;
     ok(&op);
@@ -346,6 +347,7 @@ async fn a_two_host_pool_is_made_split_and_joined_again() {
     h.backend.send(Command::JoinPool {
         pool: ca,
         hosts: vec![cb2],
+        ad: None,
     });
     let op = ended_after(&h, before).await;
     ok(&op);
@@ -401,6 +403,7 @@ async fn failed_joins_change_nothing_and_a_failed_new_pool_is_undone() {
         members: vec![cb],
         name: "Doomed".into(),
         description: "".into(),
+        ad: None,
     });
     let op = ended_after(&h, before).await;
     failed_with(&op, "JOINING_HOST_CANNOT_HAVE_RUNNING_VMS");
@@ -421,6 +424,7 @@ async fn failed_joins_change_nothing_and_a_failed_new_pool_is_undone() {
     h.backend.send(Command::JoinPool {
         pool: ca,
         hosts: vec![cb],
+        ad: None,
     });
     let op = ended_after(&h, before).await;
     failed_with(&op, "HA_IS_ENABLED");
@@ -441,6 +445,7 @@ async fn failed_joins_change_nothing_and_a_failed_new_pool_is_undone() {
     h.backend.send(Command::JoinPool {
         pool: ca,
         hosts: vec![cb],
+        ad: None,
     });
     let op = ended_after(&h, before).await;
     failed_with(&op, "JOINING_HOST_CANNOT_CONTAIN_SHARED_SRS");

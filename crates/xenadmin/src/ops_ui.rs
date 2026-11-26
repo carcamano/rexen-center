@@ -335,6 +335,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
             }
         }
         request if request.is_pool() => crate::pool_ui::confirmation(conn, request),
+        request if request.is_ha() || request.is_ad() => crate::ha_ui::confirmation(conn, request),
         request => crate::net_ui::confirmation(conn, request),
     }
 }
@@ -344,6 +345,26 @@ struct ConfirmDialog {
     request: ActionRequest,
     question: Confirmation,
     focus: bool,
+}
+
+/// Sends `request` for connection `connection`.
+fn send(connection: ConnectionId, request: ActionRequest, backend: &BackendHandle) {
+    backend.send(match request {
+        ActionRequest::Vm { vm, action } => Command::Vm {
+            connection,
+            vm,
+            action,
+        },
+        ActionRequest::Host { host, action } => Command::Host {
+            connection,
+            host,
+            action,
+        },
+        request => Command::Action {
+            connection,
+            request,
+        },
+    });
 }
 
 /// The role elevation dialog (`RoleElevationDialog`).
@@ -397,6 +418,11 @@ type ChecksKey = (ConnectionId, Ref<Vm>, HostMenu);
 enum PendingCheck {
     Submenu(ChecksKey),
     Maintenance,
+    /// A server operation of an HA pool waits for the planner
+    /// (`MaybeReduceNtolBeforeOp`).
+    HaHost(ConnectionId, ActionRequest),
+    /// A VM start of an HA pool waits for its agility (`VMStartAction`).
+    HaAgility(ConnectionId, ActionRequest),
 }
 
 /// Operation state of the window.
@@ -469,22 +495,23 @@ impl OpsUi {
             self.started.push((conn.id, vm.clone()));
         }
         match rbac::check(&conn.model, conn.rbac.as_deref(), &request.rbac_methods()) {
-            RbacCheck::Allowed => backend.send(match request {
-                ActionRequest::Vm { vm, action } => Command::Vm {
-                    connection: conn.id,
-                    vm,
-                    action,
-                },
-                ActionRequest::Host { host, action } => Command::Host {
-                    connection: conn.id,
-                    host,
-                    action,
-                },
-                request => Command::Action {
-                    connection: conn.id,
-                    request,
-                },
-            }),
+            RbacCheck::Allowed => {
+                if let Some(check) = self.ha_check(conn, &request) {
+                    let id = self.next_id();
+                    let pending = match &check {
+                        Precheck::HaMaxFailures { .. } => PendingCheck::HaHost(conn.id, request),
+                        _ => PendingCheck::HaAgility(conn.id, request),
+                    };
+                    self.pending.insert(id, pending);
+                    backend.send(Command::Precheck {
+                        connection: conn.id,
+                        id,
+                        check,
+                    });
+                    return;
+                }
+                send(conn.id, request, backend);
+            }
             RbacCheck::Denied { authorized } => {
                 tracing::info!(
                     "the session's roles do not allow this operation; asking for other credentials"
@@ -516,6 +543,244 @@ impl OpsUi {
                 });
             }
         }
+    }
+
+    /// The HA check `request` waits for, if any: the planner before a
+    /// server of an HA pool goes away, a protected VM's agility before it
+    /// starts.
+    fn ha_check(&self, conn: &ConnectionView, request: &ActionRequest) -> Option<Precheck> {
+        let model = &conn.model;
+        let (_, pool) = model.pool().filter(|(_, p)| p.ha_enabled)?;
+        let _ = pool;
+        match request {
+            ActionRequest::Host { action, .. } if xen_core::ha_run::takes_host_away(*action) => {
+                Some(Precheck::HaMaxFailures {
+                    restart: xen_core::ha::current_priorities(model)
+                        .into_iter()
+                        .collect(),
+                })
+            }
+            ActionRequest::Vm { vm, action }
+                if matches!(
+                    action,
+                    VmAction::Start
+                        | VmAction::StartOn(_)
+                        | VmAction::Resume
+                        | VmAction::ResumeOn(_)
+                ) && model
+                    .vms
+                    .get(vm)
+                    .is_some_and(|v| xen_core::ha::priority(v).is_restart()) =>
+            {
+                Some(Precheck::Agility {
+                    vms: vec![vm.clone()],
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Asks `question` before running `request` (Yes runs it).
+    fn ask(&mut self, conn: ConnectionId, request: ActionRequest, question: Confirmation) {
+        self.confirm = Some(ConfirmDialog {
+            connection: conn,
+            request,
+            question,
+            focus: true,
+        });
+    }
+
+    /// The planner answered for a server operation of an HA pool
+    /// (`AddHostToPoolCommand.NtolDialog`).
+    fn on_ha_host(
+        &mut self,
+        conn: &ConnectionView,
+        request: ActionRequest,
+        max: Option<i64>,
+        backend: &BackendHandle,
+    ) {
+        let h = crate::ha_strings::ha_strings();
+        let (Some(max), Some((_, pool)), ActionRequest::Host { host, action }) =
+            (max, conn.model.pool(), &request)
+        else {
+            send(conn.id, request, backend);
+            return;
+        };
+        let current = pool.ha_host_failures_to_tolerate;
+        let Some(target) = xen_core::ha::ntol_before_host_operation(current, max) else {
+            send(conn.id, request, backend);
+            return;
+        };
+        let pool_name = crate::pool_ui::connection_name(conn);
+        let host_name = conn
+            .model
+            .hosts
+            .get(host)
+            .map(|h| h.name_label.clone())
+            .unwrap_or_default();
+        let template = match (action, target) {
+            (HostAction::EnterMaintenance, 0) => h.host_disable_ntol_zero,
+            (HostAction::Reboot, 0) => h.host_reboot_ntol_zero,
+            (_, 0) => h.host_shutdown_ntol_zero,
+            (HostAction::EnterMaintenance, _) => h.host_disable_ntol_drop,
+            (HostAction::Reboot, _) => h.host_reboot_ntol_drop,
+            _ => h.host_shutdown_ntol_drop,
+        };
+        let text = fill(
+            template,
+            &[
+                ("pool", &pool_name),
+                ("host", &host_name),
+                ("current", &current.to_string()),
+                ("target", &target.to_string()),
+            ],
+        );
+        let request = ActionRequest::HaHost {
+            host: host.clone(),
+            action: *action,
+            ntol: target,
+        };
+        self.ask(
+            conn.id,
+            request,
+            Confirmation {
+                title: h.high_availability,
+                text,
+                yes: ops_strings().yes,
+                no_default: true,
+            },
+        );
+    }
+
+    /// A protected VM's agility is known (`VMStartAbstractAction`): not
+    /// agile, its priority must be cleared first.
+    fn on_ha_agility(
+        &mut self,
+        conn: &ConnectionView,
+        request: ActionRequest,
+        agile: bool,
+        backend: &BackendHandle,
+    ) {
+        let ActionRequest::Vm { vm, action } = &request else {
+            return;
+        };
+        if agile {
+            send(conn.id, request, backend);
+            return;
+        }
+        let h = crate::ha_strings::ha_strings();
+        let start = matches!(action, VmAction::Start | VmAction::StartOn(_));
+        let name = conn
+            .model
+            .vms
+            .get(vm)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_default();
+        let text = fill(
+            if start {
+                h.invalid_config_start
+            } else {
+                h.invalid_config_resume
+            },
+            &[("vm", &name)],
+        );
+        let request = ActionRequest::HaVm {
+            vm: vm.clone(),
+            action: action.clone(),
+            unprotect: true,
+            ntol: None,
+        };
+        self.ask(
+            conn.id,
+            request,
+            Confirmation {
+                title: h.high_availability,
+                text,
+                yes: h.ok,
+                no_default: false,
+            },
+        );
+    }
+
+    /// A VM start broke the failover plan
+    /// (`VMOperationCommand.StartDiagnosisForm`): offer a lower ntol, or
+    /// say HA would have to be turned off. Returns whether it was that.
+    fn on_start_broke_plan(
+        &mut self,
+        state: &AppState,
+        operation: xen_core::OperationId,
+        error: &xapi::Error,
+    ) -> bool {
+        if !error.is_api("HA_OPERATION_WOULD_BREAK_FAILOVER_PLAN") {
+            return false;
+        }
+        let Some(op) = state.operation(operation) else {
+            return false;
+        };
+        let (Some(c), Some(xen_core::OperationObject::Vm(vm))) = (op.connection, &op.object) else {
+            return false;
+        };
+        let xen_core::OperationKind::VmAction {
+            action, vm_name, ..
+        } = &op.kind
+        else {
+            return false;
+        };
+        let start = match action {
+            VmAction::Start | VmAction::StartOn(_) => true,
+            VmAction::Resume | VmAction::ResumeOn(_) => false,
+            _ => return false,
+        };
+        let Some(conn) = state.connection(c) else {
+            return false;
+        };
+        let Some((_, pool)) = conn.model.pool() else {
+            return false;
+        };
+        let h = crate::ha_strings::ha_strings();
+        let pool_name = crate::pool_ui::connection_name(conn);
+        match xen_core::ha_run::vm_start_with_lower_ntol(&conn.model, vm, action) {
+            Some(request) => {
+                let ActionRequest::HaVm {
+                    ntol: Some(target), ..
+                } = &request
+                else {
+                    return false;
+                };
+                let text = fill(
+                    if start {
+                        h.vm_start_ntol_drop
+                    } else {
+                        h.vm_resume_ntol_drop
+                    },
+                    &[
+                        ("pool", &pool_name),
+                        ("current", &pool.ha_host_failures_to_tolerate.to_string()),
+                        ("vm", vm_name),
+                        ("target", &target.to_string()),
+                    ],
+                );
+                self.ask(
+                    c,
+                    request,
+                    Confirmation {
+                        title: h.high_availability,
+                        text,
+                        yes: ops_strings().yes,
+                        no_default: true,
+                    },
+                );
+            }
+            None => self.errors.push(fill(
+                if start {
+                    h.vm_start_ntol_zero
+                } else {
+                    h.vm_resume_ntol_zero
+                },
+                &[("pool", &pool_name), ("vm", vm_name)],
+            )),
+        }
+        true
     }
 
     fn enter_maintenance(
@@ -588,14 +853,18 @@ impl OpsUi {
         &mut self,
         notification: Notification,
         state: &AppState,
+        backend: &BackendHandle,
     ) -> Option<Notification> {
         match notification {
             Notification::ActionFailed {
                 connection,
                 kind,
                 error,
-                ..
+                operation,
             } => {
+                if self.on_start_broke_plan(state, operation, &error) {
+                    return None;
+                }
                 let conn = state.connection(connection).map(|c| &**c);
                 let server = conn.map(|c| c.server.as_str()).unwrap_or_default();
                 self.errors.push(fill(
@@ -659,6 +928,23 @@ impl OpsUi {
                         result,
                     });
                 };
+                if let PendingCheck::HaHost(c, request) | PendingCheck::HaAgility(c, request) =
+                    pending
+                {
+                    if let Some(conn) = state.connection(c) {
+                        match result {
+                            PrecheckResult::HaMaxFailures(max) => {
+                                self.on_ha_host(conn, request, max.ok(), backend)
+                            }
+                            PrecheckResult::Agility(v) => {
+                                let agile = v.iter().all(|(_, why)| why.is_none());
+                                self.on_ha_agility(conn, request, agile, backend)
+                            }
+                            _ => send(c, request, backend),
+                        }
+                    }
+                    return None;
+                }
                 match (Some(pending), result) {
                     (Some(PendingCheck::Submenu(key)), PrecheckResult::BootHosts(hosts)) => {
                         let conn = state.connection(key.0).map(|c| &**c);
@@ -705,6 +991,42 @@ impl OpsUi {
                         }
                     }
                     _ => {}
+                }
+                None
+            }
+            Notification::HaNtolRaise {
+                connection,
+                host,
+                current,
+                max,
+            } => {
+                if let Some(conn) = state.connection(connection) {
+                    let h = crate::ha_strings::ha_strings();
+                    let host_name = conn
+                        .model
+                        .hosts
+                        .get(&host)
+                        .map(|r| r.name_label.clone())
+                        .unwrap_or_default();
+                    let text = fill(
+                        h.host_enable_ntol_raise,
+                        &[
+                            ("pool", &crate::pool_ui::connection_name(conn)),
+                            ("host", &host_name),
+                            ("current", &current.to_string()),
+                            ("max", &max.to_string()),
+                        ],
+                    );
+                    self.ask(
+                        connection,
+                        ActionRequest::SetHaNtol { ntol: max },
+                        Confirmation {
+                            title: h.high_availability,
+                            text,
+                            yes: ops_strings().yes,
+                            no_default: true,
+                        },
+                    );
                 }
                 None
             }

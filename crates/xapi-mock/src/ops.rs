@@ -48,7 +48,43 @@ pub const RBAC_USERS: &[(&str, &str, &str)] = &[
     ("pool-admin-user", "pool-admin-password", "pool-admin"),
 ];
 
-const ROLES: &[&str] = &[
+/// Who a session belongs to.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MockSession {
+    /// Its most powerful role (`None`: a local superuser).
+    pub role: Option<String>,
+    /// The user name given at login.
+    pub user: String,
+    /// An Active Directory user: its SID.
+    pub sid: Option<String>,
+    /// The subject that granted the access (the user's own, else one of
+    /// its groups').
+    pub subject: Option<String>,
+}
+
+impl MockSession {
+    pub fn superuser() -> Self {
+        Self {
+            user: crate::USERNAME.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    pub fn local(user: &str, role: &str) -> Self {
+        Self {
+            role: Some(role.to_owned()),
+            user: user.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    pub fn is_superuser(&self) -> bool {
+        self.role.is_none()
+    }
+}
+
+/// The role ladder, least powerful first.
+pub(crate) const ROLES: &[&str] = &[
     "read-only",
     "vm-operator",
     "vm-admin",
@@ -227,11 +263,39 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("cluster.pool_create", "pool-operator"),
     ("cluster.pool_destroy", "pool-operator"),
     ("vm.set_memory", "vm-admin"),
+    ("pool.enable_ha", "pool-operator"),
+    ("pool.disable_ha", "pool-operator"),
+    ("pool.set_ha_host_failures_to_tolerate", "pool-operator"),
+    ("pool.sync_database", "pool-operator"),
+    (
+        "pool.ha_compute_hypothetical_max_host_failures_to_tolerate",
+        "pool-operator",
+    ),
+    (
+        "pool.ha_compute_max_host_failures_to_tolerate",
+        "pool-operator",
+    ),
+    ("sr.assert_can_host_ha_statefile", "pool-operator"),
+    ("vm.set_ha_restart_priority", "pool-operator"),
+    ("vm.set_order", "pool-operator"),
+    ("vm.set_start_delay", "pool-operator"),
+    ("vm.assert_agile", "read-only"),
+    ("pool.enable_external_auth", "pool-admin"),
+    ("pool.disable_external_auth", "pool-admin"),
+    ("subject.create", "pool-admin"),
+    ("subject.destroy", "pool-admin"),
+    ("subject.add_to_roles", "pool-admin"),
+    ("subject.remove_from_roles", "pool-admin"),
+    ("session.logout_subject_identifier", "pool-admin"),
+    ("session.get_all_subject_identifiers", "pool-operator"),
+    ("auth.get_subject_identifier", "read-only"),
+    ("auth.get_subject_information_from_identifier", "read-only"),
+    ("auth.get_group_membership", "read-only"),
     ("http/get_host_backup", "pool-admin"),
     ("http/put_host_restore", "pool-admin"),
 ];
 
-fn rank(role: &str) -> usize {
+pub(crate) fn rank(role: &str) -> usize {
     ROLES.iter().position(|r| *r == role).unwrap_or(0)
 }
 
@@ -476,6 +540,11 @@ impl Db {
         let Some(rec) = self.rec("vm", &vm) else {
             return Err(("HANDLE_INVALID".into(), vec!["VM".into(), vm]));
         };
+        if matches!(call, "start" | "start_on" | "resume" | "resume_on")
+            && let Some(e) = self.ha_blocks_start(&vm)
+        {
+            return Err(e);
+        }
         let flag = |name: &str| rec.get(name).and_then(Value::as_bool).unwrap_or(false);
         let state = rec
             .get("power_state")
@@ -636,7 +705,12 @@ impl Db {
                 HostEffect::PowerOn
             }
             _ if !live => return Err(("HOST_NOT_LIVE".into(), vec![])),
-            "disable" => HostEffect::Disable,
+            "disable" => {
+                if let Some(e) = self.ha_blocks_disable(&host) {
+                    return Err(e);
+                }
+                HostEffect::Disable
+            }
             "enable" => HostEffect::Enable,
             "restart_agent" => HostEffect::RestartAgent,
             "evacuate" => {

@@ -29,6 +29,10 @@
 //! * [`storage`]: storage repositories (the New SR wizard's request, when
 //!   each SR operation is offered, the probe answers); [`storage_run`]: how
 //!   each runs, call for call as the original's actions.
+//! * [`ha`]: high availability (restart priorities, the failure tolerance,
+//!   the HA tab's rows, when the commands run); [`ad`]: Active Directory
+//!   (the Users tab's rules); [`ha_run`]: how their operations run, call
+//!   for call as the original's actions.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -36,11 +40,14 @@
 //! This crate does not depend on any UI toolkit.
 
 pub mod actions;
+pub mod ad;
 pub mod alerts;
 pub mod backend;
 pub mod connection;
 pub mod console;
 pub mod format;
+pub mod ha;
+pub mod ha_run;
 pub mod model;
 pub mod network;
 pub mod network_run;

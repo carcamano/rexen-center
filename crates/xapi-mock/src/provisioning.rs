@@ -75,6 +75,8 @@ pub(crate) fn handles(class: &str, call: &str) -> bool {
     if crate::storage::handles(class, call)
         || crate::networking::handles(class, call)
         || crate::pool::handles(class, call)
+        || crate::ha::handles(class, call)
+        || crate::ad::handles(class, call)
     {
         return true;
     }
@@ -124,7 +126,7 @@ fn ref_list(rec: &Map<String, Value>, field: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn int(rec: &Map<String, Value>, field: &str) -> i64 {
+pub(crate) fn int(rec: &Map<String, Value>, field: &str) -> i64 {
     match rec.get(field) {
         Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
         Some(Value::String(s)) => s.parse().unwrap_or(0),
@@ -132,7 +134,7 @@ fn int(rec: &Map<String, Value>, field: &str) -> i64 {
     }
 }
 
-fn int_param(params: &[Value], i: usize) -> Option<i64> {
+pub(crate) fn int_param(params: &[Value], i: usize) -> Option<i64> {
     match params.get(i)? {
         Value::Number(n) => n.as_i64(),
         Value::String(s) => s.parse().ok(),
@@ -397,6 +399,12 @@ impl Db {
             return Some(reply);
         }
         if let Some(reply) = self.pool_call(class, call, params) {
+            return Some(reply);
+        }
+        if let Some(reply) = self.ha_call(class, call, params) {
+            return Some(reply);
+        }
+        if let Some(reply) = self.ad_call(class, call, params) {
             return Some(reply);
         }
         let lower = class.to_lowercase();
@@ -846,7 +854,7 @@ impl Db {
         Ok(json!(""))
     }
 
-    fn new_vdi(
+    pub(crate) fn new_vdi(
         &mut self,
         sr: &str,
         name: &str,

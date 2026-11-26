@@ -41,6 +41,11 @@ pub enum Tab {
     /// A VM's snapshots (`SnapshotsPage`), drawn by
     /// [`crate::provision_ui`].
     Snapshots,
+    /// A pool's high availability (`HAPage`), drawn by [`crate::ha_ui`].
+    Ha,
+    /// The users of a pool or standalone server (`AdPage`), drawn by
+    /// [`crate::ad_ui`].
+    Users,
 }
 
 impl Tab {
@@ -55,6 +60,8 @@ impl Tab {
             Self::Console => t.tab_console,
             Self::Performance => crate::perf_strings::perf_strings().tab_performance,
             Self::Snapshots => crate::prov_strings::prov_strings().tab_snapshots,
+            Self::Ha => crate::ha_strings::ha_strings().tab_ha,
+            Self::Users => crate::ha_strings::ha_strings().tab_users,
         }
     }
 }
@@ -81,21 +88,33 @@ pub struct Ctx<'a> {
 /// The tabs shown for `subject` (`MainWindow.GetNewTabPages`).
 pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
     match subject {
+        // The 25.04 source keeps the HA and Users pages but no longer adds
+        // them to the tab list; they are shown where the earlier XenCenter
+        // showed them: HA on a pool, Users on a pool or a live standalone
+        // server.
         Subject::Pool(..) => vec![
             Tab::General,
             Tab::Memory,
             Tab::PhysicalStorage,
             Tab::Networking,
+            Tab::Ha,
+            Tab::Users,
         ],
-        Subject::Host(_, host) if objects::host_is_live(model, host) => vec![
-            Tab::General,
-            Tab::Memory,
-            Tab::PhysicalStorage,
-            Tab::Networking,
-            Tab::Nics,
-            Tab::Console,
-            Tab::Performance,
-        ],
+        Subject::Host(_, host) if objects::host_is_live(model, host) => {
+            let mut tabs = vec![
+                Tab::General,
+                Tab::Memory,
+                Tab::PhysicalStorage,
+                Tab::Networking,
+                Tab::Nics,
+                Tab::Console,
+                Tab::Performance,
+            ];
+            if xen_core::pool::visible_pool(model).is_none() {
+                tabs.push(Tab::Users);
+            }
+            tabs
+        }
         Subject::Host(..) => vec![Tab::General],
         Subject::Vm(_, vm) => {
             let mut tabs = vec![Tab::General, Tab::Memory];
@@ -140,6 +159,8 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Console, _) => t.tab_console,
         (Tab::Performance, _) => crate::perf_strings::perf_strings().hdr_performance,
         (Tab::Snapshots, _) => crate::prov_strings::prov_strings().hdr_snapshots,
+        (Tab::Ha, _) => crate::ha_strings::ha_strings().high_availability,
+        (Tab::Users, _) => crate::ha_strings::ha_strings().ad_tab_title,
     }
 }
 
@@ -311,13 +332,23 @@ mod tests {
                 Tab::General,
                 Tab::Memory,
                 Tab::PhysicalStorage,
-                Tab::Networking
+                Tab::Networking,
+                Tab::Ha,
+                Tab::Users
             ]
         );
+        // A pool member has no Users tab (the pool has it).
         let hr = Ref::new("OpaqueRef:host-0001");
         let host_tabs = tabs_for(&m, Subject::Host(&hr, &m.hosts[&hr]));
         assert_eq!(host_tabs.len(), 7);
         assert_eq!(host_tabs[5..], [Tab::Console, Tab::Performance]);
+        // A live standalone server has one.
+        let lab = ConnectionModel::from_database(&xapi_mock::lab_records("t", 1));
+        let lr = Ref::new("OpaqueRef:host-0001-t");
+        assert_eq!(
+            tabs_for(&lab, Subject::Host(&lr, &lab.hosts[&lr])).last(),
+            Some(&Tab::Users)
+        );
         let vr = Ref::new("OpaqueRef:vm-web");
         assert_eq!(
             tabs_for(&m, Subject::Vm(&vr, &m.vms[&vr])),
