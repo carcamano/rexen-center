@@ -98,10 +98,26 @@ pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec
         item(VmAction::HardShutdown),
         item(VmAction::HardReboot),
         Entry::Separator,
+    ]
+    .into_iter()
+    .chain(crate::vapp_ui::vm_entries(
+        conn,
+        std::slice::from_ref(vm_ref),
+    ))
+    .chain([
+        Entry::Separator,
         servers(o.start_on_server, HostMenu::StartOn),
         servers(o.resume_on_server, HostMenu::ResumeOn),
-        servers(o.migrate_to_server, HostMenu::Migrate),
-    ]
+        Entry::Servers {
+            label: o.migrate_to_server,
+            // The submenu also holds the Migrate VM wizard.
+            enabled: usable
+                && (actions::host_menu_available(&conn.model, vm, HostMenu::Migrate, busy)
+                    || xen_core::migrate::can_open_migrate(&conn.model, vm, busy)),
+            menu: HostMenu::Migrate,
+        },
+    ])
+    .collect()
 }
 
 /// The menu of a host (`SingleAliveHostInPool` / `DeadHosts`).
@@ -334,6 +350,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
+        request if request.is_vapp() => crate::vapp_ui::confirmation(conn, request),
         request if request.is_pool() => crate::pool_ui::confirmation(conn, request),
         request if request.is_ha() || request.is_ad() => crate::ha_ui::confirmation(conn, request),
         request => crate::net_ui::confirmation(conn, request),
@@ -1192,10 +1209,28 @@ impl OpsUi {
                         continue;
                     }
                     ui.menu_button(label, |ui| {
-                        if let Some(request) =
-                            self.servers_menu(ui, conn, vm_ref, vm, menu, backend)
+                        let can_pool_migrate =
+                            actions::host_menu_available(&conn.model, vm, menu, false);
+                        if (menu != HostMenu::Migrate || can_pool_migrate)
+                            && let Some(request) =
+                                self.servers_menu(ui, conn, vm_ref, vm, menu, backend)
                         {
                             *chosen = Some(request);
+                        }
+                        // `MigrateVMToolStripMenuItem.AddAdditionalMenuItems`.
+                        if menu == HostMenu::Migrate {
+                            ui.separator();
+                            let wizard = crate::migrate_ui::migrate_wizard_entry(conn, vm_ref, vm);
+                            self.draw_entries(
+                                ui,
+                                conn,
+                                Some((vm_ref, vm)),
+                                vec![wizard],
+                                false,
+                                backend,
+                                chosen,
+                                dialog,
+                            );
                         }
                     });
                 }

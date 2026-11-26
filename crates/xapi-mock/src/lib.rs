@@ -43,6 +43,12 @@
 //! * disk transfers: `GET /export_raw_vdi` and `PUT /import_raw_vdi` as
 //!   dynamic VHDs or raw bytes, each disk's content kept (see [`raw_vdi`]
 //!   and [`vhd`]), and `VM.create`.
+//! * VM migration within a pool and between mock servers (pools) with
+//!   storage motion: `host.migrate_receive`, `VM.assert_can_migrate` and
+//!   `VM.migrate_send` (see [`migrate`]);
+//! * vApps: `VM_appliance.create` / `destroy` / `start` / `shutdown` /
+//!   `clean_shutdown` / `hard_shutdown`, `VM.set_appliance` and the
+//!   startup sequence (see [`appliance`]).
 //!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
@@ -57,11 +63,14 @@
 //! restart), [`MockServer::set_certificate`] (a renewed certificate),
 //! [`MockServer::redirect_logins_to`] (a pool member answering
 //! `HOST_IS_SLAVE`), [`MockServer::set_unresponsive`] (requests hang, as
-//! behind a dead network link) and [`MockServer::fail_method`] (a call or
-//! its task fails with a given XAPI error).
+//! behind a dead network link), [`MockServer::fail_method`] (a call or
+//! its task fails with a given XAPI error) and
+//! [`MockServer::refuse_migration_to`] (migrations to a host fail).
 
 pub mod ad;
+pub mod appliance;
 pub mod ha;
+pub mod migrate;
 pub mod networking;
 pub mod ops;
 pub mod pool;
@@ -422,6 +431,40 @@ impl MockServer {
                 db.failures.remove(method);
             }
         }
+    }
+
+    /// Makes migrations to destination host `host` (`VM.assert_can_migrate`
+    /// and `VM.migrate_send`, given this server as source or destination)
+    /// fail with XAPI error `code` and `params` until cleared with `None`.
+    pub fn refuse_migration_to(&self, host: &str, error: Option<(&str, &[&str])>) {
+        let mut db = self.state.db();
+        match error {
+            Some((code, params)) => {
+                db.migrate.refusals.insert(
+                    host.to_owned(),
+                    (
+                        code.to_owned(),
+                        params.iter().map(|p| (*p).to_owned()).collect(),
+                    ),
+                );
+            }
+            None => {
+                db.migrate.refusals.remove(host);
+            }
+        }
+    }
+
+    /// How long one second of a vApp's start or shutdown delay lasts
+    /// (default: no wait).
+    pub fn set_appliance_delay_unit(&self, unit: Duration) {
+        self.state.db().appliance.delay_unit = unit;
+    }
+
+    /// What the vApp operations did, in order: `("start", vm)`,
+    /// `("shutdown", vm)` per member and `("delay", seconds)` between groups
+    /// (see [`appliance`]).
+    pub fn appliance_log(&self) -> Vec<(String, String)> {
+        self.state.db().appliance.log.clone()
     }
 
     /// XVA exports write `blocks` blocks of `block_size` bytes per disk
@@ -812,9 +855,12 @@ impl State {
             networking: networking::World::default(),
             pool: pool::World::default(),
             xva: xva::World::default(),
+            migrate: migrate::World::default(),
+            appliance: appliance::World::default(),
         };
         db.init_sr_ops();
         db.init_vif_ops();
+        db.offer_migrate_send();
         // Drives without `allowed_operations` get them from their VM.
         let bare: Vec<String> = db
             .objects
@@ -923,6 +969,10 @@ struct Db {
     pool: pool::World,
     /// XVA transfers.
     xva: xva::World,
+    /// Migration knobs.
+    migrate: migrate::World,
+    /// vApp knobs and log.
+    appliance: appliance::World,
 }
 
 impl Db {
@@ -941,6 +991,29 @@ impl Db {
                 .and_then(|(_, rest)| rest.find('/').map(|i| rest[i..].to_owned()))
                 .unwrap_or_else(|| "/console".to_owned());
             record["location"] = json!(format!("{base}{path}"));
+        }
+    }
+
+    /// Fixture guests offer `migrate_send` in the power states XAPI offers
+    /// it (records captured without it get it).
+    fn offer_migrate_send(&mut self) {
+        for ((class, _), rec) in self.objects.iter_mut() {
+            if class != "vm" {
+                continue;
+            }
+            let flag = |f: &str| rec.get(f).and_then(Value::as_bool).unwrap_or(false);
+            if flag("is_a_template") || flag("is_a_snapshot") || flag("is_control_domain") {
+                continue;
+            }
+            let power = rec.get("power_state").and_then(Value::as_str);
+            if !matches!(power, Some("Running" | "Halted" | "Suspended")) {
+                continue;
+            }
+            if let Some(Value::Array(ops)) = rec.get_mut("allowed_operations")
+                && !ops.iter().any(|o| o.as_str() == Some("migrate_send"))
+            {
+                ops.push(json!("migrate_send"));
+            }
         }
     }
 
@@ -1020,6 +1093,7 @@ impl Db {
         self.sync_consoles(vm, power_state);
         self.sync_vbds(vm);
         self.sync_vifs(vm);
+        self.refresh_vm_appliance(vm);
         if old_host != new_host {
             if old_host != NULL_REF {
                 self.modify("host", &old_host, |rec| {
@@ -1158,7 +1232,10 @@ impl Db {
     }
 }
 
-type Reply = Result<Value, (String, Vec<String>)>;
+/// An XAPI error: its code and parameters.
+type XapiError = (String, Vec<String>);
+
+type Reply = Result<Value, XapiError>;
 
 fn api_error(code: &str, params: &[&str]) -> Reply {
     Err((
@@ -1481,6 +1558,20 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     }
 
     let session = str_param(params, 0).to_owned();
+    // Calls that wait (migrations, vApp starts) never hold the database
+    // across an await.
+    let (wait_class, wait_call) = method
+        .trim_start_matches("Async.")
+        .split_once('.')
+        .unwrap_or((method, ""));
+    if migrate::handles(wait_class, wait_call) {
+        let failure = admit(state, method, &session)?;
+        return migrate::call(state, method, params, failure).await;
+    }
+    if appliance::runs(wait_class, wait_call) {
+        let failure = admit(state, method, &session)?;
+        return appliance::run(state, method, params, failure).await;
+    }
     // `pool.join`: the coordinator's checks, before this server changes
     // anything (and without holding two databases at once).
     let join =
@@ -1711,10 +1802,56 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
     reply
 }
 
+/// The checks every call passes (class known, session valid, permission);
+/// then the error [`MockServer::fail_method`] set for it: returned as the
+/// call's error for a plain call, handed back for an `Async.*` one.
+fn admit(state: &State, method: &str, session: &str) -> Result<Option<XapiError>, XapiError> {
+    let db = state.db();
+    let class = method
+        .trim_start_matches("Async.")
+        .split_once('.')
+        .map_or(method, |(c, _)| c)
+        .to_lowercase();
+    if db.unknown_classes.contains(&class) {
+        return api_error("MESSAGE_METHOD_UNKNOWN", &[method]).map(|_| None);
+    }
+    let Some(me) = db.sessions.get(session) else {
+        return api_error("SESSION_INVALID", &[session]).map(|_| None);
+    };
+    if let Some(permission) = ops::required_permission(method)
+        && !ops::may(me.role.as_deref(), permission)
+    {
+        return api_error(
+            "RBAC_PERMISSION_DENIED",
+            &[permission, "No permission in user session"],
+        )
+        .map(|_| None);
+    }
+    let failure = db
+        .failures
+        .get(method.trim_start_matches("Async."))
+        .cloned();
+    match failure {
+        Some(e) if !method.starts_with("Async.") => Err(e),
+        f => Ok(f),
+    }
+}
+
 /// Creates a pending `task` object named `name` and advances it in the
 /// background; returns its reference.
 fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
-    let (task, steps, step) = {
+    let task = create_task(state, name);
+    let (steps, step) = {
+        let db = state.db();
+        (db.task_steps, db.task_step)
+    };
+    run_task(state, task.clone(), steps, step, work);
+    task
+}
+
+/// Creates a pending `task` object named `name`; returns its reference.
+pub(crate) fn create_task(state: &Arc<State>, name: &str) -> String {
+    let task = {
         let mut db = state.db();
         let task = format!("OpaqueRef:mock-task-{}", db.next_task);
         let uuid = format!("7a5c0000-0000-4000-8000-{:012}", db.next_task);
@@ -1736,9 +1873,14 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
         db.objects
             .insert(("task".to_owned(), task.clone()), record.clone());
         db.push_event("task", "add", &task, Some(record));
-        (task, db.task_steps, db.task_step)
+        task
     };
     state.changed.notify_waiters();
+    task
+}
+
+/// Advances `task` in `steps` steps, then does `work`.
+fn run_task(state: &Arc<State>, task: String, steps: u32, step: Duration, work: ops::Work) {
     let state = state.clone();
     let task_ref = task.clone();
     let runtime = state.runtime.clone();
@@ -1828,7 +1970,6 @@ fn spawn_task(state: &Arc<State>, name: &str, work: ops::Work) -> String {
             state.changed.notify_waiters();
         }
     });
-    task
 }
 
 /// For VM work: the VM and its power state before the work is applied.

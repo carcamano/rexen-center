@@ -9,7 +9,7 @@
 
 use xapi::{
     Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Role, Sr,
-    Subject, Vbd, Vdi, Vif, Vm, VmOperations, VmPowerState, VmRecord,
+    Subject, Vbd, Vdi, Vif, Vm, VmAppliance, VmOperations, VmPowerState, VmRecord,
 };
 
 use crate::ha::VmStartup;
@@ -434,9 +434,83 @@ pub enum ActionRequest {
     /// The Import wizard's OVF/OVA or disk image import
     /// (`ImportApplianceAction` / `ImportImageAction`, F11b).
     ImportOvf(Box<crate::ovf_run::OvfImport>),
+    /// The Migrate / Move / Copy wizard's `VM.migrate_send` to another pool
+    /// or with storage motion (`VMCrossPoolMigrateAction`, F12a). The
+    /// receiving server is asked on the connection `spec.target`.
+    MigrateSend(Box<crate::migrate::MigrateSpec>),
+    /// Move VM within the pool (`VMMoveAction`): each owned disk whose SR
+    /// changes is copied to it, the old one destroyed and a drive made for
+    /// the copy.
+    MoveVm {
+        vm: Ref<Vm>,
+        host: Ref<Host>,
+        storage: Vec<(Ref<Vdi>, Ref<Sr>)>,
+    },
+    /// New vApp (`CreateVMApplianceAction`, then
+    /// `SetVMStartupOptionsAction`).
+    NewVApp(Box<crate::vapp::NewVAppSpec>),
+    /// vApp Properties: name and description, members
+    /// (`AssignVMsToVMApplianceAction`) and startup sequence
+    /// (`SetVMStartupOptionsAction`).
+    SetVApp {
+        vapp: Ref<VmAppliance>,
+        changes: Box<crate::vapp::VAppChanges>,
+    },
+    /// Assign to vApp (`AssignVMsToVMApplianceAction`): `vms` become the
+    /// vApp's members.
+    AssignVApp {
+        vapp: Ref<VmAppliance>,
+        vms: Vec<Ref<Vm>>,
+    },
+    /// Leave a vApp (`RemoveVMsFromVMApplianceAction`).
+    RemoveFromVApp {
+        vapp: Ref<VmAppliance>,
+        vms: Vec<Ref<Vm>>,
+    },
+    /// Delete vApps (`DestroyVMApplianceAction`); their VMs stay.
+    DeleteVApps {
+        vapps: Vec<Ref<VmAppliance>>,
+    },
+    /// Start vApp (`StartApplianceAction`): its VMs in start order.
+    StartVApp {
+        vapp: Ref<VmAppliance>,
+    },
+    /// Shut Down vApp (`ShutDownApplianceAction`).
+    ShutDownVApp {
+        vapp: Ref<VmAppliance>,
+    },
 }
 
 impl ActionRequest {
+    /// A migration or move of the F12a wizard (run by
+    /// [`crate::migrate_run`]).
+    pub fn is_migrate(&self) -> bool {
+        matches!(self, Self::MigrateSend(_) | Self::MoveVm { .. })
+    }
+
+    /// A vApp operation (run by [`crate::vapp_run`]).
+    pub fn is_vapp(&self) -> bool {
+        matches!(
+            self,
+            Self::NewVApp(_)
+                | Self::SetVApp { .. }
+                | Self::AssignVApp { .. }
+                | Self::RemoveFromVApp { .. }
+                | Self::DeleteVApps { .. }
+                | Self::StartVApp { .. }
+                | Self::ShutDownVApp { .. }
+        )
+    }
+
+    /// The other connection an operation needs (the destination of a
+    /// migration), if any.
+    pub fn target_connection(&self) -> Option<crate::backend::ConnectionId> {
+        match self {
+            Self::MigrateSend(spec) => Some(spec.target),
+            _ => None,
+        }
+    }
+
     /// An XVA export or import (run by [`crate::xva_run`]).
     pub fn is_transfer(&self) -> bool {
         matches!(
@@ -808,6 +882,8 @@ impl ActionRequest {
 
 /// `task.destroy`, called once a task has been followed to its end.
 const TASK: &[&str] = &["task.destroy"];
+/// `SetVMStartupOptionsAction`.
+const STARTUP: &[&str] = &["vm.set_order", "vm.set_start_delay", "pool.sync_database"];
 
 impl ActionRequest {
     /// The API calls the operation makes, as RBAC permission names
@@ -829,6 +905,46 @@ impl ActionRequest {
         }
         let own: &[&str] = match self {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
+            // `VMCrossPoolMigrateAction.StaticRBACDependencies` on the
+            // source (`host.migrate_receive` is the destination's).
+            Self::MigrateSend(_) => &["vm.migrate_send", "vm.assert_can_migrate", "task.destroy"],
+            // The calls `VMMoveAction` makes.
+            Self::MoveVm { .. } => &[
+                "vdi.copy",
+                "vdi.destroy",
+                "vbd.create",
+                "vm.set_suspend_sr",
+                "task.destroy",
+            ],
+            Self::NewVApp(spec) => {
+                let mut m = vec!["vm_appliance.create", "vm.set_appliance"];
+                if !spec.startup.is_empty() {
+                    m.extend(STARTUP);
+                }
+                m.extend(TASK);
+                return m;
+            }
+            Self::SetVApp { changes, .. } => {
+                let mut m = Vec::new();
+                if changes.name.is_some() {
+                    m.push("vm_appliance.set_name_label");
+                }
+                if changes.description.is_some() {
+                    m.push("vm_appliance.set_name_description");
+                }
+                if changes.members.is_some() {
+                    m.push("vm.set_appliance");
+                }
+                if !changes.startup.is_empty() {
+                    m.extend(STARTUP);
+                    m.extend(TASK);
+                }
+                return m;
+            }
+            Self::AssignVApp { .. } | Self::RemoveFromVApp { .. } => &["vm.set_appliance"],
+            Self::DeleteVApps { .. } => &["vm.set_appliance", "vm_appliance.destroy"],
+            Self::StartVApp { .. } => &["vm_appliance.start", "task.destroy"],
+            Self::ShutDownVApp { .. } => &["vm_appliance.shutdown", "task.destroy"],
             // `ExportVmAction` / `ImportVmAction.ConstantRBACRequirements`.
             Self::ExportXva { .. } => &["task.create", "http/get_export"],
             // `ApplianceAction.StaticRBACDependencies` and the transfers.

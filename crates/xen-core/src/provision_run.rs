@@ -133,6 +133,15 @@ pub(crate) async fn run(
         ActionRequest::InstallTools { vm } => install_tools(shared, connection, op, s, vm).await,
         ActionRequest::Vm { .. }
         | ActionRequest::Host { .. }
+        | ActionRequest::MigrateSend(_)
+        | ActionRequest::MoveVm { .. }
+        | ActionRequest::NewVApp(_)
+        | ActionRequest::SetVApp { .. }
+        | ActionRequest::AssignVApp { .. }
+        | ActionRequest::RemoveFromVApp { .. }
+        | ActionRequest::DeleteVApps { .. }
+        | ActionRequest::StartVApp { .. }
+        | ActionRequest::ShutDownVApp { .. }
         | ActionRequest::DismissAlerts { .. }
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewSr(_)

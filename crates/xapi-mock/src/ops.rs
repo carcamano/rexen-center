@@ -13,7 +13,9 @@
 //! `resume_on`, `pause`, `unpause` and `pool_migrate` (and their `Async.*`
 //! forms) check the power state, `allowed_operations` and the target host
 //! like XAPI, then change `power_state`, `resident_on`,
-//! `allowed_operations` and the hosts' `resident_VMs`. While an `Async.*`
+//! `allowed_operations` and the hosts' `resident_VMs`. Running, halted and
+//! suspended guests also offer `migrate_send` (see [`crate::migrate`]; the
+//! fixtures' guests get it when loaded). While an `Async.*`
 //! operation runs, the VM lists it in `current_operations` and only the
 //! forced operations stay allowed. `VM.assert_can_boot_here` checks the host.
 //!
@@ -298,6 +300,19 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("http/get_export_raw_vdi", "vm-admin"),
     ("http/put_import_raw_vdi", "vm-admin"),
     ("vif.move", "vm-admin"),
+    ("host.migrate_receive", "vm-power-admin"),
+    ("vm.migrate_send", "vm-power-admin"),
+    ("vm.assert_can_migrate", "vm-power-admin"),
+    ("vm_appliance.create", "pool-operator"),
+    ("vm_appliance.destroy", "pool-operator"),
+    ("vm_appliance.start", "pool-operator"),
+    ("vm_appliance.shutdown", "pool-operator"),
+    ("vm_appliance.clean_shutdown", "pool-operator"),
+    ("vm_appliance.hard_shutdown", "pool-operator"),
+    ("vm_appliance.set_name_label", "pool-operator"),
+    ("vm_appliance.set_name_description", "pool-operator"),
+    ("vm.set_appliance", "pool-operator"),
+    ("vm.set_shutdown_delay", "pool-operator"),
 ];
 
 pub(crate) fn rank(role: &str) -> usize {
@@ -385,6 +400,7 @@ const ALLOWED_HALTED: &[&str] = &[
     "destroy",
     "snapshot",
     "make_into_template",
+    "migrate_send",
 ];
 const ALLOWED_RUNNING: &[&str] = &[
     "clean_shutdown",
@@ -396,8 +412,15 @@ const ALLOWED_RUNNING: &[&str] = &[
     "snapshot",
     "checkpoint",
     "pool_migrate",
+    "migrate_send",
 ];
-const ALLOWED_SUSPENDED: &[&str] = &["resume", "resume_on", "hard_shutdown", "snapshot"];
+const ALLOWED_SUSPENDED: &[&str] = &[
+    "resume",
+    "resume_on",
+    "hard_shutdown",
+    "snapshot",
+    "migrate_send",
+];
 const ALLOWED_PAUSED: &[&str] = &["unpause", "hard_shutdown", "hard_reboot"];
 /// What a live host allows.
 pub(crate) const HOST_ALLOWED_LIVE: &[&str] = &[

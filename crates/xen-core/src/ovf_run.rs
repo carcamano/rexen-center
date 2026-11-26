@@ -28,9 +28,11 @@
 //!   raw bytes (a fixed VHD's footer left out); a gzipped file is expanded
 //!   next to the package first. VMDK, VHDX, qcow2 and WIM files are refused
 //!   (no converter). A disk image import is the same with the envelope the
-//!   wizard made of the image. Unlike the original, no vApp
-//!   (`VM_appliance`) is made: vApps come with a later phase. A cancelled
-//!   or failed import destroys the VMs and disks it made.
+//!   wizard made of the image. A package import first makes a vApp
+//!   (`VM_appliance.create`) named after the package, and each VM joins
+//!   it with the start order and delays of the package's StartupSection
+//!   (F12a); "Start automatically" then starts the vApp. A cancelled or
+//!   failed import destroys the VMs, disks and vApp it made.
 //!
 //! Files stream [`crate::BackendOptions::transfer_buffer`] bytes at a time.
 
@@ -892,10 +894,11 @@ fn verify_ova(
 struct Made {
     vms: Vec<Ref<Vm>>,
     vdis: Vec<Ref<Vdi>>,
+    vapp: Option<Ref<xapi::VmAppliance>>,
 }
 
 async fn remove_made(shared: &Shared, op: OperationId, s: &Session, made: &Made) {
-    if made.vms.is_empty() && made.vdis.is_empty() {
+    if made.vms.is_empty() && made.vdis.is_empty() && made.vapp.is_none() {
         return;
     }
     step(shared, op, OperationStep::RemovingImported);
@@ -918,6 +921,11 @@ async fn remove_made(shared: &Shared, op: OperationId, s: &Session, made: &Made)
                 }
             }
         }
+    }
+    if let Some(vapp) = &made.vapp
+        && let Err(e) = xapi::vm_appliance::destroy(s, vapp).await
+    {
+        tracing::warn!(error = %e, "VM_appliance.destroy of a half-imported vApp failed");
     }
 }
 
@@ -1011,17 +1019,45 @@ async fn import(
     );
     shared.update_operation(op, |o| o.progress = Some(1.0));
     if spec.start {
-        for vm in &made.vms {
-            shared.send(Command::Action {
+        match &made.vapp {
+            // `StartApplianceAction` for the package's vApp.
+            Some(vapp) => shared.send(Command::Action {
                 connection,
-                request: ActionRequest::Vm {
-                    vm: vm.clone(),
-                    action: VmAction::Start,
-                },
-            });
+                request: ActionRequest::StartVApp { vapp: vapp.clone() },
+            }),
+            None => {
+                for vm in &made.vms {
+                    shared.send(Command::Action {
+                        connection,
+                        request: ActionRequest::Vm {
+                            vm: vm.clone(),
+                            action: VmAction::Start,
+                        },
+                    });
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// The package's name (`Package.Name`): the descriptor's file name
+/// without its extension.
+pub fn package_name(path: &str) -> String {
+    let file = Path::new(path)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let lower = file.to_lowercase();
+    for ext in [".ova.gz", ".ovf", ".ova"] {
+        if lower.ends_with(ext) {
+            return file[..file.len() - ext.len()].to_owned();
+        }
+    }
+    Path::new(&file)
+        .file_stem()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or(file)
 }
 
 /// A disk to upload: where its bytes are, how many, in which format.
@@ -1269,6 +1305,20 @@ async fn import_systems(
         .map(|h| h.items.iter().filter(|r| r.is_disk()).count())
         .sum();
     let mut disk_index = 0;
+    // `Import.Process`: a package becomes a vApp first.
+    if spec.image.is_none() {
+        let name = package_name(&spec.path);
+        step(
+            shared,
+            op,
+            OperationStep::CreatingVApp { name: name.clone() },
+        );
+        let record = xapi::VmApplianceRecord {
+            name_label: name,
+            ..xapi::VmApplianceRecord::default()
+        };
+        made.vapp = Some(tri!(xapi::vm_appliance::create(s, &record).await));
+    }
     for mapping in &spec.vms {
         if cancel.is_set() {
             return Err(TaskOutcome::Cancelled);
@@ -1283,7 +1333,10 @@ async fn import_systems(
                 vm: mapping.name.clone(),
             },
         );
-        let record = vm_record(env, system, mapping, spec.image.is_some());
+        let mut record = vm_record(env, system, mapping, spec.image.is_some());
+        if let Some(vapp) = &made.vapp {
+            record.appliance = vapp.clone();
+        }
         let vm = tri!(xapi::vm::create(s, &record).await);
         made.vms.push(vm.clone());
         if made.vms.len() == 1 {

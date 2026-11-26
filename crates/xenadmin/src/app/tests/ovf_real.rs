@@ -184,6 +184,14 @@ fn delete(h: &mut Harness<'_, XenAdminApp>, vm: &Ref<Vm>) -> xen_core::Operation
             assert_eq!(vdi.vbds.len(), 1, "refusing: a disk shared with another VM");
         }
     }
+    // F12a: an imported package is a vApp of its own (named after the
+    // package); it goes with its only VM.
+    let vapp = {
+        let c = conn(h);
+        xen_core::vapp::vapp_of(&c.model, &c.model.vms[vm])
+            .filter(|(_, a)| a.name_label.starts_with(TEST) && a.vms.len() == 1)
+            .map(|(r, _)| r.clone())
+    };
     let before = last_op(h);
     h.state().backend.send(xen_core::Command::Action {
         connection: conn(h).id,
@@ -193,7 +201,21 @@ fn delete(h: &mut Harness<'_, XenAdminApp>, vm: &Ref<Vm>) -> xen_core::Operation
             snapshots: Vec::new(),
         },
     });
-    wait_op(h, "Deleting VM", before, Duration::from_secs(300))
+    let op = wait_op(h, "Deleting VM", before, Duration::from_secs(300));
+    if let Some(vapp) = vapp {
+        let before = last_op(h);
+        h.state().backend.send(xen_core::Command::Action {
+            connection: conn(h).id,
+            request: ActionRequest::DeleteVApps { vapps: vec![vapp] },
+        });
+        let deleted = wait_op(h, "Deleting vApp", before, Duration::from_secs(120));
+        assert!(
+            matches!(deleted.status, xen_core::OperationStatus::Succeeded),
+            "{:?}",
+            deleted.status
+        );
+    }
+    op
 }
 
 fn ovf_page(h: &Harness<'_, XenAdminApp>) -> Option<OvfPage> {
@@ -794,7 +816,10 @@ fn f11b_real_run_on_the_mock() {
         "http/export_raw_vdi",
         "http/import_raw_vdi",
         "VM.create",
-        // Delete.
+        // F12a: the package becomes a vApp (`Import.Process`).
+        "VM_appliance.create",
+        // Delete (the package's vApp too).
+        "VM_appliance.destroy",
         "Async.VM.destroy",
         "VM.destroy",
         "Async.VDI.destroy",

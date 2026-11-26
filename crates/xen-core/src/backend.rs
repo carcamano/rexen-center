@@ -1035,7 +1035,12 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 request,
             } => {
                 let session = active.get(&connection).and_then(|c| slot_get(&c.session));
-                operations::start_action(&shared, connection, session, request, None);
+                // A migration also needs the destination's session.
+                let target = request
+                    .target_connection()
+                    .and_then(|t| active.get(&t))
+                    .and_then(|c| slot_get(&c.session));
+                operations::start_action_with(&shared, connection, session, target, request, None);
             }
             Command::RunElevated {
                 connection,
@@ -1054,7 +1059,16 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 id,
                 check,
             } => match active.get(&connection).and_then(|c| slot_get(&c.session)) {
-                Some(session) => operations::run_precheck(&shared, session, connection, id, check),
+                Some(session) => {
+                    if let Precheck::Migrate { target, .. } = &check {
+                        let target = active.get(target).and_then(|c| slot_get(&c.session));
+                        crate::migrate_run::run_precheck(
+                            &shared, session, target, connection, id, check,
+                        );
+                    } else {
+                        operations::run_precheck(&shared, session, connection, id, check);
+                    }
+                }
                 None => tracing::debug!("precheck ignored: not connected"),
             },
             Command::CancelOperation { operation } => {

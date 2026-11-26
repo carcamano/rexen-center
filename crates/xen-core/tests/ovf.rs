@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use xapi::Ref;
 use xapi_mock::MockServer;
 use xen_core::ovf_package::Package;
@@ -324,8 +324,21 @@ async fn ova_export_then_import_round_trip() {
     let after = counts(&server);
     assert_eq!(after.0, before_counts.0 + 1);
     assert_eq!(after.1, before_counts.1 + 1);
-    // No vApp is made (vApps come later).
-    assert_eq!(server.call_count("VM_appliance.create"), 0);
+    // F12a: the package became a vApp named after it, holding the VM
+    // (`Import.Process`).
+    assert_eq!(server.call_count("VM_appliance.create"), 1);
+    let app = field(&server, "vm", &vm, "appliance");
+    let app = app.as_str().unwrap();
+    let stem = std::path::Path::new(&ova_path)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        field(&server, "vm_appliance", app, "name_label"),
+        stem.as_str()
+    );
+    assert_eq!(field(&server, "vm_appliance", app, "VMs"), json!([vm]));
     assert!(server.tasks().is_empty(), "{:?}", server.tasks());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -471,6 +484,7 @@ async fn failed_imports_leave_nothing() {
         op.status
     );
     assert_eq!(counts(&server), before);
+    assert!(server.refs("vm_appliance").is_empty(), "no vApp is left");
     server.set_transfer_pace(16 << 10, Duration::ZERO);
 
     // The server refuses.
@@ -483,6 +497,7 @@ async fn failed_imports_leave_nothing() {
     .await;
     failed_with(&op, "SR_FULL");
     assert_eq!(counts(&server), before);
+    assert!(server.refs("vm_appliance").is_empty(), "no vApp is left");
     server.fail_method("http/import_raw_vdi", None);
 
     // The link drops mid-transfer.
@@ -495,6 +510,7 @@ async fn failed_imports_leave_nothing() {
     .await;
     failed(&op);
     assert_eq!(counts(&server), before);
+    assert!(server.refs("vm_appliance").is_empty(), "no vApp is left");
     server.drop_transfer_after(None);
 
     // The file ends early.
@@ -511,6 +527,7 @@ async fn failed_imports_leave_nothing() {
     .await;
     failed_with(&op, errors::OVF_FILE_ERROR);
     assert_eq!(counts(&server), before);
+    assert!(server.refs("vm_appliance").is_empty(), "no vApp is left");
 
     // VM.create refused: nothing made either.
     server.fail_method("VM.create", Some(("INTERNAL_ERROR", &["x"])));
@@ -523,6 +540,7 @@ async fn failed_imports_leave_nothing() {
     failed_with(&op, "INTERNAL_ERROR");
     server.fail_method("VM.create", None);
     assert_eq!(counts(&server), before);
+    assert!(server.refs("vm_appliance").is_empty(), "no vApp is left");
     assert!(server.tasks().is_empty(), "{:?}", server.tasks());
     std::fs::remove_dir_all(&dir).unwrap();
 }

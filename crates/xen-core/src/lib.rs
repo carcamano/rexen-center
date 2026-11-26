@@ -36,6 +36,12 @@
 //! * [`xva`]: XVA files (the streaming verifier, `ova.xml`, `.gz`) and the
 //!   import and export wizards' rules; [`xva_run`]: how an export or an
 //!   import runs, call for call as the original's actions.
+//! * [`migrate`]: the Migrate, Move and Copy VM wizard (destinations,
+//!   storage and network mappings, the feasibility checks);
+//!   [`migrate_run`]: `VM.migrate_send` across pools or with storage
+//!   motion, and Move VM, call for call as the original's actions.
+//! * [`vapp`]: vApps (Manage vApps, New vApp, Properties, Start and Shut
+//!   Down, Assign to vApp); [`vapp_run`]: how they run.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -52,6 +58,8 @@ pub mod disk_image;
 pub mod format;
 pub mod ha;
 pub mod ha_run;
+pub mod migrate;
+pub mod migrate_run;
 pub mod model;
 pub mod network;
 pub mod network_run;
@@ -75,6 +83,8 @@ pub mod settings;
 pub mod storage;
 pub mod storage_run;
 pub mod store;
+pub mod vapp;
+pub mod vapp_run;
 pub mod xva;
 pub mod xva_run;
 

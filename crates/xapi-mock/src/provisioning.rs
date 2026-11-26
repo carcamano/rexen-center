@@ -78,6 +78,7 @@ pub(crate) fn handles(class: &str, call: &str) -> bool {
         || crate::pool::handles(class, call)
         || crate::ha::handles(class, call)
         || crate::ad::handles(class, call)
+        || crate::appliance::handles(class, call)
     {
         return true;
     }
@@ -406,6 +407,9 @@ impl Db {
             return Some(reply);
         }
         if let Some(reply) = self.ad_call(class, call, params) {
+            return Some(reply);
+        }
+        if let Some(reply) = self.appliance_call(class, call, params) {
             return Some(reply);
         }
         let lower = class.to_lowercase();
@@ -1014,6 +1018,7 @@ impl Db {
             rec.insert("allowed_operations".into(), json!(ops));
         });
         self.sync_vbds(&vm);
+        self.refresh_vm_appliance(&vm);
         Ok(json!(""))
     }
 
@@ -1065,6 +1070,13 @@ impl Db {
         {
             let parent = parent.to_owned();
             self.drop_ref("vm", &parent, "snapshots", vm);
+        }
+        if let Some(app) = rec.get("appliance").and_then(Value::as_str)
+            && app != NULL_REF
+        {
+            let app = app.to_owned();
+            self.drop_ref("vm_appliance", &app, "VMs", vm);
+            self.refresh_appliance(&app);
         }
         // Snapshots of a destroyed VM stay, orphaned.
         for snap in ref_list(&rec, "snapshots") {
@@ -1296,12 +1308,27 @@ impl Db {
             ("tags", json!([])),
             ("blocked_operations", json!({})),
             ("memory_target", json!(dmax)),
+            ("order", json!(0)),
+            ("start_delay", json!(0)),
+            ("shutdown_delay", json!(0)),
         ] {
             rec.entry(k).or_insert(v);
         }
+        let appliance = rec
+            .get("appliance")
+            .and_then(Value::as_str)
+            .unwrap_or(NULL_REF)
+            .to_owned();
+        if appliance != NULL_REF && !self.exists("vm_appliance", &appliance) {
+            return api_error("HANDLE_INVALID", &["VM_appliance", &appliance]);
+        }
+        rec.insert("appliance".into(), json!(NULL_REF));
         let allowed = vm_allowed(&rec);
         rec.insert("allowed_operations".into(), json!(allowed));
         self.insert("vm", &vm, Value::Object(rec));
+        if appliance != NULL_REF {
+            self.assign_appliance(&vm, &appliance);
+        }
         Ok(json!(vm))
     }
 

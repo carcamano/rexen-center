@@ -141,6 +141,8 @@ pub struct XenAdminApp {
     ha: crate::ha_ui::HaUi,
     /// XVA export and import: the wizards and the Export to File dialog.
     xva: crate::xva_ui::XvaUi,
+    migrate: crate::migrate_ui::MigrateUi,
+    vapp: crate::vapp_ui::VAppUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -185,6 +187,8 @@ impl XenAdminApp {
             pool: PoolUi::default(),
             ha: crate::ha_ui::HaUi::default(),
             xva: crate::xva_ui::XvaUi::default(),
+            migrate: crate::migrate_ui::MigrateUi::default(),
+            vapp: crate::vapp_ui::VAppUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -216,6 +220,7 @@ impl XenAdminApp {
                 Notification::Precheck { id, result, .. } => {
                     if !self.ha.on_precheck(&state, id, &result)
                         && !self.pool.on_precheck(id, &result)
+                        && !self.migrate.on_precheck(id, &result)
                     {
                         self.storage.on_precheck(&state, id, result);
                     }
@@ -1820,7 +1825,11 @@ impl eframe::App for XenAdminApp {
         self.ops.windows(&ctx, &state, &self.backend);
         for (c, request) in std::mem::take(&mut self.ops.dialog_requests) {
             if let Some(conn) = state.connection(c) {
-                if request.is_ha() {
+                if crate::migrate_ui::takes(conn, &request) {
+                    self.migrate.open(conn, request);
+                } else if request.is_vapp() {
+                    self.vapp.open(conn, request, &mut self.ops, &self.backend);
+                } else if request.is_ha() {
                     let hidden = state.settings.preferences.show_hidden_objects;
                     self.ha
                         .open(conn, request, &mut self.ops, &self.backend, hidden);
@@ -1850,6 +1859,17 @@ impl eframe::App for XenAdminApp {
         self.ha.windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.ha.errors);
         for (c, request) in std::mem::take(&mut self.provision.forwarded) {
+            if let Some(conn) = state.connection(c) {
+                self.xva.open(conn, request);
+            }
+        }
+        self.migrate
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.migrate.errors);
+        self.vapp
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.vapp.errors);
+        for (c, request) in std::mem::take(&mut self.vapp.forwarded) {
             if let Some(conn) = state.connection(c) {
                 self.xva.open(conn, request);
             }
@@ -2051,6 +2071,11 @@ mod tests {
     // (`app/tests/ovf.rs`), and on a real host (`app/tests/ovf_real.rs`).
     mod ovf;
     mod ovf_real;
+    // F12a: the Migrate / Move / Copy wizard between two mock pools and
+    // vApps (`app/tests/migrate.rs`), and the real host's vApp and Copy
+    // wizard on a disposable test VM (`app/tests/migrate_real.rs`).
+    mod migrate;
+    mod migrate_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

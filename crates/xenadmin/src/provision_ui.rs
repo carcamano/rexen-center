@@ -102,6 +102,26 @@ pub enum DialogRequest {
     /// The Import wizard (`ImportCommand`), with this home server chosen
     /// (`None`: the connection's pool).
     Import(Option<Ref<xapi::Host>>),
+    /// The Migrate / Move / Copy wizard (F12a) for these VMs.
+    Migrate {
+        vms: Vec<Ref<Vm>>,
+        mode: xen_core::migrate::WizardMode,
+    },
+    /// Move VM / Migrate VM (`MoveVMCommand`): the wizard, or the Move VM
+    /// dialog.
+    MoveVm(Ref<Vm>),
+    /// Manage vApps (`VMAppliancesDialog`).
+    ManageVApps,
+    /// New vApp, with these VMs ticked.
+    NewVApp(Vec<Ref<Vm>>),
+    /// vApp Properties.
+    VAppProperties(Ref<xapi::VmAppliance>),
+    /// Assign to vApp: `vms` join `vapp` (or leave it, when the one VM is
+    /// already in it).
+    AssignVApp {
+        vapp: Ref<xapi::VmAppliance>,
+        vms: Vec<Ref<Vm>>,
+    },
 }
 
 impl DialogRequest {
@@ -128,6 +148,17 @@ impl DialogRequest {
         matches!(
             self,
             Self::Export(_) | Self::ExportToFile(_) | Self::Import(_)
+        )
+    }
+
+    /// A vApp dialog ([`crate::vapp_ui`]).
+    pub fn is_vapp(&self) -> bool {
+        matches!(
+            self,
+            Self::ManageVApps
+                | Self::NewVApp(_)
+                | Self::VAppProperties(_)
+                | Self::AssignVApp { .. }
         )
     }
 
@@ -164,14 +195,17 @@ pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec
         ),
         item(
             p.copy_vm,
-            prov::can_copy(vm, busy),
+            prov::can_copy(vm, busy)
+                || (!busy && xen_core::migrate::copy_uses_wizard(&conn.model, vm)),
             DialogRequest::CopyVm(vm_ref.clone()),
         ),
+        crate::migrate_ui::move_entry(conn, vm_ref, vm),
         item(
             p.convert_to_template,
             prov::can_make_template(vm, busy),
             DialogRequest::MakeTemplate(vm_ref.clone()),
         ),
+        crate::vapp_ui::assign_entry(conn, std::slice::from_ref(vm_ref)),
         item(
             install_tools_label(),
             prov::can_install_tools(&conn.model, vm, busy),
@@ -236,7 +270,8 @@ pub fn template_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) 
             crate::xva_ui::export_to_file_entry(conn, vm_ref, vm),
             item(
                 p.copy_template,
-                prov::can_copy(vm, busy),
+                prov::can_copy(vm, busy)
+                    || (!busy && xen_core::migrate::copy_uses_wizard(&conn.model, vm)),
                 DialogRequest::CopyVm(vm_ref.clone()),
             ),
             Entry::Separator,
@@ -634,7 +669,13 @@ impl ProvisionUi {
             | DialogRequest::DisableHa
             | DialogRequest::Export(_)
             | DialogRequest::ExportToFile(_)
-            | DialogRequest::Import(_) => {
+            | DialogRequest::Import(_)
+            | DialogRequest::Migrate { .. }
+            | DialogRequest::MoveVm(_)
+            | DialogRequest::ManageVApps
+            | DialogRequest::NewVApp(_)
+            | DialogRequest::VAppProperties(_)
+            | DialogRequest::AssignVApp { .. } => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(
@@ -1217,7 +1258,7 @@ fn sr_label(sr: &xapi::SrRecord) -> String {
     )
 }
 
-fn sr_combo(
+pub(crate) fn sr_combo(
     ui: &mut Ui,
     id: &str,
     srs: &[(&Ref<Sr>, &std::sync::Arc<xapi::SrRecord>)],

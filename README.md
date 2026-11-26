@@ -8,12 +8,13 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F11b (OVF/OVA packages and disk images) on top of
-F1–F11a (base, connection and model, detail tabs, VM and host operations,
-VNC console, performance graphs and alerts, VM creation, templates,
-snapshots and disks, storage repositories, networking, pools and pool and
-server properties, high availability, Active Directory and RBAC, XVA
-export and import).** What works:
+**Status: phase F12a (cross-pool migration and copy, Move VM, vApps) on
+top of F1–F11b (base, connection and model, detail tabs, VM and host
+operations, VNC console, performance graphs and alerts, VM creation,
+templates, snapshots and disks, storage repositories, networking, pools
+and pool and server properties, high availability, Active Directory and
+RBAC, XVA export and import, OVF/OVA packages and disk images).** What
+works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -308,7 +309,34 @@ export and import).** What works:
   VHD, a fixed VHD, raw image or ISO as raw bytes, `VBD.create`). VMDK,
   VHDX, qcow2 and WIM disks are refused with a clear word: nothing is
   converted. A cancelled or failed export leaves no file, a cancelled or
-  failed import no VM or disk;
+  failed import no VM or disk. An imported package becomes a **vApp**
+  named after it, its VMs with the package's start order and delays;
+- **Migrate, Move and Copy VM** (the original's `CrossPoolMigrateWizard`):
+  "Migrate VM wizard..." at the end of the Migrate to Server submenu, Move
+  VM... (Migrate VM... for a suspended VM) and Copy VM... / Copy... of a
+  halted VM or template that may migrate (`migrate_send` offered). Pages:
+  Destination (each connected pool or standalone server and, per VM, its
+  servers; each asked about as the original does, `host.migrate_receive`
+  on the destination and `VM.assert_can_migrate` on the source, refused
+  ones shown with the reason: current server, older server, the server's
+  error), Permissions (blocking, for a restricted role on either side),
+  Storage (all disks on one SR, or an SR per disk, with the free space
+  checks), Networking (to another pool, a network per interface),
+  Migration Network and Finish (the summary). Finish runs `VM.migrate_send`
+  (live, `copy=true` for a copy) to another pool or with storage motion,
+  `VM.pool_migrate` within the pool, or the Move action (each disk copied
+  to its new SR) for a halted VM within the pool. Copy mode first chooses
+  a copy within the pool (Name and Storage: fast clone or full copy) or to
+  another pool. A VM that may not migrate gets the F7 Copy dialog or the
+  Move VM dialog (an SR for all disks). Progress and Cancel are in the
+  Events panel;
+- **vApps**: Manage vApps... (Pool menu: the pool's vApps and their VMs;
+  New vApp..., Delete, Properties, Start, Shut down, Export, Import), the
+  New vApp wizard (Name, Virtual Machines, VM Startup Sequence with start
+  order and delay, Finish), vApp Properties (General, Virtual Machines,
+  VM Startup Sequence), and in the VM menus Start vApp, Shut Down vApp
+  (asked first) and Assign to vApp (New vApp... and each vApp; assigning a
+  VM of another vApp is asked first);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -320,11 +348,12 @@ The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
 (VM properties, so also a VM's own HA page), custom graphs
-(New/Edit Graph), vApps and cross-pool migration come in later phases
-(RDP is not embedded). The OVF wizards leave out signing a package (it
+(New/Edit Graph), scheduled snapshots and disaster recovery (F12b) come in
+later phases (RDP is not embedded); the vApps navigation mode comes with
+the other navigation modes (F13). The OVF wizards leave out signing a package (it
 needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
 LUN-per-VDI page, URL sources and disk conversion (no external
-converter); an imported package makes no vApp. The New VM wizard leaves out the pages the
+converter). The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
 copying BIOS strings). See the port plan for the full roadmap.
 
@@ -581,6 +610,19 @@ end to end:
   signature found before anything is made; a signed package accepted; a
   VMDK refused; in the window: the Export wizard's OVF pages, the Import
   wizard on that OVA and on a disk image, and the formats it refuses;
+- migrations and vApps against two mock pools (`xapi_mock::migrate`:
+  `host.migrate_receive`, `VM.assert_can_migrate` and `VM.migrate_send`
+  between mock servers in one process; `xapi_mock::appliance`: vApps that
+  start their VMs by order with their delays): a running VM migrated to
+  another pool with a disk per SR and its interface on another network,
+  a halted VM copied there, each refused check (current server, older
+  server, the server's errors, a role that may not, too little memory),
+  a migration failing in the middle and one cancelled leaving everything
+  as it was, Move VM and storage motion within a pool; vApps made, started
+  in order, shut down in reverse order, edited, assigned and deleted; in
+  the window: Move VM through the wizard to another pool, a refused
+  destination with the server's reason, Copy VM within the pool and to
+  another pool, and Manage vApps with the New vApp wizard and Properties;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -704,6 +746,16 @@ against the image), deleted, imported back, checked and deleted.
 `f11b_real_run_on_the_mock` rehearses it and checks no other object
 changes and only the calls it needs are made.
 
+vApps on a real host (`app/tests/migrate_real.rs`, same variables plus
+`XENADMIN_REAL_LOG`): `real_f12a_vapp_and_copy_wizard` makes the
+disposable VM `xenadmin-rs-test-f12a` (64 MiB disk on "Local storage",
+never started), opens Copy VM... on it and cancels on the Name and
+Storage page (nothing is asked of the server), makes the vApp
+`xenadmin-rs-test-f12a-vapp` with that VM only, edits its start order,
+delay and description, and deletes the vApp and the VM. It never calls a
+migration or feasibility call, nor starts or shuts down a vApp;
+`f12a_real_run_on_the_mock` rehearses it and checks exactly that.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -739,7 +791,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

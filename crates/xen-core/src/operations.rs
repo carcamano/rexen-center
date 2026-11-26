@@ -92,6 +92,56 @@ pub enum OperationKind {
     Ad(AdKind),
     /// An XVA export or import (F11a).
     Transfer(TransferKind),
+    /// A migration, copy or move of the F12a wizard.
+    Migrate(MigrateKind),
+    /// A vApp operation (F12a).
+    VApp(VAppKind),
+}
+
+/// The history entry of a migration, copy or move (F12a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrateKind {
+    /// `ACTION_VM_MIGRATING_RESIDENT` / `ACTION_VM_MIGRATING_NON_RESIDENT`.
+    Migrate {
+        vm: String,
+        from: Option<String>,
+        to: String,
+    },
+    /// `ACTION_VM_CROSS_POOL_COPY_TITLE`.
+    Copy {
+        vm: String,
+        pool: String,
+        to: String,
+    },
+    /// `ACTION_VM_MOVING_HOST`.
+    MoveHost {
+        vm: String,
+        from: String,
+        to: String,
+    },
+    /// `ACTION_VM_MOVING_SR`.
+    MoveSr { vm: String, sr: String },
+    /// `ACTION_VM_MOVING`.
+    Move { vm: String },
+}
+
+/// The history entry of a vApp operation (F12a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VAppKind {
+    /// `CREATING_VM_APPLIANCE`.
+    Create { name: String },
+    /// The vApp Properties dialog.
+    Properties { name: String },
+    /// `ASSIGN_VM_TO_VAPP` / `ASSIGN_VMS_TO_VAPP` (`vm` when one).
+    Assign { vm: Option<String>, vapp: String },
+    /// `REMOVE_VM_FROM_APPLIANCE` / `REMOVE_VMS_FROM_APPLIANCE`.
+    Remove { vm: Option<String>, vapp: String },
+    /// `DELETE_VM_APPLIANCES` (one name when one).
+    Delete { name: Option<String> },
+    /// `VM_APPLIANCE_STARTING`.
+    Start { name: String },
+    /// `VM_APPLIANCE_SHUTTING_DOWN`.
+    ShutDown { name: String },
 }
 
 /// The XVA transfers, with the names their titles show (the original's
@@ -466,6 +516,18 @@ pub enum OperationStep {
         index: usize,
         count: usize,
     },
+    /// Move VM: `ACTION_MOVING_VDI_TO_SR`.
+    MovingDisk {
+        disk: String,
+        from: String,
+        to: String,
+    },
+    /// `SETTING_VM_STARTUP_OPTIONS_ON_X`.
+    SettingStartupOptions { vm: String },
+    /// `DELETING_VM_APPLIANCE`.
+    DeletingVApp { name: String },
+    /// OVF import: `IMPORT_CREATING_APPLIANCE`.
+    CreatingVApp { name: String },
 }
 
 /// How an operation ended (or that it has not).
@@ -615,7 +677,108 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         },
         request if request.is_pool() => OperationKind::Pool(pool_kind(model, request)),
         request if request.is_transfer() => OperationKind::Transfer(transfer_kind(model, request)),
+        request if request.is_migrate() => OperationKind::Migrate(migrate_kind(model, request)),
+        request if request.is_vapp() => OperationKind::VApp(vapp_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an F12a migration or move.
+fn migrate_kind(model: &ConnectionModel, request: &ActionRequest) -> MigrateKind {
+    let vm_name = |r: &Ref<Vm>| {
+        model
+            .vms
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_else(|| r.to_string())
+    };
+    let host_name = |h: &Ref<Host>| model.hosts.get(h).map(|h| h.name_label.clone());
+    match request {
+        ActionRequest::MigrateSend(spec) => {
+            let vm = vm_name(&spec.vm);
+            let to = spec.host_name.clone();
+            if spec.copy {
+                let pool = model
+                    .pool()
+                    .map(|(_, p)| objects::pool_name(model, p))
+                    .unwrap_or_default();
+                MigrateKind::Copy { vm, pool, to }
+            } else {
+                let from = model
+                    .vms
+                    .get(&spec.vm)
+                    .and_then(|v| v.resident_on.non_null())
+                    .and_then(host_name);
+                MigrateKind::Migrate { vm, from, to }
+            }
+        }
+        ActionRequest::MoveVm { vm, host, storage } => {
+            let name = vm_name(vm);
+            let from = model
+                .vms
+                .get(vm)
+                .and_then(|v| objects::vm_home(model, v))
+                .filter(|h| *h != host)
+                .and_then(host_name);
+            let to = host_name(host).unwrap_or_default();
+            match (from, storage.as_slice()) {
+                (Some(from), _) => MigrateKind::MoveHost { vm: name, from, to },
+                (None, [(_, sr)]) => MigrateKind::MoveSr {
+                    vm: name,
+                    sr: model
+                        .srs
+                        .get(sr)
+                        .map(|s| s.name_label.clone())
+                        .unwrap_or_default(),
+                },
+                (None, _) => MigrateKind::Move { vm: name },
+            }
+        }
+        _ => unreachable!("not a migration"),
+    }
+}
+
+/// The history entry of an F12a vApp operation.
+fn vapp_kind(model: &ConnectionModel, request: &ActionRequest) -> VAppKind {
+    let app_name = |r: &Ref<xapi::VmAppliance>| {
+        model
+            .vm_appliances
+            .get(r)
+            .map(|a| a.name_label.clone())
+            .unwrap_or_default()
+    };
+    let one_vm = |vms: &[Ref<Vm>]| match vms {
+        [one] => model.vms.get(one).map(|v| v.name_label.clone()),
+        _ => None,
+    };
+    match request {
+        ActionRequest::NewVApp(spec) => VAppKind::Create {
+            name: spec.name.clone(),
+        },
+        ActionRequest::SetVApp { vapp, changes } => VAppKind::Properties {
+            name: changes.name.clone().unwrap_or_else(|| app_name(vapp)),
+        },
+        ActionRequest::AssignVApp { vapp, vms } => VAppKind::Assign {
+            vm: one_vm(vms),
+            vapp: app_name(vapp),
+        },
+        ActionRequest::RemoveFromVApp { vapp, vms } => VAppKind::Remove {
+            vm: one_vm(vms),
+            vapp: app_name(vapp),
+        },
+        ActionRequest::DeleteVApps { vapps } => VAppKind::Delete {
+            name: match vapps.as_slice() {
+                [one] => Some(app_name(one)),
+                _ => None,
+            },
+        },
+        ActionRequest::StartVApp { vapp } => VAppKind::Start {
+            name: app_name(vapp),
+        },
+        ActionRequest::ShutDownVApp { vapp } => VAppKind::ShutDown {
+            name: app_name(vapp),
+        },
+        _ => unreachable!("not a vApp request"),
     }
 }
 
@@ -998,6 +1161,15 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
             return Some(OperationObject::Host(host.clone()));
         }
         ActionRequest::ExportXva { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::MigrateSend(spec) => return Some(OperationObject::Vm(spec.vm.clone())),
+        ActionRequest::MoveVm { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::NewVApp(_)
+        | ActionRequest::SetVApp { .. }
+        | ActionRequest::AssignVApp { .. }
+        | ActionRequest::RemoveFromVApp { .. }
+        | ActionRequest::DeleteVApps { .. }
+        | ActionRequest::StartVApp { .. }
+        | ActionRequest::ShutDownVApp { .. } => None,
         ActionRequest::ImportXva { .. }
         | ActionRequest::ExportOvf(_)
         | ActionRequest::ImportOvf(_) => None,
@@ -1073,6 +1245,19 @@ pub(crate) fn start_action(
     request: ActionRequest,
     elevated_as: Option<String>,
 ) -> OperationId {
+    start_action_with(shared, connection, session, None, request, elevated_as)
+}
+
+/// [`start_action`] for an operation that also needs the session of
+/// another connection (`target`: the destination of a migration).
+pub(crate) fn start_action_with(
+    shared: &Arc<Shared>,
+    connection: ConnectionId,
+    session: Option<Session>,
+    target: Option<Session>,
+    request: ActionRequest,
+    elevated_as: Option<String>,
+) -> OperationId {
     let server = shared
         .state()
         .connection(connection)
@@ -1131,6 +1316,13 @@ pub(crate) fn start_action(
             }
             request if request.is_transfer() => {
                 crate::xva_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_migrate() => {
+                crate::migrate_run::run(&shared, connection, op, &session, target.as_ref(), request)
+                    .await
+            }
+            request if request.is_vapp() => {
+                crate::vapp_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
@@ -1779,6 +1971,15 @@ pub enum Precheck {
     /// The SIDs of the users logged in now
     /// (`session.get_all_subject_identifiers`).
     LoggedInSubjects,
+    /// `CrossPoolMigrateFilter`'s questions for each VM and destination
+    /// server: `host.migrate_receive` on connection `target`, then
+    /// `VM.assert_can_migrate` here; within the pool in Migrate mode, a
+    /// refused storage migration falls back to `VM.assert_can_boot_here`.
+    Migrate {
+        target: ConnectionId,
+        mode: crate::migrate::WizardMode,
+        checks: Vec<(Ref<Vm>, Ref<Host>)>,
+    },
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -1808,6 +2009,8 @@ pub enum PrecheckResult {
     /// Per VM: `None` if agile, else the error code that says why not.
     Agility(Vec<(Ref<Vm>, Option<String>)>),
     LoggedInSubjects(Result<Vec<String>, Arc<xapi::Error>>),
+    /// Per VM and server: what the servers said.
+    Migrate(Vec<(Ref<Vm>, Ref<Host>, crate::migrate::ServerVerdict)>),
 }
 
 pub(crate) fn run_precheck(
@@ -1927,6 +2130,10 @@ pub(crate) fn run_precheck(
                     .await
                     .map_err(Arc::new),
             ),
+            Precheck::Migrate { .. } => {
+                tracing::debug!("migration checks need the destination; see migrate_run");
+                PrecheckResult::Migrate(Vec::new())
+            }
         };
         shared.notify(Notification::Precheck {
             connection,

@@ -359,12 +359,21 @@ fn copy_convert_and_delete_from_the_menus() {
 
     right_click(&mut h, "db-01");
     click_last(&mut h, p.copy_vm);
-    step_until(&mut h, "copy dialog", |h| {
-        h.query_by_label(p.copy_vm_title).is_some()
+    // F12a: a halted VM that may migrate gets the Copy VM wizard
+    // (`CopyVMCommand.CanLaunchMigrateWizard`); within the pool its Name
+    // and Storage page is the F7 copy.
+    let c = crate::cpm_strings::cpm_strings();
+    let n = crate::net_strings::net_strings();
+    step_until(&mut h, "copy wizard", |h| {
+        h.query_by_label(c.within_pool).is_some()
+    });
+    click_last(&mut h, n.next);
+    step_until(&mut h, "name and storage", |h| {
+        h.query_by_label(c.intra_rubric_vm).is_some()
     });
     // Full copy to the SR of its disk.
-    click_last(&mut h, p.full_copy);
-    click_last(&mut h, p.copy_button);
+    click_last(&mut h, c.full_copy);
+    click_last(&mut h, n.finish);
     wait_ok(
         &mut h,
         "Copying VM 'db-01' to 'Copy of db-01' on SR 'NFS VM storage'",

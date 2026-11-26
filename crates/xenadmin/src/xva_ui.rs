@@ -539,12 +539,11 @@ impl ExportWizard {
                                 &conn.model,
                                 v,
                             )));
-                            // vApps come with a later phase.
-                            ui.label(if v.appliance.non_null().is_none() {
-                                x.vapp_none
-                            } else {
-                                ""
-                            });
+                            ui.label(
+                                xen_core::vapp::vapp_of(&conn.model, v)
+                                    .map(|(_, a)| a.name_label.as_str())
+                                    .unwrap_or(x.vapp_none),
+                            );
                             ui.end_row();
                         }
                     });
