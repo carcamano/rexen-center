@@ -53,6 +53,10 @@
 //!   [`search_eval`]: properties, filters, grouping, the navigation views
 //!   and the built-in searches; [`search_metrics`]: the Search tab's
 //!   performance figures.
+//! * [`devices`]: GPUs and vGPUs, USB pass-through and vTPMs (the
+//!   original's rules and requests); [`memory`]: the memory settings
+//!   dialog's limits and its plan; [`devices_run`]: how they run;
+//!   [`consoles`]: the external SSH and Remote Desktop consoles (F14a).
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -65,12 +69,16 @@ pub mod alerts;
 pub mod backend;
 pub mod connection;
 pub mod console;
+pub mod consoles;
+pub mod devices;
+pub mod devices_run;
 pub mod disk_image;
 pub mod dr;
 pub mod dr_run;
 pub mod format;
 pub mod ha;
 pub mod ha_run;
+pub mod memory;
 pub mod migrate;
 pub mod migrate_run;
 pub mod model;

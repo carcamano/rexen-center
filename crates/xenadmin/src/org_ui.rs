@@ -1770,6 +1770,10 @@ impl OrgEditor {
 pub enum VmPage {
     General,
     CustomFields,
+    /// GPU (`GpuEditPage`, F14a).
+    Gpu,
+    /// USB (`USBEditPage`, F14a).
+    Usb,
 }
 
 /// A VM's Properties dialog: General (name, description, folder, tags)
@@ -1783,6 +1787,24 @@ pub struct VmPropertiesDialog {
     original: (String, String),
     pub editor: OrgEditor,
     pub dialog: Option<OrgDialog>,
+    /// The GPU page, when the VM has it (F14a).
+    pub gpu: Option<crate::dev_ui::VmGpuPage>,
+    /// The USB page, when the VM has it (F14a).
+    pub usb: Option<crate::dev_ui::VmUsbPage>,
+}
+
+impl OrgUi {
+    /// The VM Properties dialog's Attach USB question (F14a).
+    pub fn on_device_precheck(
+        &mut self,
+        id: u64,
+        result: &xen_core::operations::PrecheckResult,
+    ) -> bool {
+        self.vm_properties
+            .as_mut()
+            .and_then(|d| d.usb.as_mut())
+            .is_some_and(|u| u.on_precheck(id, result))
+    }
 }
 
 impl VmPropertiesDialog {
@@ -1796,6 +1818,8 @@ impl VmPropertiesDialog {
             original: (rec.name_label.clone(), rec.name_description.clone()),
             editor: OrgEditor::new(conn, OrgObject::Vm(vm.clone())),
             dialog: None,
+            gpu: crate::dev_ui::VmGpuPage::new(conn, rec),
+            usb: crate::dev_ui::VmUsbPage::new(conn, rec),
             vm,
         })
     }
@@ -1814,6 +1838,7 @@ impl VmPropertiesDialog {
             })));
         }
         out.extend(self.editor.requests(conn));
+        out.extend(self.gpu.as_ref().and_then(|g| g.request(&self.vm)));
         out
     }
 
@@ -1829,23 +1854,35 @@ impl VmPropertiesDialog {
         let Some(conn) = state.connection(self.connection).cloned() else {
             return true;
         };
-        if !conn.model.vms.contains_key(&self.vm) {
+        let Some(vm_rec) = conn.model.vms.get(&self.vm).cloned() else {
             return true;
-        }
+        };
         let (mut ok, mut cancel) = (false, false);
         window(fill(s.vm_properties_title, &[("name", &self.original.0)])).show(ctx, |ui| {
             ui.set_width(700.0);
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(170.0);
-                    for (p, title, sub) in [
+                    let d = crate::dev_strings::dev_strings();
+                    let mut pages = vec![
                         (VmPage::General, s.page_general, self.name.clone()),
                         (
                             VmPage::CustomFields,
                             s.page_custom_fields,
                             self.editor.custom_fields_subtext(),
                         ),
-                    ] {
+                    ];
+                    if let Some(g) = &self.gpu {
+                        pages.push((VmPage::Gpu, d.page_gpu, g.subtext(&conn)));
+                    }
+                    if self.usb.is_some() {
+                        pages.push((
+                            VmPage::Usb,
+                            d.page_usb,
+                            crate::dev_ui::VmUsbPage::subtext(&vm_rec),
+                        ));
+                    }
+                    for (p, title, sub) in pages {
                         if ui
                             .selectable_label(self.page == p, format!("{title}\n{sub}"))
                             .clicked()
@@ -1888,6 +1925,16 @@ impl VmPropertiesDialog {
                             VmPage::CustomFields => {
                                 self.editor.custom_fields_page(ui, &conn, &mut self.dialog);
                             }
+                            VmPage::Gpu => {
+                                if let Some(g) = self.gpu.as_mut() {
+                                    g.ui(ui, &conn, &vm_rec);
+                                }
+                            }
+                            VmPage::Usb => {
+                                if let Some(u) = self.usb.as_mut() {
+                                    u.ui(ui, &conn, &self.vm, &vm_rec, ops, backend);
+                                }
+                            }
                         });
                 });
             });
@@ -1898,6 +1945,13 @@ impl VmPropertiesDialog {
                 cancel = ui.button(s.cancel).clicked();
             });
         });
+        // The page's dialogs, above it.
+        if let Some(g) = self.gpu.as_mut() {
+            g.add_window(ctx);
+        }
+        if let Some(u) = self.usb.as_mut() {
+            u.attach_window(ctx, &conn, &self.vm, &vm_rec, ops, backend);
+        }
         if cancel {
             return true;
         }

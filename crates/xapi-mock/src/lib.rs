@@ -51,6 +51,9 @@
 //!   startup sequence (see [`appliance`]);
 //! * scheduled snapshots (`VMSS`), with a clock that runs the enabled
 //!   policies when a test moves it (see [`vmss`]);
+//! * GPUs and vGPUs, USB pass-through, vTPM operations, memory ranges and
+//!   the guest agent's Remote Desktop switch, with an optional device
+//!   fixture (see [`devices`]);
 //! * disaster recovery between mock pools: database replication to shared
 //!   SRs, `DR_task`, metadata sessions and `VM.recover` /
 //!   `VM_appliance.recover` (see [`dr`]).
@@ -74,6 +77,7 @@
 
 pub mod ad;
 pub mod appliance;
+pub mod devices;
 pub mod dr;
 pub mod ha;
 pub mod migrate;
@@ -716,6 +720,44 @@ impl MockServer {
     }
 
     /// Creates an object as if someone else did it (emits an `add` event).
+    /// Adds the F14a device fixture (`tests/fixtures/devices.json`, see
+    /// [`devices`]): licences, GPUs, vGPU types and a vGPU, USB devices,
+    /// and UEFI on a VM; the VMs' vTPM operations are brought up to date.
+    pub fn add_device_fixtures(&self) {
+        let fixture: Value = serde_json::from_str(devices::DEVICES_JSON).expect("devices.json");
+        let mut db = self.state.db();
+        if let Some(add) = fixture.get("add").and_then(Value::as_object) {
+            for (class, objects) in add {
+                for (r, record) in objects.as_object().into_iter().flatten() {
+                    db.insert(class, r, record.clone());
+                }
+            }
+        }
+        if let Some(set) = fixture.get("set").and_then(Value::as_object) {
+            for (class, objects) in set {
+                for (r, fields) in objects.as_object().into_iter().flatten() {
+                    let fields = fields.as_object().cloned().unwrap_or_default();
+                    db.modify(class, r, |rec| {
+                        for (k, v) in fields {
+                            rec.insert(k, v);
+                        }
+                    });
+                }
+            }
+        }
+        let vms: Vec<String> = db
+            .objects
+            .keys()
+            .filter(|(c, _)| c == "vm")
+            .map(|(_, r)| r.clone())
+            .collect();
+        for vm in vms {
+            db.sync_vtpms(&vm);
+        }
+        drop(db);
+        self.state.changed.notify_waiters();
+    }
+
     pub fn add_object(&self, class: &str, opaque_ref: &str, record: Value) {
         let mut db = self.state.db();
         let class = class.to_lowercase();
@@ -1154,6 +1196,7 @@ impl Db {
             rec.insert("allowed_operations".into(), json!(allowed));
             rec.insert("current_operations".into(), json!({}));
         });
+        self.sync_vtpms(vm);
         self.sync_consoles(vm, power_state);
         self.sync_vbds(vm);
         self.sync_vifs(vm);

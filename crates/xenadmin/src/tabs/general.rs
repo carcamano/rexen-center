@@ -151,7 +151,7 @@ pub fn vm_sections(ctx: Ctx<'_>, vm: &VmRecord) -> Vec<Section> {
         },
         Section {
             title: tab_strings().sec_device_security,
-            rows: vm_device_security_rows(vm),
+            rows: vm_device_security_rows(ctx, vm),
         },
     ])
 }
@@ -459,9 +459,11 @@ fn vm_cpu_rows(vm: &VmRecord) -> Vec<Row> {
     rows
 }
 
-fn vm_device_security_rows(vm: &VmRecord) -> Vec<Row> {
+/// Shown when vTPMs are supported (XAPI 22.26, licence) and the VM has
+/// one (`GeneralTabPage`).
+fn vm_device_security_rows(ctx: Ctx<'_>, vm: &VmRecord) -> Vec<Row> {
     let t = tab_strings();
-    match vm.vtpms.len() {
+    match xen_core::devices::vtpm_count_shown(ctx.model, vm).unwrap_or(0) {
         0 => Vec::new(),
         1 => vec![Row::new(t.vtpm, t.vtpm_one)],
         n => vec![Row::new(

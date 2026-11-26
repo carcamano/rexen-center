@@ -1,5 +1,7 @@
 //! The Memory tab (`BallooningPage`): a bar and figures per host, and per
-//! group of VMs with the same memory settings. Read-only: no Edit buttons.
+//! group of VMs with the same memory settings, with Edit... when every VM
+//! of the group is halted or running with known tools (F14a; it opens the
+//! memory settings dialog, or the wizard for several VMs).
 
 use egui::{Color32, CornerRadius, Grid, Rect, RichText, Sense, Ui, pos2, vec2};
 use xapi::{HostRecord, Ref, Vm, VmPowerState, VmRecord};
@@ -33,7 +35,10 @@ pub enum MemoryRow {
     },
     Vms {
         /// The VMs sharing these settings.
+        vms: Vec<Ref<Vm>>,
         names: Vec<String>,
+        /// The row has Edit... (`VMMemoryControlsNoEdit`).
+        editable: bool,
         static_max: i64,
         /// Average current memory of the running ones.
         used: i64,
@@ -197,12 +202,13 @@ fn vm_groups(ctx: Ctx<'_>, vms: &[(&Ref<Vm>, &VmRecord)]) -> Vec<MemoryRow> {
             )
         }
     };
-    let mut groups: Vec<(Key, Vec<&VmRecord>)> = Vec::new();
-    for (_, vm) in vms {
+    type Members<'a> = Vec<(&'a Ref<Vm>, &'a VmRecord)>;
+    let mut groups: Vec<(Key, Members<'_>)> = Vec::new();
+    for (r, vm) in vms {
         let k = key(vm);
         match groups.iter_mut().find(|(gk, _)| *gk == k) {
-            Some((_, members)) => members.push(vm),
-            None => groups.push((k, vec![vm])),
+            Some((_, members)) => members.push((r, vm)),
+            None => groups.push((k, vec![(r, vm)])),
         }
     }
     let rank = |state: &str| match state {
@@ -216,6 +222,8 @@ fn vm_groups(ctx: Ctx<'_>, vms: &[(&Ref<Vm>, &VmRecord)]) -> Vec<MemoryRow> {
     groups
         .into_iter()
         .map(|((ballooning, ..), members)| {
+            let refs: Vec<Ref<Vm>> = members.iter().map(|(r, _)| (*r).clone()).collect();
+            let members: Vec<&VmRecord> = members.iter().map(|(_, v)| *v).collect();
             let first = members[0];
             let live: Vec<i64> = members
                 .iter()
@@ -243,7 +251,9 @@ fn vm_groups(ctx: Ctx<'_>, vms: &[(&Ref<Vm>, &VmRecord)]) -> Vec<MemoryRow> {
                 t.mem_current
             };
             MemoryRow::Vms {
+                vms: refs,
                 names: members.iter().map(|v| vm_display_name(v)).collect(),
+                editable: xen_core::memory::can_edit(m, &members, ctx.now),
                 static_max: first.memory_static_max,
                 used,
                 dynamic: ballooning.then_some((first.memory_dynamic_min, first.memory_dynamic_max)),
@@ -256,12 +266,13 @@ fn vm_groups(ctx: Ctx<'_>, vms: &[(&Ref<Vm>, &VmRecord)]) -> Vec<MemoryRow> {
 
 // ---- drawing ---------------------------------------------------------------
 
-/// Draws the Memory tab.
-pub fn show(ui: &mut Ui, rows: &[MemoryRow]) {
+/// Draws the Memory tab; the VMs of the row whose Edit... was pressed.
+pub fn show(ui: &mut Ui, rows: &[MemoryRow]) -> Option<Vec<Ref<Vm>>> {
     if rows.is_empty() {
         ui.label(RichText::new(tab_strings().empty_list).weak());
-        return;
+        return None;
     }
+    let mut edit = None;
     for (i, row) in rows.iter().enumerate() {
         if i > 0 {
             ui.add_space(10.0);
@@ -285,7 +296,9 @@ pub fn show(ui: &mut Ui, rows: &[MemoryRow]) {
                 });
             }
             MemoryRow::Vms {
+                vms,
                 names,
+                editable,
                 static_max,
                 used,
                 dynamic,
@@ -296,10 +309,18 @@ pub fn show(ui: &mut Ui, rows: &[MemoryRow]) {
                 ui.horizontal_top(|ui| {
                     vm_bar(ui, *static_max, *used, *dynamic, tooltip);
                     values_grid(ui, ("mem-vm", names.join(",")), values);
+                    if *editable
+                        && ui
+                            .button(crate::dev_strings::dev_strings().mem_edit)
+                            .clicked()
+                    {
+                        edit = Some(vms.clone());
+                    }
                 });
             }
         }
     }
+    edit
 }
 
 fn values_grid(

@@ -67,6 +67,9 @@ pub enum Page {
     LogDestination,
     PowerOn,
     Autostart,
+    /// GPU: placement policy and integrated GPU pass-through
+    /// (`PoolGpuEditPage`, F14a).
+    Gpu,
     LivePatching,
     NetworkOptions,
     Clustering,
@@ -105,6 +108,11 @@ pub fn pages(
     out.push(Page::PowerOn);
     if is_host {
         out.push(Page::Autostart);
+    }
+    if (pool_or_standalone && crate::devices::vgpu_capability(model))
+        || (is_host && crate::devices::can_change_integrated_gpu(model))
+    {
+        out.push(Page::Gpu);
     }
     if pool_or_standalone
         && !pool::feature_forbidden(model, Restriction::LivePatching)

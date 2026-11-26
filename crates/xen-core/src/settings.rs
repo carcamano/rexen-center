@@ -135,6 +135,35 @@ pub struct Preferences {
     pub show_snapshots: bool,
     /// View > Hidden Objects.
     pub show_hidden_objects: bool,
+    /// Options > External Tools: the SSH and Remote Desktop clients (F14a).
+    pub external_tools: ExternalTools,
+}
+
+/// Which SSH console "Launch SSH Console" starts (`SshConsole`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshConsole {
+    /// The platform's terminal running `ssh` (this console's default; the
+    /// original had none and asked to configure one).
+    #[default]
+    System,
+    /// PuTTY at [`ExternalTools::putty_location`].
+    Putty,
+    /// OpenSSH at [`ExternalTools::openssh_location`].
+    OpenSsh,
+}
+
+/// The external consoles (`CustomSshConsole`, `PuttyLocation`,
+/// `OpenSSHLocation`, and the Remote Desktop client this console adds).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExternalTools {
+    pub ssh_console: SshConsole,
+    pub putty_location: String,
+    pub openssh_location: String,
+    /// A Remote Desktop program run with `/v:<address>`; empty: the
+    /// platform's client.
+    pub rdp_client: String,
 }
 
 impl Default for Preferences {
@@ -148,6 +177,7 @@ impl Default for Preferences {
             show_local_storage: tree.local_storage,
             show_snapshots: tree.snapshots,
             show_hidden_objects: tree.hidden_objects,
+            external_tools: ExternalTools::default(),
         }
     }
 }

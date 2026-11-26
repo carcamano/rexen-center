@@ -19,6 +19,8 @@ mod cli;
 mod console_keys;
 mod console_view;
 mod cpm_strings;
+mod dev_strings;
+mod dev_ui;
 mod dr_strings;
 mod dr_ui;
 mod events;

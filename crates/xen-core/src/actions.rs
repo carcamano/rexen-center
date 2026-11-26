@@ -552,6 +552,9 @@ pub enum ActionRequest {
     /// Folders, tags, custom fields and saved searches (F13, run by
     /// [`crate::org_run`]).
     Org(Box<crate::org::OrgRequest>),
+    /// GPUs, USB devices, vTPMs, memory settings and Remote Desktop (F14a,
+    /// run by [`crate::devices_run`]).
+    Device(Box<crate::devices::DeviceRequest>),
 }
 
 impl ActionRequest {
@@ -593,6 +596,12 @@ impl ActionRequest {
     /// [`crate::org_run`]).
     pub fn is_org(&self) -> bool {
         matches!(self, Self::Org(_))
+    }
+
+    /// A GPU, USB, vTPM, memory or Remote Desktop operation (run by
+    /// [`crate::devices_run`]).
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::Device(_))
     }
 
     /// A disaster recovery operation (run by [`crate::dr_run`]).
@@ -1014,6 +1023,7 @@ impl ActionRequest {
         let own: &[&str] = match self {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
             Self::Org(request) => return request.rbac_methods(),
+            Self::Device(request) => return request.rbac_methods(),
             // `VMCrossPoolMigrateAction.StaticRBACDependencies` on the
             // source (`host.migrate_receive` is the destination's).
             Self::MigrateSend(_) => &["vm.migrate_send", "vm.assert_can_migrate", "task.destroy"],

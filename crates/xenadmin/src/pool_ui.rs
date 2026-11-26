@@ -1803,6 +1803,15 @@ impl PoolUi {
     pub fn take_org_dialog(&mut self) -> Option<crate::org_ui::OrgDialog> {
         self.properties.as_mut().and_then(|p| p.org_dialog.take())
     }
+
+    /// Shows `page` of the open Properties dialog, if it has it.
+    pub fn select_properties_page(&mut self, page: xen_core::properties::Page) {
+        if let Some(p) = self.properties.as_mut()
+            && p.pages.contains(&page)
+        {
+            p.page = page;
+        }
+    }
 }
 
 /// The open Properties dialog (tests).

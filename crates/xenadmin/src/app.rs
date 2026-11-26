@@ -167,6 +167,9 @@ pub struct XenAdminApp {
     /// Navigation views, the Search tab, folders, tags, custom fields and
     /// saved searches (F13).
     org: crate::org_ui::OrgUi,
+    /// GPUs, USB devices, vTPMs, memory settings and the external consoles
+    /// (F14a).
+    dev: crate::dev_ui::DevUi,
     /// The selection of the last frame (an imported search is dropped when
     /// it changes).
     last_selection: Option<Selection>,
@@ -219,6 +222,7 @@ impl XenAdminApp {
             vmss: crate::vmss_ui::VmssUi::default(),
             dr: crate::dr_ui::DrUi::default(),
             org: crate::org_ui::OrgUi::default(),
+            dev: crate::dev_ui::DevUi::default(),
             last_selection: None,
         };
         if !restoring {
@@ -249,7 +253,9 @@ impl XenAdminApp {
                 }
                 // The New SR wizard's probes, the pool dialogs' questions.
                 Notification::Precheck { id, result, .. } => {
-                    if !self.ha.on_precheck(&state, id, &result)
+                    if !self.dev.on_precheck(&state, id, &result)
+                        && !self.org.on_device_precheck(id, &result)
+                        && !self.ha.on_precheck(&state, id, &result)
                         && !self.pool.on_precheck(id, &result)
                         && !self.migrate.on_precheck(id, &result)
                         && !self.vmss.on_precheck(id, &result)
@@ -627,6 +633,19 @@ impl XenAdminApp {
                             std::slice::from_ref(&r),
                             false,
                         ));
+                        if xen_core::devices::vtpm_supported(&conn.model) {
+                            let can = xen_core::devices::vtpm_command(&conn.model, vm);
+                            entries.push(Entry::Separator);
+                            entries.push(Entry::Named {
+                                label: crate::dev_strings::dev_strings().vtpm_menu.to_owned(),
+                                enabled: can.is_ok(),
+                                hint: can
+                                    .err()
+                                    .and_then(crate::dev_strings::vtpm_unavailable_text)
+                                    .map(str::to_owned),
+                                dialog: crate::provision_ui::DialogRequest::ManageVtpm(r.clone()),
+                            });
+                        }
                     } else {
                         entries.extend(provision_ui::template_entries(conn, &r, vm));
                     }
@@ -1531,7 +1550,53 @@ impl XenAdminApp {
                 });
             return;
         }
+        if matches!(self.tab, Tab::Gpu | Tab::Usb) {
+            ui.label(
+                RichText::new(tabs::page_title(self.tab, subject))
+                    .strong()
+                    .size(15.0),
+            );
+            ui.add_space(4.0);
+            ScrollArea::vertical()
+                .id_salt("devices-tab-scroll")
+                .auto_shrink(false)
+                .show(ui, |ui| match (self.tab, subject) {
+                    (Tab::Gpu, Subject::Host(r, _)) => self.dev.gpu_tab(ui, conn, Some(r)),
+                    (Tab::Gpu, _) => self.dev.gpu_tab(ui, conn, None),
+                    (Tab::Usb, Subject::Host(_, host)) => {
+                        self.dev
+                            .usb_tab(ui, conn, host, &mut self.ops, &self.backend)
+                    }
+                    _ => {}
+                });
+            return;
+        }
         if self.tab == Tab::Console {
+            let external = ui
+                .horizontal(|ui| {
+                    let r = match subject {
+                        Subject::Vm(_, vm) => {
+                            crate::dev_ui::console_buttons(ui, conn, Some(vm), None)
+                        }
+                        Subject::Host(r, _) => {
+                            crate::dev_ui::console_buttons(ui, conn, None, Some(r))
+                        }
+                        _ => None,
+                    };
+                    if let Some(note) = &self.dev.console_note {
+                        ui.label(RichText::new(note).weak());
+                    }
+                    r
+                })
+                .inner;
+            if let Some(request) = external {
+                let vm = match subject {
+                    Subject::Vm(r, _) => Some(r),
+                    _ => None,
+                };
+                self.dev
+                    .console_request(state, conn, vm, request, &mut self.ops, &self.backend);
+            }
             let (key, title) = match subject {
                 Subject::Vm(r, vm) => (
                     (conn.id, ConsoleTarget::Vm(r.clone())),
@@ -1630,7 +1695,11 @@ impl XenAdminApp {
                     tabs::render::sections(ui, kind, &secs);
                 }
                 (Tab::Memory, _) => {
-                    tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject));
+                    if let Some(vms) =
+                        tabs::memory::show(ui, &tabs::memory::memory_rows(ctx, subject))
+                    {
+                        self.dev.open(conn, crate::dev_ui::memory_request(vms));
+                    }
                 }
                 (Tab::SrStorage, Subject::Sr(r, sr)) => {
                     ui.horizontal(|ui| {
@@ -1873,6 +1942,9 @@ impl XenAdminApp {
                 ui.checkbox(&mut preferences.restore_connections, s.options_restore);
                 ui.add_space(8.0);
                 ui.separator();
+                crate::dev_ui::external_tools_options(ui, &mut preferences.external_tools);
+                ui.add_space(8.0);
+                ui.separator();
                 match &state.config {
                     Some(paths) => {
                         let mode = match paths.location {
@@ -2032,6 +2104,8 @@ impl eframe::App for XenAdminApp {
             if let Some(conn) = state.connection(c) {
                 if crate::migrate_ui::takes(conn, &request) {
                     self.migrate.open(conn, request);
+                } else if request.is_device() {
+                    self.dev.open(conn, request);
                 } else if request.is_vapp() {
                     self.vapp.open(conn, request, &mut self.ops, &self.backend);
                 } else if request.is_vmss() {
@@ -2103,6 +2177,23 @@ impl eframe::App for XenAdminApp {
         }
         self.org.windows(&ctx, &state, &mut self.ops, &self.backend);
         self.org.search.end_frame();
+        self.dev.windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.dev.errors);
+        if let Some((c, target)) = self.dev.open_gpu_properties.take()
+            && let Some(conn) = state.connection(c)
+        {
+            self.pool.open(
+                &state,
+                conn,
+                crate::provision_ui::DialogRequest::Properties(target),
+                &self.backend,
+            );
+            self.pool
+                .select_properties_page(xen_core::properties::Page::Gpu);
+        }
+        if std::mem::take(&mut self.dev.open_options) {
+            self.options_open = true;
+        }
         if std::mem::take(&mut self.pool.open_connect) {
             self.open_connect_dialog(&state, None);
         }
@@ -2312,6 +2403,11 @@ mod tests {
     // F13: views, search, folders, tags, custom fields, drag and drop.
     mod org;
     mod org_real;
+    // F14a: GPUs, USB, vTPMs, memory settings and the external consoles
+    // (`app/tests/devices.rs`), and on a real host
+    // (`app/tests/devices_real.rs`).
+    mod devices;
+    mod devices_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

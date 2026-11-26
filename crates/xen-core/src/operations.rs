@@ -102,6 +102,36 @@ pub enum OperationKind {
     Dr(DrKind),
     /// A folder, tag, custom field or saved search operation (F13).
     Org(OrgKind),
+    /// A GPU, USB, vTPM, memory or Remote Desktop operation (F14a).
+    Device(DeviceKind),
+}
+
+/// The history entry of an F14a operation, with the names its title
+/// shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceKind {
+    /// "Saving virtual GPU configuration".
+    AllowedVgpuTypes,
+    /// "Set GPU placement policy".
+    PlacementPolicy,
+    /// "Updating integrated GPU pass-through on '{host}'".
+    IntegratedGpu { host: String },
+    /// "Set GPU" (the VM's vGPUs).
+    AssignVgpus { vm: String },
+    /// "Enabling / Disabling USB pass-through for {device}".
+    UsbPassthrough { device: String, enabled: bool },
+    /// "Attaching USB device '{device}' to VM '{vm}'".
+    AttachUsb { device: String, vm: String },
+    /// "Detaching USB device '{device}' from VM '{vm}'".
+    DetachUsb { device: String, vm: String },
+    /// "Attaching a new vTPM to VM '{vm}'".
+    AddVtpm { vm: String },
+    /// "Removing a vTPM from VM '{vm}'".
+    RemoveVtpm { vm: String },
+    /// "Changing memory settings for {vm}...".
+    Memory { vm: String },
+    /// Turning on Remote Desktop in the guest.
+    EnableRdp { vm: String },
 }
 
 /// The history entry of a folder, tag, custom field or saved search
@@ -479,6 +509,12 @@ pub enum OperationStep {
     CreatingNetworks,
     /// New VM: "Attaching a new vTPM".
     AttachingVtpm,
+    /// Memory settings: "Shutting down VM".
+    MemoryShutdown,
+    /// Memory settings: changing the limits.
+    MemorySet,
+    /// Memory settings: "Starting VM".
+    MemoryStart,
     /// New VM: "Starting VM".
     StartingVm,
     /// New VM: undoing what was made after a failure.
@@ -781,6 +817,7 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         request if request.is_vmss() => OperationKind::Vmss(vmss_kind(model, request)),
         request if request.is_dr() => OperationKind::Dr(dr_kind(model, request)),
         ActionRequest::Org(r) => OperationKind::Org(org_kind(model, r)),
+        ActionRequest::Device(r) => OperationKind::Device(device_kind(model, r)),
         request => OperationKind::Provision(provision_kind(model, request)),
     }
 }
@@ -881,6 +918,55 @@ fn vapp_kind(model: &ConnectionModel, request: &ActionRequest) -> VAppKind {
             name: app_name(vapp),
         },
         _ => unreachable!("not a vApp request"),
+    }
+}
+
+/// The history entry of an F14a operation.
+fn device_kind(model: &ConnectionModel, request: &crate::devices::DeviceRequest) -> DeviceKind {
+    use crate::devices::DeviceRequest as D;
+    let vm_name = |r: &Ref<Vm>| {
+        model
+            .vms
+            .get(r)
+            .map(|v| v.name_label.clone())
+            .unwrap_or_default()
+    };
+    let pusb_name = |p: Option<&xapi::PusbRecord>| {
+        p.map(|p| match crate::devices::pusb_description(p) {
+            crate::devices::PusbDescription::Text(t) => t,
+            crate::devices::PusbDescription::Ids { vendor, product } => {
+                format!("{vendor}:{product}")
+            }
+        })
+        .unwrap_or_default()
+    };
+    match request {
+        D::SetAllowedVgpuTypes { .. } => DeviceKind::AllowedVgpuTypes,
+        D::SetPlacementPolicy { .. } => DeviceKind::PlacementPolicy,
+        D::SetIntegratedGpu { host, .. } => DeviceKind::IntegratedGpu {
+            host: model
+                .hosts
+                .get(host)
+                .map(|h| h.name_label.clone())
+                .unwrap_or_default(),
+        },
+        D::AssignVgpus { vm, .. } => DeviceKind::AssignVgpus { vm: vm_name(vm) },
+        D::SetUsbPassthrough { pusb, enabled } => DeviceKind::UsbPassthrough {
+            device: pusb_name(model.get(pusb).map(|p| &**p)),
+            enabled: *enabled,
+        },
+        D::AttachUsb { vm, pusb, .. } => DeviceKind::AttachUsb {
+            device: pusb_name(model.get(pusb).map(|p| &**p)),
+            vm: vm_name(vm),
+        },
+        D::DetachUsb { vm, vusb, .. } => DeviceKind::DetachUsb {
+            device: pusb_name(crate::devices::vusb_device(model, vusb)),
+            vm: vm_name(vm),
+        },
+        D::AddVtpm { vm } => DeviceKind::AddVtpm { vm: vm_name(vm) },
+        D::RemoveVtpm { vm, .. } => DeviceKind::RemoveVtpm { vm: vm_name(vm) },
+        D::SetMemory(c) => DeviceKind::Memory { vm: vm_name(&c.vm) },
+        D::EnableRdp { vm } => DeviceKind::EnableRdp { vm: vm_name(vm) },
     }
 }
 
@@ -1402,6 +1488,9 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
         | ActionRequest::DrDestroyVms { .. }
         | ActionRequest::DrDestroyVApps { .. }
         | ActionRequest::Org(_) => None,
+        ActionRequest::Device(r) => {
+            return r.vm().map(|vm| OperationObject::Vm(vm.clone()));
+        }
         ActionRequest::ImportXva { .. }
         | ActionRequest::ExportOvf(_)
         | ActionRequest::ImportOvf(_) => None,
@@ -1564,6 +1653,9 @@ pub(crate) fn start_action_with(
             }
             request if request.is_org() => {
                 crate::org_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_device() => {
+                crate::devices_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
@@ -2239,6 +2331,11 @@ pub enum Precheck {
         vdi: Ref<xapi::Vdi>,
         items: Vec<crate::dr::DrItem>,
     },
+    /// `VM.get_possible_hosts` (the Attach USB dialog, F14a).
+    PossibleHosts { vm: Ref<Vm> },
+    /// The first of `candidates` accepting a connection on `port` from
+    /// this machine (Remote Desktop's address, `XSVNCScreen.PollPort`).
+    RdpAddress { candidates: Vec<String>, port: u16 },
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -2276,6 +2373,8 @@ pub enum PrecheckResult {
     DrProbe(Result<ProbeResult, Arc<xapi::Error>>),
     DrMetadata(Result<Vec<crate::dr::PoolMetadata>, Arc<xapi::Error>>),
     DrRecoverable(Result<Vec<(crate::dr::DrItem, crate::dr::Recoverable)>, Arc<xapi::Error>>),
+    PossibleHosts(Result<Vec<Ref<Host>>, Arc<xapi::Error>>),
+    RdpAddress(Option<String>),
 }
 
 pub(crate) fn run_precheck(
@@ -2430,6 +2529,14 @@ pub(crate) fn run_precheck(
                 crate::dr_run::recoverable(&session, &vdi, items)
                     .await
                     .map_err(Arc::new),
+            ),
+            Precheck::PossibleHosts { vm } => PrecheckResult::PossibleHosts(
+                xapi::vm::get_possible_hosts(&session, &vm)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::RdpAddress { candidates, port } => PrecheckResult::RdpAddress(
+                crate::consoles::probe(&candidates, port, std::time::Duration::from_secs(3)).await,
             ),
         };
         shared.notify(Notification::Precheck {

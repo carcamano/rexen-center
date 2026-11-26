@@ -138,10 +138,20 @@ pub enum DialogRequest {
     ConfigureDr,
     /// The Disaster Recovery wizard (`DRFailoverWizard`).
     DrWizard,
+    /// Manage vTPMs... (`VtpmManagementDialog`, F14a).
+    ManageVtpm(Ref<Vm>),
+    /// Memory Settings: the dialog for one VM, the wizard for several
+    /// (F14a).
+    MemorySettings(Vec<Ref<Vm>>),
 }
 
 impl DialogRequest {
     /// A pool or server settings dialog ([`crate::pool_ui`]).
+    /// A vTPM or memory dialog ([`crate::dev_ui`]).
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::ManageVtpm(_) | Self::MemorySettings(_))
+    }
+
     pub fn is_pool(&self) -> bool {
         matches!(
             self,
@@ -714,7 +724,9 @@ impl ProvisionUi {
             | DialogRequest::PolicyProperties(_)
             | DialogRequest::AssignPolicy { .. }
             | DialogRequest::ConfigureDr
-            | DialogRequest::DrWizard => {
+            | DialogRequest::DrWizard
+            | DialogRequest::ManageVtpm(_)
+            | DialogRequest::MemorySettings(_) => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(

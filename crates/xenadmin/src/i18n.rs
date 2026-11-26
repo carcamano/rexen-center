@@ -641,6 +641,7 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
         OperationKind::Vmss(kind) => crate::vmss_strings::vmss_title(kind),
         OperationKind::Dr(kind) => crate::dr_strings::dr_title(kind),
         OperationKind::Org(kind) => crate::org_strings::org_title(kind),
+        OperationKind::Device(kind) => crate::dev_strings::device_title(kind),
     }
 }
 
@@ -913,6 +914,11 @@ fn pool_step(step: &OperationStep) -> String {
         OperationStep::JoiningDomain => crate::ha_strings::ha_strings()
             .step_joining_domain
             .to_owned(),
+        OperationStep::MemoryShutdown => crate::dev_strings::dev_strings()
+            .step_shutting_down
+            .to_owned(),
+        OperationStep::MemorySet => crate::dev_strings::dev_strings().step_memory.to_owned(),
+        OperationStep::MemoryStart => crate::dev_strings::dev_strings().step_starting.to_owned(),
         _ => String::new(),
     }
 }

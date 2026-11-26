@@ -350,6 +350,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
                 _ => None,
             }
         }
+        ActionRequest::Device(r) => crate::dev_ui::confirmation(conn, r),
         request if request.is_vapp() => crate::vapp_ui::confirmation(conn, request),
         request if request.is_vmss() => crate::vmss_ui::confirmation(conn, request),
         request if request.is_pool() => crate::pool_ui::confirmation(conn, request),

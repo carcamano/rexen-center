@@ -49,6 +49,11 @@ pub enum Tab {
     /// The Search tab of a pool or server (`SearchPage`), drawn by
     /// [`crate::search_ui`].
     Search,
+    /// The GPUs of a pool or server (`GpuPage`), drawn by
+    /// [`crate::dev_ui`].
+    Gpu,
+    /// A server's USB devices (`UsbPage`), drawn by [`crate::dev_ui`].
+    Usb,
 }
 
 impl Tab {
@@ -66,6 +71,8 @@ impl Tab {
             Self::Ha => crate::ha_strings::ha_strings().tab_ha,
             Self::Users => crate::ha_strings::ha_strings().tab_users,
             Self::Search => crate::org_strings::org_strings().tab_search,
+            Self::Gpu => crate::dev_strings::dev_strings().tab_gpu,
+            Self::Usb => crate::dev_strings::dev_strings().tab_usb,
         }
     }
 }
@@ -96,15 +103,19 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
         // them to the tab list; they are shown where the earlier XenCenter
         // showed them: HA on a pool, Users on a pool or a live standalone
         // server.
-        Subject::Pool(..) => vec![
-            Tab::General,
-            Tab::Memory,
-            Tab::PhysicalStorage,
-            Tab::Networking,
-            Tab::Ha,
-            Tab::Users,
-            Tab::Search,
-        ],
+        Subject::Pool(..) => {
+            let mut tabs = vec![
+                Tab::General,
+                Tab::Memory,
+                Tab::PhysicalStorage,
+                Tab::Networking,
+            ];
+            if xen_core::devices::gpu_tab_shown(model) {
+                tabs.push(Tab::Gpu);
+            }
+            tabs.extend([Tab::Ha, Tab::Users, Tab::Search]);
+            tabs
+        }
         Subject::Host(_, host) if objects::host_is_live(model, host) => {
             let mut tabs = vec![
                 Tab::General,
@@ -112,9 +123,14 @@ pub fn tabs_for(model: &ConnectionModel, subject: Subject<'_>) -> Vec<Tab> {
                 Tab::PhysicalStorage,
                 Tab::Networking,
                 Tab::Nics,
-                Tab::Console,
-                Tab::Performance,
             ];
+            if xen_core::devices::gpu_tab_shown(model) {
+                tabs.push(Tab::Gpu);
+            }
+            if xen_core::devices::usb_tab_shown(model, host) {
+                tabs.push(Tab::Usb);
+            }
+            tabs.extend([Tab::Console, Tab::Performance]);
             if xen_core::pool::visible_pool(model).is_none() {
                 tabs.push(Tab::Users);
             }
@@ -168,6 +184,8 @@ pub fn page_title(tab: Tab, subject: Subject<'_>) -> &'static str {
         (Tab::Ha, _) => crate::ha_strings::ha_strings().high_availability,
         (Tab::Users, _) => crate::ha_strings::ha_strings().ad_tab_title,
         (Tab::Search, _) => crate::org_strings::org_strings().tab_search,
+        (Tab::Gpu, _) => crate::dev_strings::dev_strings().tab_gpu,
+        (Tab::Usb, _) => crate::dev_strings::dev_strings().usb_devices,
     }
 }
 

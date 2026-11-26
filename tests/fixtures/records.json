@@ -36,6 +36,9 @@
       "power_on_mode": "",
       "API_version_major": 2,
       "API_version_minor": 21,
+      "license_params": {
+        "restrict_vtpm": "false"
+      },
       "software_version": {
         "product_brand": "XCP-ng",
         "product_version": "8.3.0",
@@ -102,6 +105,9 @@
       "power_on_mode": "wake-on-lan",
       "API_version_major": 2,
       "API_version_minor": 21,
+      "license_params": {
+        "restrict_vtpm": "false"
+      },
       "software_version": {
         "product_brand": "XCP-ng",
         "product_version": "8.3.0",

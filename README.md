@@ -8,14 +8,15 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F13 (search, navigation views, folders, tags and custom
-fields) on top of F1–F12b (base, connection and model, detail tabs, VM and
-host operations, VNC console, performance graphs and alerts, VM creation,
-templates, snapshots and disks, storage repositories, networking, pools
-and pool and server properties, high availability, Active Directory and
-RBAC, XVA export and import, OVF/OVA packages and disk images, cross-pool
-migration and copy, Move VM, vApps, scheduled snapshots and disaster
-recovery).** What works:
+**Status: phase F14a (GPUs and vGPUs, USB pass-through, vTPMs, memory
+settings, external SSH and Remote Desktop consoles) on top of F1–F13
+(base, connection and model, detail tabs, VM and host operations, VNC
+console, performance graphs and alerts, VM creation, templates,
+snapshots and disks, storage repositories, networking, pools and pool and
+server properties, high availability, Active Directory and RBAC, XVA
+export and import, OVF/OVA packages and disk images, cross-pool migration
+and copy, Move VM, vApps, scheduled snapshots and disaster recovery,
+search, navigation views, folders, tags and custom fields).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -395,6 +396,38 @@ recovery).** What works:
   Tag, Untag in the views' menus; **drag and drop** of objects into a
   folder, onto a tag, and of a running VM onto another server of its pool
   (live migration, with the usual question);
+- **GPUs** (F14a): the GPU tab of a pool or server (the placement policy,
+  one row per group of identical physical GPUs with a bar per GPU showing
+  its vGPUs, the allowed vGPU types; Edit... / Edit Selected GPUs... to
+  allow or disallow types, a type in use cannot be disallowed); the pool
+  and server Properties' GPU page (placement policy, integrated GPU
+  pass-through after the next reboot); the VM Properties' GPU page (Add
+  virtual GPU with the original's compatible-type and allowed-type rules,
+  Delete; only while the VM is halted and not protected by HA);
+- **USB pass-through**: the server's USB tab (enable or disable
+  pass-through per device, asked first; not while a VM uses it) and the VM
+  Properties' USB page (Attach USB with the devices of the servers the VM
+  can run on, Detach, asked first; attaching switches the VM to the
+  upstream device model, as the original);
+- **vTPM**: VM > Manage vTPMs... for UEFI VMs (Add vTPM, Remove vTPM,
+  asked first, following the server's allowed operations), and the
+  General tab's Device Security row;
+- **memory settings**: Edit... on the Memory tab's VM rows (halted VMs, or
+  running ones with known tools): the dialog for one VM (a fixed memory or
+  a range; minimum, maximum and static maximum when the VM balloons) and
+  the wizard for several, with the original's limits (the pool's memory
+  ratio, the server's free memory, the template's maximum) and its
+  question before a static maximum change reboots a running VM; the change
+  runs live (`VM.set_memory_dynamic_range`) or with a clean shutdown and a
+  start around `VM.set_memory_limits`;
+- **external consoles**: Launch SSH Console on the Console tab (Linux VMs
+  with an address, and servers) runs the platform's terminal with `ssh
+  root@<address>`, or PuTTY or an OpenSSH binary set in Options > External
+  Tools; Remote Desktop (Windows guests whose agent offers it: Turn on
+  Remote Desktop, then Open Remote Desktop) finds the address that accepts
+  port 3389 and starts the platform's client (`mstsc` on Windows, the
+  `.rdp` handler on macOS, `xfreerdp` elsewhere, or a program set in
+  Options). Remote Desktop is not embedded (plan decision);
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -405,9 +438,9 @@ recovery).** What works:
 The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
-(the VM Properties pages beyond General and Custom Fields, so also a VM's
-own HA page) and custom graphs (New/Edit Graph) come in later phases (RDP
-is not embedded). The OVF wizards leave out signing a package (it
+(the VM Properties pages beyond General, Custom Fields, GPU and USB, so
+also a VM's own HA page) and custom graphs (New/Edit Graph) come in later
+phases (Remote Desktop runs in the platform's own client, not embedded). The OVF wizards leave out signing a package (it
 needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
 LUN-per-VDI page, URL sources and disk conversion (no external
 converter). The New VM wizard leaves out the pages the
@@ -708,6 +741,18 @@ end to end:
   grouping, sorting, Save, Export and Import, the Properties dialogs and
   tree menus, and drag and drop into a folder, onto a tag and onto a
   server;
+- GPUs, USB, vTPMs, memory and the external consoles against the mock
+  with its device fixture (`xapi_mock::devices`, `tests/fixtures/devices.json`:
+  three GRID K2 GPUs with four vGPU types and a running vGPU, an
+  integrated GPU, four USB devices): the GPU tab's rows, bars and types,
+  the allowed types, placement policy and integrated GPU calls, a VM's
+  vGPUs added and removed, USB pass-through and devices attached and
+  detached, vTPMs added and removed, memory changed live, on a halted VM
+  and around a reboot, Remote Desktop turned on and its address probed,
+  and every refusal; in the window: both tabs, the Properties pages and
+  dialogs, the vTPM manager, the memory dialog and wizard, and the SSH
+  and Remote Desktop command lines (recorded, never started; a unit test
+  starts a harmless local program through the launcher);
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -861,6 +906,16 @@ and the folder with the VM's own call (the product's Remove from folder
 would also list the emptied folder on the pool), then deletes the VM. The
 pool record must not change. `f13_real_run_on_the_mock` rehearses it.
 
+GPUs, USB, memory and vTPM on a real host (`app/tests/devices_real.rs`,
+same variables): `real_f14a_devices_memory_vtpm_and_consoles` reads the GPU
+tab, the USB tab, the integrated GPU and the Memory tab's figures, opens
+and cancels the server Properties' GPU page, then makes the disposable VM
+`xenadmin-rs-test-f14a` (UEFI), changes its memory limits through the
+Memory tab's Edit..., adds and removes a vTPM, shows the external console
+command lines as dry runs, and deletes the VM. No GPU, USB, server or pool
+record may change. `f14a_real_run_on_the_mock` rehearses it and checks
+that no other call is made.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -896,7 +951,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`), GPUs, USB, vTPMs and memory settings (`devices`, `memory`, `devices_run`), the external SSH and Remote Desktop consoles (`consoles`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

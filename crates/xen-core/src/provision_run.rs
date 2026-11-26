@@ -158,6 +158,7 @@ pub(crate) async fn run(
         | ActionRequest::DrDestroyVms { .. }
         | ActionRequest::DrDestroyVApps { .. }
         | ActionRequest::Org(_)
+        | ActionRequest::Device(_)
         | ActionRequest::DismissAlerts { .. }
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewSr(_)

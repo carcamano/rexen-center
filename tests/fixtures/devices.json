@@ -1,0 +1,584 @@
+{
+  "_comment": "F14a device fixture, added on demand by MockServer::add_device_fixtures: licences that allow GPUs, vGPUs, integrated GPU pass-through, USB pass-through, vTPM and DMC on both hosts; three NVIDIA GRID K2 GPUs (two on xcp-host-01, one on xcp-host-02) in one group with pass-through, K260Q, K240Q and K220Q (K220Q supported but not allowed, and Tech Preview), web-01 running a K240Q vGPU on the first; the Intel integrated GPU of xcp-host-01 (system display device, pass-through only); four USB devices (one disabled, one used by db-01's VUSB, one on xcp-host-02); UEFI boot for build-runner and a template reference for the GPU recommendations.",
+  "set": {
+    "host": {
+      "OpaqueRef:host-0001": {
+        "license_params": {
+          "restrict_gpu": "false",
+          "restrict_vgpu": "false",
+          "restrict_integrated_gpu_passthrough": "false",
+          "restrict_usb_passthrough": "false",
+          "restrict_vtpm": "false",
+          "restrict_dmc": "false"
+        },
+        "PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-intel"
+        ],
+        "PUSBs": [
+          "OpaqueRef:pusb-1",
+          "OpaqueRef:pusb-2",
+          "OpaqueRef:pusb-3"
+        ],
+        "display": "enabled"
+      },
+      "OpaqueRef:host-0002": {
+        "license_params": {
+          "restrict_gpu": "false",
+          "restrict_vgpu": "false",
+          "restrict_integrated_gpu_passthrough": "false",
+          "restrict_usb_passthrough": "false",
+          "restrict_vtpm": "false",
+          "restrict_dmc": "false"
+        },
+        "PGPUs": [
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "PUSBs": [
+          "OpaqueRef:pusb-4"
+        ],
+        "display": "enabled"
+      }
+    },
+    "vm": {
+      "OpaqueRef:vm-web": {
+        "VGPUs": [
+          "OpaqueRef:vgpu-web"
+        ]
+      },
+      "OpaqueRef:vm-db": {
+        "VUSBs": [
+          "OpaqueRef:vusb-db"
+        ]
+      },
+      "OpaqueRef:vm-build": {
+        "HVM_boot_policy": "BIOS order",
+        "HVM_boot_params": {
+          "order": "cd",
+          "firmware": "uefi"
+        }
+      }
+    }
+  },
+  "add": {
+    "pci": {
+      "OpaqueRef:pci-k2-a": {
+        "uuid": "9c000000-0000-4000-8000-000000000001",
+        "class_id": "0300",
+        "class_name": "VGA compatible controller",
+        "vendor_id": "10de",
+        "vendor_name": "NVIDIA Corporation",
+        "device_id": "11bf",
+        "device_name": "GK104GL [GRID K2]",
+        "host": "OpaqueRef:host-0001",
+        "pci_id": "0000:07:00.0",
+        "dependencies": [],
+        "other_config": {},
+        "subsystem_vendor_id": "",
+        "subsystem_vendor_name": "",
+        "subsystem_device_id": "",
+        "subsystem_device_name": "",
+        "driver_name": "nvidia"
+      },
+      "OpaqueRef:pci-k2-b": {
+        "uuid": "9c000000-0000-4000-8000-000000000002",
+        "class_id": "0300",
+        "class_name": "VGA compatible controller",
+        "vendor_id": "10de",
+        "vendor_name": "NVIDIA Corporation",
+        "device_id": "11bf",
+        "device_name": "GK104GL [GRID K2]",
+        "host": "OpaqueRef:host-0001",
+        "pci_id": "0000:08:00.0",
+        "dependencies": [],
+        "other_config": {},
+        "subsystem_vendor_id": "",
+        "subsystem_vendor_name": "",
+        "subsystem_device_id": "",
+        "subsystem_device_name": "",
+        "driver_name": "nvidia"
+      },
+      "OpaqueRef:pci-k2-c": {
+        "uuid": "9c000000-0000-4000-8000-000000000003",
+        "class_id": "0300",
+        "class_name": "VGA compatible controller",
+        "vendor_id": "10de",
+        "vendor_name": "NVIDIA Corporation",
+        "device_id": "11bf",
+        "device_name": "GK104GL [GRID K2]",
+        "host": "OpaqueRef:host-0002",
+        "pci_id": "0000:07:00.0",
+        "dependencies": [],
+        "other_config": {},
+        "subsystem_vendor_id": "",
+        "subsystem_vendor_name": "",
+        "subsystem_device_id": "",
+        "subsystem_device_name": "",
+        "driver_name": "nvidia"
+      },
+      "OpaqueRef:pci-intel": {
+        "uuid": "9c000000-0000-4000-8000-000000000004",
+        "class_id": "0300",
+        "class_name": "VGA compatible controller",
+        "vendor_id": "8086",
+        "vendor_name": "Intel Corporation",
+        "device_id": "11bf",
+        "device_name": "HD Graphics P630",
+        "host": "OpaqueRef:host-0001",
+        "pci_id": "0000:00:02.0",
+        "dependencies": [],
+        "other_config": {},
+        "subsystem_vendor_id": "",
+        "subsystem_vendor_name": "",
+        "subsystem_device_id": "",
+        "subsystem_device_name": "",
+        "driver_name": "nvidia"
+      }
+    },
+    "pgpu": {
+      "OpaqueRef:pgpu-k2-a": {
+        "uuid": "9b000000-0000-4000-8000-000000000001",
+        "PCI": "OpaqueRef:pci-k2-a",
+        "GPU_group": "OpaqueRef:gpu-group-k2",
+        "host": "OpaqueRef:host-0001",
+        "other_config": {},
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q",
+          "OpaqueRef:vgpu-type-k220q"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q"
+        ],
+        "resident_VGPUs": [
+          "OpaqueRef:vgpu-web"
+        ],
+        "supported_VGPU_max_capacities": {
+          "OpaqueRef:vgpu-type-passthrough": 1,
+          "OpaqueRef:vgpu-type-k260q": 2,
+          "OpaqueRef:vgpu-type-k240q": 4,
+          "OpaqueRef:vgpu-type-k220q": 8
+        },
+        "dom0_access": "enabled",
+        "is_system_display_device": false,
+        "compatibility_metadata": {}
+      },
+      "OpaqueRef:pgpu-k2-b": {
+        "uuid": "9b000000-0000-4000-8000-000000000002",
+        "PCI": "OpaqueRef:pci-k2-b",
+        "GPU_group": "OpaqueRef:gpu-group-k2",
+        "host": "OpaqueRef:host-0001",
+        "other_config": {},
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q",
+          "OpaqueRef:vgpu-type-k220q"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q"
+        ],
+        "resident_VGPUs": [],
+        "supported_VGPU_max_capacities": {
+          "OpaqueRef:vgpu-type-passthrough": 1,
+          "OpaqueRef:vgpu-type-k260q": 2,
+          "OpaqueRef:vgpu-type-k240q": 4,
+          "OpaqueRef:vgpu-type-k220q": 8
+        },
+        "dom0_access": "enabled",
+        "is_system_display_device": false,
+        "compatibility_metadata": {}
+      },
+      "OpaqueRef:pgpu-k2-c": {
+        "uuid": "9b000000-0000-4000-8000-000000000003",
+        "PCI": "OpaqueRef:pci-k2-c",
+        "GPU_group": "OpaqueRef:gpu-group-k2",
+        "host": "OpaqueRef:host-0002",
+        "other_config": {},
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q",
+          "OpaqueRef:vgpu-type-k220q"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q"
+        ],
+        "resident_VGPUs": [],
+        "supported_VGPU_max_capacities": {
+          "OpaqueRef:vgpu-type-passthrough": 1,
+          "OpaqueRef:vgpu-type-k260q": 2,
+          "OpaqueRef:vgpu-type-k240q": 4,
+          "OpaqueRef:vgpu-type-k220q": 8
+        },
+        "dom0_access": "enabled",
+        "is_system_display_device": false,
+        "compatibility_metadata": {}
+      },
+      "OpaqueRef:pgpu-intel": {
+        "uuid": "9b000000-0000-4000-8000-000000000004",
+        "PCI": "OpaqueRef:pci-intel",
+        "GPU_group": "OpaqueRef:gpu-group-intel",
+        "host": "OpaqueRef:host-0001",
+        "other_config": {},
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-intel-passthrough"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-intel-passthrough"
+        ],
+        "resident_VGPUs": [],
+        "supported_VGPU_max_capacities": {
+          "OpaqueRef:vgpu-type-intel-passthrough": 1
+        },
+        "dom0_access": "enabled",
+        "is_system_display_device": true,
+        "compatibility_metadata": {}
+      }
+    },
+    "gpu_group": {
+      "OpaqueRef:gpu-group-k2": {
+        "uuid": "9d000000-0000-4000-8000-000000000001",
+        "name_label": "Group of NVIDIA Corporation GK104GL [GRID K2] GPUs",
+        "name_description": "",
+        "PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "VGPUs": [
+          "OpaqueRef:vgpu-web"
+        ],
+        "GPU_types": [
+          "10de/11bf"
+        ],
+        "other_config": {},
+        "allocation_algorithm": "depth_first",
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q",
+          "OpaqueRef:vgpu-type-k220q"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-passthrough",
+          "OpaqueRef:vgpu-type-k260q",
+          "OpaqueRef:vgpu-type-k240q"
+        ]
+      },
+      "OpaqueRef:gpu-group-intel": {
+        "uuid": "9d000000-0000-4000-8000-000000000002",
+        "name_label": "Group of Intel Corporation HD Graphics P630 GPUs",
+        "name_description": "",
+        "PGPUs": [
+          "OpaqueRef:pgpu-intel"
+        ],
+        "VGPUs": [],
+        "GPU_types": [
+          "8086/5912"
+        ],
+        "other_config": {},
+        "allocation_algorithm": "depth_first",
+        "supported_VGPU_types": [
+          "OpaqueRef:vgpu-type-intel-passthrough"
+        ],
+        "enabled_VGPU_types": [
+          "OpaqueRef:vgpu-type-intel-passthrough"
+        ]
+      }
+    },
+    "vgpu_type": {
+      "OpaqueRef:vgpu-type-passthrough": {
+        "uuid": "9a000000-0000-4000-8000-000000000001",
+        "vendor_name": "NVIDIA Corporation",
+        "model_name": "passthrough",
+        "framebuffer_size": 0,
+        "max_heads": 0,
+        "max_resolution_x": 0,
+        "max_resolution_y": 0,
+        "supported_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "enabled_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "VGPUs": [],
+        "supported_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "enabled_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "implementation": "passthrough",
+        "identifier": "",
+        "experimental": false,
+        "compatible_types_in_vm": []
+      },
+      "OpaqueRef:vgpu-type-k260q": {
+        "uuid": "9a000000-0000-4000-8000-000000000002",
+        "vendor_name": "NVIDIA Corporation",
+        "model_name": "GRID K260Q",
+        "framebuffer_size": 2147483648,
+        "max_heads": 4,
+        "max_resolution_x": 2560,
+        "max_resolution_y": 1600,
+        "supported_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "enabled_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "VGPUs": [],
+        "supported_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "enabled_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "implementation": "nvidia",
+        "identifier": "",
+        "experimental": false,
+        "compatible_types_in_vm": []
+      },
+      "OpaqueRef:vgpu-type-k240q": {
+        "uuid": "9a000000-0000-4000-8000-000000000003",
+        "vendor_name": "NVIDIA Corporation",
+        "model_name": "GRID K240Q",
+        "framebuffer_size": 1073741824,
+        "max_heads": 2,
+        "max_resolution_x": 2560,
+        "max_resolution_y": 1600,
+        "supported_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "enabled_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "VGPUs": [
+          "OpaqueRef:vgpu-web"
+        ],
+        "supported_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "enabled_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "implementation": "nvidia",
+        "identifier": "",
+        "experimental": false,
+        "compatible_types_in_vm": [
+          "OpaqueRef:vgpu-type-k240q"
+        ]
+      },
+      "OpaqueRef:vgpu-type-k220q": {
+        "uuid": "9a000000-0000-4000-8000-000000000004",
+        "vendor_name": "NVIDIA Corporation",
+        "model_name": "GRID K220Q",
+        "framebuffer_size": 536870912,
+        "max_heads": 2,
+        "max_resolution_x": 2560,
+        "max_resolution_y": 1600,
+        "supported_on_PGPUs": [
+          "OpaqueRef:pgpu-k2-a",
+          "OpaqueRef:pgpu-k2-b",
+          "OpaqueRef:pgpu-k2-c"
+        ],
+        "enabled_on_PGPUs": [],
+        "VGPUs": [],
+        "supported_on_GPU_groups": [
+          "OpaqueRef:gpu-group-k2"
+        ],
+        "enabled_on_GPU_groups": [],
+        "implementation": "nvidia",
+        "identifier": "",
+        "experimental": true,
+        "compatible_types_in_vm": [
+          "OpaqueRef:vgpu-type-k220q"
+        ]
+      },
+      "OpaqueRef:vgpu-type-intel-passthrough": {
+        "uuid": "9a000000-0000-4000-8000-000000000005",
+        "vendor_name": "",
+        "model_name": "passthrough",
+        "framebuffer_size": 0,
+        "max_heads": 0,
+        "max_resolution_x": 0,
+        "max_resolution_y": 0,
+        "supported_on_PGPUs": [
+          "OpaqueRef:pgpu-intel"
+        ],
+        "enabled_on_PGPUs": [
+          "OpaqueRef:pgpu-intel"
+        ],
+        "VGPUs": [],
+        "supported_on_GPU_groups": [
+          "OpaqueRef:gpu-group-intel"
+        ],
+        "enabled_on_GPU_groups": [
+          "OpaqueRef:gpu-group-intel"
+        ],
+        "implementation": "passthrough",
+        "identifier": "",
+        "experimental": false,
+        "compatible_types_in_vm": []
+      }
+    },
+    "vgpu": {
+      "OpaqueRef:vgpu-web": {
+        "uuid": "9e100000-0000-4000-8000-000000000001",
+        "VM": "OpaqueRef:vm-web",
+        "GPU_group": "OpaqueRef:gpu-group-k2",
+        "device": "0",
+        "currently_attached": true,
+        "other_config": {},
+        "type": "OpaqueRef:vgpu-type-k240q",
+        "resident_on": "OpaqueRef:pgpu-k2-a",
+        "scheduled_to_be_resident_on": "OpaqueRef:NULL",
+        "compatibility_metadata": {},
+        "extra_args": "",
+        "PCI": "OpaqueRef:NULL"
+      }
+    },
+    "pusb": {
+      "OpaqueRef:pusb-1": {
+        "uuid": "9f000000-0000-4000-8000-000000000001",
+        "USB_group": "OpaqueRef:usb-group-1",
+        "host": "OpaqueRef:host-0001",
+        "path": "1-1",
+        "vendor_id": "0781",
+        "vendor_desc": "SanDisk Corp.",
+        "product_id": "5567",
+        "product_desc": "Cruzer Blade",
+        "serial": "",
+        "version": "2.00",
+        "description": "SanDisk Corp._Cruzer Blade",
+        "passthrough_enabled": true,
+        "other_config": {},
+        "speed": 480.0
+      },
+      "OpaqueRef:pusb-2": {
+        "uuid": "9f000000-0000-4000-8000-000000000002",
+        "USB_group": "OpaqueRef:usb-group-2",
+        "host": "OpaqueRef:host-0001",
+        "path": "1-2",
+        "vendor_id": "046d",
+        "vendor_desc": "",
+        "product_id": "c52b",
+        "product_desc": "",
+        "serial": "",
+        "version": "2.00",
+        "description": "",
+        "passthrough_enabled": false,
+        "other_config": {},
+        "speed": 480.0
+      },
+      "OpaqueRef:pusb-3": {
+        "uuid": "9f000000-0000-4000-8000-000000000003",
+        "USB_group": "OpaqueRef:usb-group-3",
+        "host": "OpaqueRef:host-0001",
+        "path": "2-1",
+        "vendor_id": "1050",
+        "vendor_desc": "Yubico.com",
+        "product_id": "0407",
+        "product_desc": "Yubikey 4 OTP+U2F+CCID",
+        "serial": "",
+        "version": "2.00",
+        "description": "Yubico.com_Yubikey 4",
+        "passthrough_enabled": true,
+        "other_config": {},
+        "speed": 480.0
+      },
+      "OpaqueRef:pusb-4": {
+        "uuid": "9f000000-0000-4000-8000-000000000004",
+        "USB_group": "OpaqueRef:usb-group-4",
+        "host": "OpaqueRef:host-0002",
+        "path": "3-1",
+        "vendor_id": "0951",
+        "vendor_desc": "Kingston",
+        "product_id": "1666",
+        "product_desc": "DataTraveler 3.0",
+        "serial": "",
+        "version": "2.00",
+        "description": "Kingston_DataTraveler 3.0",
+        "passthrough_enabled": true,
+        "other_config": {},
+        "speed": 480.0
+      }
+    },
+    "usb_group": {
+      "OpaqueRef:usb-group-1": {
+        "uuid": "9f100000-0000-4000-8000-000000000001",
+        "name_label": "Group of 1 USB devices",
+        "name_description": "",
+        "PUSBs": [
+          "OpaqueRef:pusb-1"
+        ],
+        "VUSBs": [],
+        "other_config": {}
+      },
+      "OpaqueRef:usb-group-2": {
+        "uuid": "9f100000-0000-4000-8000-000000000002",
+        "name_label": "Group of 1 USB devices",
+        "name_description": "",
+        "PUSBs": [
+          "OpaqueRef:pusb-2"
+        ],
+        "VUSBs": [],
+        "other_config": {}
+      },
+      "OpaqueRef:usb-group-3": {
+        "uuid": "9f100000-0000-4000-8000-000000000003",
+        "name_label": "Group of 1 USB devices",
+        "name_description": "",
+        "PUSBs": [
+          "OpaqueRef:pusb-3"
+        ],
+        "VUSBs": [
+          "OpaqueRef:vusb-db"
+        ],
+        "other_config": {}
+      },
+      "OpaqueRef:usb-group-4": {
+        "uuid": "9f100000-0000-4000-8000-000000000004",
+        "name_label": "Group of 1 USB devices",
+        "name_description": "",
+        "PUSBs": [
+          "OpaqueRef:pusb-4"
+        ],
+        "VUSBs": [],
+        "other_config": {}
+      }
+    },
+    "vusb": {
+      "OpaqueRef:vusb-db": {
+        "uuid": "9f200000-0000-4000-8000-000000000001",
+        "allowed_operations": [],
+        "current_operations": {},
+        "VM": "OpaqueRef:vm-db",
+        "USB_group": "OpaqueRef:usb-group-3",
+        "other_config": {},
+        "currently_attached": false
+      }
+    }
+  }
+}

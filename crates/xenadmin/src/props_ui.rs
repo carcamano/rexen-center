@@ -103,6 +103,8 @@ pub struct PropertiesDialog {
     pub org: crate::org_ui::OrgEditor,
     /// A custom field dialog to open (the window shows it).
     pub org_dialog: Option<crate::org_ui::OrgDialog>,
+    /// The GPU page (F14a).
+    pub gpu: Option<crate::dev_ui::PoolGpuPage>,
 }
 
 /// The height of the page list and of the page (both scroll).
@@ -202,6 +204,9 @@ impl PropertiesDialog {
                 e
             },
             org_dialog: None,
+            gpu: pages
+                .contains(&Page::Gpu)
+                .then(|| crate::dev_ui::PoolGpuPage::new(conn, &target)),
             target,
             pages,
         };
@@ -337,6 +342,7 @@ impl PropertiesDialog {
             Page::LogDestination => s.page_log,
             Page::PowerOn => s.page_power_on,
             Page::Autostart => s.page_autostart,
+            Page::Gpu => crate::dev_strings::dev_strings().page_gpu,
             Page::LivePatching => s.page_live_patching,
             Page::NetworkOptions => s.page_network,
             Page::Clustering => s.page_clustering,
@@ -393,6 +399,7 @@ impl PropertiesDialog {
                 None => String::new(),
             },
             Page::Autostart => on_off(self.autostart),
+            Page::Gpu => self.gpu.as_ref().map(|g| g.subtext()).unwrap_or_default(),
             Page::LivePatching => on_off(!self.live_patching_disabled),
             Page::NetworkOptions => if self.igmp {
                 s.igmp_enabled
@@ -638,6 +645,9 @@ impl PropertiesDialog {
             for request in self.org.requests(&conn) {
                 ops.request(&conn, request, backend);
             }
+            for request in self.gpu.iter().flat_map(|g| g.requests()) {
+                ops.request(&conn, request, backend);
+            }
             return true;
         }
         false
@@ -759,6 +769,11 @@ impl PropertiesDialog {
                 ui.label(RichText::new(s.advanced_note).weak());
             }
             Page::Nrpe => self.nrpe_page(ui),
+            Page::Gpu => {
+                if let Some(g) = self.gpu.as_mut() {
+                    g.ui(ui);
+                }
+            }
         }
     }
 

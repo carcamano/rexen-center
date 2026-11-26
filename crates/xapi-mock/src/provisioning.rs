@@ -81,6 +81,7 @@ pub(crate) fn handles(class: &str, call: &str) -> bool {
         || crate::appliance::handles(class, call)
         || crate::vmss::handles(class, call)
         || crate::dr::handles(class, call)
+        || crate::devices::handles(class, call)
     {
         return true;
     }
@@ -115,7 +116,12 @@ pub(crate) fn vm_allowed(rec: &Map<String, Value>) -> Vec<&'static str> {
         .get("power_state")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    crate::ops::allowed_for(state).to_vec()
+    let mut ops = crate::ops::allowed_for(state).to_vec();
+    // XAPI 23.11: a halted VM without a vTPM may get one.
+    if state == "Halted" && ref_list(rec, "VTPMs").is_empty() {
+        ops.push("create_vtpm");
+    }
+    ops
 }
 
 fn ref_list(rec: &Map<String, Value>, field: &str) -> Vec<String> {
@@ -400,6 +406,9 @@ impl Db {
         if !handles(class, call) {
             return None;
         }
+        if crate::devices::handles(class, call) {
+            return Some(self.device_call(class, call, params));
+        }
         if let Some(reply) = self.storage_call(class, call, params) {
             return Some(reply);
         }
@@ -506,8 +515,20 @@ impl Db {
                 match self.get_str("vtpm", &r, "VM") {
                     None => api_error("HANDLE_INVALID", &["VTPM", &r]),
                     Some(vm) => {
+                        if self
+                            .record("vm", &vm)
+                            .and_then(|v| v.get("power_state"))
+                            .and_then(Value::as_str)
+                            != Some("Halted")
+                        {
+                            return Some(api_error(
+                                "VM_BAD_POWER_STATE",
+                                &[&vm, "halted", "running"],
+                            ));
+                        }
                         self.drop_ref("vm", &vm, "VTPMs", &r);
                         self.remove("vtpm", &r);
+                        self.sync_vtpms(&vm);
                         Ok(json!(""))
                     }
                 }
@@ -1832,9 +1853,11 @@ impl Db {
         self.insert(
             "vtpm",
             &r,
-            json!({"uuid": uuid, "VM": vm, "is_unique": false, "is_protected": false}),
+            json!({"uuid": uuid, "VM": vm, "is_unique": false, "is_protected": false,
+                   "allowed_operations": [], "current_operations": {}}),
         );
         self.push_ref("vm", vm, "VTPMs", &r);
+        self.sync_vtpms(vm);
         Ok(json!(r))
     }
 }
