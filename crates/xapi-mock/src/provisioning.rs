@@ -65,7 +65,7 @@ const CALLS: &[(&str, &[&str])] = &[
         "VBD",
         &["create", "destroy", "plug", "unplug", "insert", "eject"],
     ),
-    ("VIF", &["create", "destroy"]),
+    ("VIF", &["create", "destroy", "move"]),
     ("VTPM", &["create", "destroy"]),
 ];
 
@@ -479,6 +479,7 @@ impl Db {
             ("VBD", "eject") => self.vbd_eject(str_param(params, 1)),
             ("VIF", "create") => self.vif_create(params.get(1)),
             ("VIF", "destroy") => self.vif_destroy(str_param(params, 1)),
+            ("VIF", "move") => self.vif_move(str_param(params, 1), str_param(params, 2)),
             ("VTPM", "create") => self.vtpm_create(str_param(params, 1)),
             ("VTPM", "destroy") => {
                 let r = str_param(params, 1).to_owned();
@@ -886,7 +887,7 @@ impl Db {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_vbd(
+    pub(crate) fn new_vbd(
         &mut self,
         vm: &str,
         vdi: Option<&str>,
@@ -1014,7 +1015,7 @@ impl Db {
         Ok(json!(""))
     }
 
-    fn destroy_vdi_record(&mut self, vdi: &str) {
+    pub(crate) fn destroy_vdi_record(&mut self, vdi: &str) {
         let Some(rec) = self.record("vdi", vdi).cloned() else {
             return;
         };
@@ -1040,7 +1041,7 @@ impl Db {
         self.remove("vdi", vdi);
     }
 
-    fn vm_destroy(&mut self, vm: &str) -> Reply {
+    pub(crate) fn vm_destroy(&mut self, vm: &str) -> Reply {
         let rec = self.vm_check(vm, "destroy")?.clone();
         for vbd in ref_list(&rec, "VBDs") {
             if let Some(vdi) = self.get_str("vbd", &vbd, "VDI") {
@@ -1564,7 +1565,24 @@ impl Db {
         Ok(json!(""))
     }
 
-    fn vif_create(&mut self, record: Option<&Value>) -> Reply {
+    /// `VIF.move`: the interface goes to another network (unplugged and
+    /// plugged again by XAPI when attached; the mock just moves it).
+    fn vif_move(&mut self, vif: &str, network: &str) -> Reply {
+        let Some(old) = self.get_str("vif", vif, "network") else {
+            return api_error("HANDLE_INVALID", &["VIF", vif]);
+        };
+        if !self.exists("network", network) {
+            return api_error("HANDLE_INVALID", &["network", network]);
+        }
+        self.drop_ref("network", &old, "VIFs", vif);
+        self.modify("vif", vif, |r| {
+            r.insert("network".into(), json!(network));
+        });
+        self.push_ref("network", network, "VIFs", vif);
+        Ok(json!(""))
+    }
+
+    pub(crate) fn vif_create(&mut self, record: Option<&Value>) -> Reply {
         let rec = record
             .and_then(Value::as_object)
             .cloned()

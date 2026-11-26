@@ -10,8 +10,10 @@ publish.workspace = true
 [dependencies]
 arc-swap = { workspace = true }
 directories = { workspace = true }
+flate2 = { workspace = true }
 keyring = { workspace = true }
 quick-xml = { workspace = true }
+ring = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,6 +23,9 @@ tracing = { workspace = true }
 xapi = { workspace = true }
 xen-rrd = { workspace = true }
 xen-vnc = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

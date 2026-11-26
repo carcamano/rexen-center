@@ -17,6 +17,7 @@ xen-vnc = { path = "crates/xen-vnc" }
 xen-rrd = { path = "crates/xen-rrd" }
 
 arc-swap = "1.7"
+bytes = "1"
 directories = "6"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.37"

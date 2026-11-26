@@ -139,6 +139,8 @@ pub struct XenAdminApp {
     /// High availability and Active Directory: the HA wizard and settings,
     /// the HA and Users tabs.
     ha: crate::ha_ui::HaUi,
+    /// XVA export and import: the wizards and the Export to File dialog.
+    xva: crate::xva_ui::XvaUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -182,6 +184,7 @@ impl XenAdminApp {
             network: NetUi::default(),
             pool: PoolUi::default(),
             ha: crate::ha_ui::HaUi::default(),
+            xva: crate::xva_ui::XvaUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -521,6 +524,23 @@ impl XenAdminApp {
                     ui.close();
                 }
                 ui.separator();
+                let any_connected = state.connections.iter().any(|c| c.status.is_connected());
+                if ui
+                    .add_enabled(
+                        any_connected,
+                        Button::new(crate::xva_strings::xva_strings().menu_import),
+                    )
+                    .clicked()
+                {
+                    // `ImportCommand` with the selection as the home server.
+                    let target = match &self.selection {
+                        Some(Selection::Host(c, h)) => Some((*c, Some(h.clone()))),
+                        _ => selected_conn.map(|c| (c, None)),
+                    };
+                    self.xva.open_import(target);
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button(s.menu_quit).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -563,6 +583,12 @@ impl XenAdminApp {
                     if model::is_guest(vm) {
                         entries.extend(ops_ui::vm_entries(conn, &r, vm));
                         entries.extend(provision_ui::vm_entries(conn, &r, vm));
+                        entries.push(crate::xva_ui::export_entry(
+                            state,
+                            conn,
+                            std::slice::from_ref(&r),
+                            false,
+                        ));
                     } else {
                         entries.extend(provision_ui::template_entries(conn, &r, vm));
                     }
@@ -758,9 +784,17 @@ impl XenAdminApp {
             }
             response.context_menu(|ui| {
                 if conn.status.is_connected() {
+                    // `Helpers.PoolHasEnabledHosts`.
+                    let host_ok = conn
+                        .model
+                        .hosts
+                        .values()
+                        .any(|h| h.enabled && objects::host_is_live(&conn.model, h));
                     let mut entries = vec![
                         provision_ui::new_vm_entry(conn, None),
                         storage_ui::new_sr_entry(conn),
+                        crate::xva_ui::import_entry(conn, None),
+                        crate::xva_ui::export_entry(state, conn, &[], host_ok),
                         Entry::Separator,
                     ];
                     entries.extend(pool_ui::pool_entries(state, conn));
@@ -1029,6 +1063,12 @@ impl XenAdminApp {
                 let entries = if model::is_guest(record) {
                     let mut e = ops_ui::vm_entries(conn, &vm.vm_ref, record);
                     e.extend(provision_ui::vm_entries(conn, &vm.vm_ref, record));
+                    e.push(crate::xva_ui::export_entry(
+                        &self.backend.state(),
+                        conn,
+                        std::slice::from_ref(&vm.vm_ref),
+                        false,
+                    ));
                     e
                 } else {
                     provision_ui::template_entries(conn, &vm.vm_ref, record)
@@ -1054,9 +1094,13 @@ impl XenAdminApp {
     ) {
         if let Some(record) = conn.model.hosts.get(host) {
             response.context_menu(|ui| {
+                let state = self.backend.state();
+                let host_ok = record.enabled && objects::host_is_live(&conn.model, record);
                 let mut entries = vec![
                     provision_ui::new_vm_entry(conn, Some(host.clone())),
                     storage_ui::new_sr_entry(conn),
+                    crate::xva_ui::import_entry(conn, Some(host.clone())),
+                    crate::xva_ui::export_entry(&state, conn, &[], host_ok),
                     Entry::Separator,
                 ];
                 entries.extend(ops_ui::host_entries(conn, host, record));
@@ -1784,6 +1828,8 @@ impl eframe::App for XenAdminApp {
                     self.pool.open(&state, conn, request, &self.backend);
                 } else if request.is_storage() {
                     self.storage.open(conn, request);
+                } else if request.is_transfer() {
+                    self.xva.open(conn, request);
                 } else {
                     self.provision.open(conn, request);
                 }
@@ -1803,6 +1849,13 @@ impl eframe::App for XenAdminApp {
         self.errors.append(&mut self.pool.errors);
         self.ha.windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.ha.errors);
+        for (c, request) in std::mem::take(&mut self.provision.forwarded) {
+            if let Some(conn) = state.connection(c) {
+                self.xva.open(conn, request);
+            }
+        }
+        self.xva.windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.xva.errors);
         if std::mem::take(&mut self.pool.open_connect) {
             self.open_connect_dialog(&state, None);
         }
@@ -1990,6 +2043,10 @@ mod tests {
     // Users tabs read only (`app/tests/ha_real.rs`).
     mod ha;
     mod ha_real;
+    // F11a: XVA export and import (`app/tests/xva.rs`), and the round trip
+    // of a disposable test VM on the real host (`app/tests/xva_real.rs`).
+    mod xva;
+    mod xva_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

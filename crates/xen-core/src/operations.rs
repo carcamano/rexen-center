@@ -90,6 +90,24 @@ pub enum OperationKind {
     Ha(HaKind),
     /// An Active Directory operation (F10b).
     Ad(AdKind),
+    /// An XVA export or import (F11a).
+    Transfer(TransferKind),
+}
+
+/// The XVA transfers, with the names their titles show (the original's
+/// action titles).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferKind {
+    /// "Export VM '{vm}' from '{pool}'".
+    Export { vm: String, pool: String },
+    /// "Import VM from '{file}' to '{host} in '{pool}''" (`in_pool`: a
+    /// pool, else "on" a standalone server).
+    Import {
+        file: String,
+        host: String,
+        pool: String,
+        in_pool: bool,
+    },
 }
 
 /// The HA operations, with the names their titles show (the original's
@@ -375,6 +393,26 @@ pub enum OperationStep {
     JoiningDomain,
     /// HA: "Setting HA restart priority on {vm} to 'Do not restart'".
     UnprotectingVm { vm: String },
+    /// Export: "Exporting..." ({received} bytes so far).
+    Exporting { received: i64 },
+    /// Export: "Verifying Export...".
+    VerifyingExport,
+    /// Import: "Uploading '{file}' to '{pool}' ({percent}% done)...".
+    Uploading {
+        file: String,
+        pool: String,
+        percent: u32,
+    },
+    /// Import: "Updating VM..." (or template).
+    UpdatingImported { template: bool },
+    /// Import: "Waiting for Import VM wizard to complete..." (or template).
+    WaitingForImportWizard { template: bool },
+    /// Import: "Updating VM networking..." (or template).
+    UpdatingImportNetworks { template: bool },
+    /// Import: "Import VM complete" (or template).
+    ImportComplete { template: bool },
+    /// A failed import: removing what it left.
+    RemovingImported,
 }
 
 /// How an operation ended (or that it has not).
@@ -523,7 +561,41 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
             action: HostAction::EnterMaintenance,
         },
         request if request.is_pool() => OperationKind::Pool(pool_kind(model, request)),
+        request if request.is_transfer() => OperationKind::Transfer(transfer_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
+    }
+}
+
+/// The history entry of an XVA transfer.
+fn transfer_kind(model: &ConnectionModel, request: &ActionRequest) -> TransferKind {
+    let pool = model.pool();
+    let pool_name = pool
+        .map(|(_, p)| objects::pool_name(model, p))
+        .unwrap_or_default();
+    match request {
+        ActionRequest::ExportXva { vm, .. } => TransferKind::Export {
+            vm: model
+                .vms
+                .get(vm)
+                .map(|v| v.name_label.clone())
+                .unwrap_or_else(|| vm.to_string()),
+            pool: pool_name,
+        },
+        ActionRequest::ImportXva { path, affinity, .. } => {
+            let host = affinity
+                .clone()
+                .or_else(|| pool.map(|(_, p)| p.master.clone()))
+                .and_then(|h| model.hosts.get(&h).map(|h| h.name_label.clone()))
+                .unwrap_or_default();
+            TransferKind::Import {
+                file: path.clone(),
+                host,
+                pool: pool_name,
+                in_pool: pool.is_some_and(|(_, p)| !p.name_label.is_empty())
+                    || model.hosts.len() > 1,
+            }
+        }
+        _ => unreachable!("not a transfer"),
     }
 }
 
@@ -852,6 +924,8 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
         | ActionRequest::RestoreHost { host, .. } => {
             return Some(OperationObject::Host(host.clone()));
         }
+        ActionRequest::ExportXva { vm, .. } => return Some(OperationObject::Vm(vm.clone())),
+        ActionRequest::ImportXva { .. } => None,
         ActionRequest::SetProperties {
             target: crate::properties::PropertiesTarget::Host(host),
             ..
@@ -979,6 +1053,9 @@ pub(crate) fn start_action(
             }
             request if request.is_ha() || request.is_ad() => {
                 crate::ha_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_transfer() => {
+                crate::xva_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };

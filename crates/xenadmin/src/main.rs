@@ -45,6 +45,8 @@ mod sr_strings;
 mod storage_ui;
 mod tab_strings;
 mod tabs;
+mod xva_strings;
+mod xva_ui;
 
 use std::sync::Arc;
 

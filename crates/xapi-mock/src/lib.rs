@@ -37,7 +37,9 @@
 //! * high availability (see [`ha`]) and a simulated Active Directory
 //!   domain whose users log in with their subjects' roles (see [`ad`]);
 //! * messages: `message.create` and `message.destroy` (with their events),
-//!   and `host.call_plugin` for perfmon's `refresh` / `start`.
+//!   and `host.call_plugin` for perfmon's `refresh` / `start`;
+//! * XVA export and import: `GET /export` and `PUT /import`, streamed both
+//!   ways with task progress, cancellation and cleanup (see [`xva`]).
 //!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
@@ -63,6 +65,7 @@ pub mod pool;
 pub mod provisioning;
 pub mod rrd;
 pub mod storage;
+pub mod xva;
 
 pub use ad::{AD_ADMIN, AD_DOMAIN, AD_USERS};
 pub use ops::RBAC_USERS;
@@ -416,6 +419,55 @@ impl MockServer {
         }
     }
 
+    /// XVA exports write `blocks` blocks of `block_size` bytes per disk
+    /// (default 4 of 64 KiB).
+    pub fn set_xva_blocks(&self, block_size: usize, blocks: u64) {
+        let mut db = self.state.db();
+        db.xva.block_size = block_size.max(1);
+        db.xva.blocks = blocks;
+    }
+
+    /// XVA exports carry XXH64 checksums (`.xxhash`, the default, as
+    /// XCP-ng 8.3) or SHA-1 (`.checksum`).
+    pub fn set_xva_xxhash(&self, xxhash: bool) {
+        self.state.db().xva.xxhash = xxhash;
+    }
+
+    /// Exports go out `frame` bytes at a time, with `delay` between frames;
+    /// imports wait `delay` after each piece read.
+    pub fn set_transfer_pace(&self, frame: usize, delay: Duration) {
+        let mut db = self.state.db();
+        db.xva.frame = frame.max(1);
+        db.xva.delay = delay;
+    }
+
+    /// The link of the next transfers drops after `bytes` (the task fails
+    /// as XAPI's does when the other end goes away).
+    pub fn drop_transfer_after(&self, bytes: Option<u64>) {
+        self.state.db().xva.drop_after = bytes;
+    }
+
+    /// Exports write one wrong block checksum.
+    pub fn corrupt_export_block(&self, corrupt: bool) {
+        self.state.db().xva.corrupt_block = corrupt;
+    }
+
+    /// A failed import leaves the VM it made (a server that does not clean
+    /// up after itself).
+    pub fn keep_half_imported(&self, keep: bool) {
+        self.state.db().xva.keep_half_imported = keep;
+    }
+
+    /// The digest of a disk's content, once exported or imported.
+    pub fn vdi_digest(&self, vdi: &str) -> Option<String> {
+        self.state.db().xva.digests.get(vdi).cloned()
+    }
+
+    /// The largest piece of an import body the server read at once.
+    pub fn largest_import_piece(&self) -> usize {
+        self.state.db().xva.largest_piece
+    }
+
     /// Current `power_state` of a VM.
     pub fn vm_power_state(&self, vm: &str) -> String {
         self.state
@@ -754,6 +806,7 @@ impl State {
             storage: storage::World::default(),
             networking: networking::World::default(),
             pool: pool::World::default(),
+            xva: xva::World::default(),
         };
         db.init_sr_ops();
         db.init_vif_ops();
@@ -863,6 +916,8 @@ struct Db {
     networking: networking::World,
     /// Pool membership and server settings.
     pool: pool::World,
+    /// XVA transfers.
+    xva: xva::World,
 }
 
 impl Db {
@@ -1107,7 +1162,52 @@ fn api_error(code: &str, params: &[&str]) -> Reply {
     ))
 }
 
+/// A response body: whole, or streamed from a channel (an export). An
+/// error in the channel cuts the connection.
+pub(crate) enum MockBody {
+    Full(Full<Bytes>),
+    Channel(tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>),
+}
+
+impl hyper::body::Body for MockBody {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, std::io::Error>>> {
+        match self.get_mut() {
+            MockBody::Full(full) => std::pin::Pin::new(full)
+                .poll_frame(cx)
+                .map(|f| f.map(|r| r.map_err(|e: Infallible| match e {}))),
+            MockBody::Channel(rx) => rx
+                .poll_recv(cx)
+                .map(|item| item.map(|r| r.map(hyper::body::Frame::data))),
+        }
+    }
+}
+
+pub(crate) fn plain_body(status: StatusCode, text: &'static str) -> Response<MockBody> {
+    plain(status, text).map(MockBody::Full)
+}
+
+/// Serves one request; an error drops the connection (a broken link).
 async fn handle(
+    state: Arc<State>,
+    req: Request<Incoming>,
+) -> Result<Response<MockBody>, std::io::Error> {
+    if req.method() == Method::GET && req.uri().path() == "/export" {
+        return Ok(xva::export(&state, &req));
+    }
+    if req.method() == Method::PUT && req.uri().path() == "/import" {
+        return xva::import(&state, req).await;
+    }
+    let Ok(response) = handle_whole(state, req).await;
+    Ok(response.map(MockBody::Full))
+}
+
+async fn handle_whole(
     state: Arc<State>,
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {

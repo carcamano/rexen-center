@@ -1144,11 +1144,13 @@ async fn install_certificate(
 // ---- backup and restore ---------------------------------------------------------------
 
 /// The HTTP client for `host`'s handlers (the server itself, not the
-/// coordinator: `HostBackupRestoreAction` uses `Host.address`).
-fn transfer_client(
+/// coordinator: `HostBackupRestoreAction` uses `Host.address`), and the
+/// host's address. `idle` bounds the wait for each piece of a transfer.
+pub(crate) fn transfer_client(
     shared: &Shared,
     connection: ConnectionId,
     host: &Ref<Host>,
+    idle: std::time::Duration,
 ) -> xapi::Result<(xapi::http::HttpTransfer, String)> {
     let state = shared.state();
     let view = state
@@ -1174,7 +1176,7 @@ fn transfer_client(
         .map(|h| h.address.clone())
         .unwrap_or_default();
     Ok((
-        xapi::http::HttpTransfer::new(&endpoint.base_url(), tls, shared.options.call_timeout)?,
+        xapi::http::HttpTransfer::new(&endpoint.base_url(), tls, idle)?,
         address,
     ))
 }
@@ -1198,7 +1200,12 @@ async fn backup(
     host: &Ref<Host>,
     path: &str,
 ) -> Result<(), TaskOutcome> {
-    let (client, address) = tri!(transfer_client(shared, connection, host));
+    let (client, address) = tri!(transfer_client(
+        shared,
+        connection,
+        host,
+        shared.options.call_timeout
+    ));
     let task = tri!(xapi::task::create(s, "get_host_backup_task", &address).await);
     shared.update_operation(op, |o| {
         o.task = Some(task.clone());
@@ -1247,7 +1254,12 @@ async fn restore(
             &["backup", path],
         )));
     }
-    let (client, address) = tri!(transfer_client(shared, connection, host));
+    let (client, address) = tri!(transfer_client(
+        shared,
+        connection,
+        host,
+        shared.options.call_timeout
+    ));
     let task = tri!(xapi::task::create(s, "put_host_restore_task", &address).await);
     shared.update_operation(op, |o| o.task = Some(task.clone()));
     let sent = client

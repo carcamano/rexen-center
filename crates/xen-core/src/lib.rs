@@ -33,6 +33,9 @@
 //!   the HA tab's rows, when the commands run); [`ad`]: Active Directory
 //!   (the Users tab's rules); [`ha_run`]: how their operations run, call
 //!   for call as the original's actions.
+//! * [`xva`]: XVA files (the streaming verifier, `ova.xml`, `.gz`) and the
+//!   import and export wizards' rules; [`xva_run`]: how an export or an
+//!   import runs, call for call as the original's actions.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -66,6 +69,8 @@ pub mod settings;
 pub mod storage;
 pub mod storage_run;
 pub mod store;
+pub mod xva;
+pub mod xva_run;
 
 pub use actions::{ActionRequest, HostAction, HostMenu, PerfmonObjectRef, VmAction};
 pub use backend::{

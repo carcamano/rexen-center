@@ -293,6 +293,9 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("auth.get_group_membership", "read-only"),
     ("http/get_host_backup", "pool-admin"),
     ("http/put_host_restore", "pool-admin"),
+    ("http/get_export", "vm-admin"),
+    ("http/put_import", "vm-admin"),
+    ("vif.move", "vm-admin"),
 ];
 
 pub(crate) fn rank(role: &str) -> usize {

@@ -95,6 +95,13 @@ pub enum DialogRequest {
     ConfigureHa,
     /// Disable HA (checked, then asked).
     DisableHa,
+    /// The Export wizard (`ExportCommand`), with these VMs ticked.
+    Export(Vec<Ref<Vm>>),
+    /// Export to File (`ExportVMCommand`): a template or a snapshot.
+    ExportToFile(Ref<Vm>),
+    /// The Import wizard (`ImportCommand`), with this home server chosen
+    /// (`None`: the connection's pool).
+    Import(Option<Ref<xapi::Host>>),
 }
 
 impl DialogRequest {
@@ -113,6 +120,14 @@ impl DialogRequest {
                 | Self::InstallCertificate(_)
                 | Self::Backup(_)
                 | Self::Restore(_)
+        )
+    }
+
+    /// An import or export dialog ([`crate::xva_ui`]).
+    pub fn is_transfer(&self) -> bool {
+        matches!(
+            self,
+            Self::Export(_) | Self::ExportToFile(_) | Self::Import(_)
         )
     }
 
@@ -203,6 +218,7 @@ pub fn template_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) 
                 prov::can_create_from(vm),
                 DialogRequest::TemplateFromSnapshot(vm_ref.clone()),
             ),
+            crate::xva_ui::export_to_file_entry(conn, vm_ref, vm),
             Entry::Separator,
             item(
                 p.revert_to_snapshot,
@@ -217,6 +233,7 @@ pub fn template_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) 
         ],
         VmKind::UserTemplate | VmKind::DefaultTemplate => vec![
             item(p.new_vm_from_template, prov::can_create_from(vm), new_vm),
+            crate::xva_ui::export_to_file_entry(conn, vm_ref, vm),
             item(
                 p.copy_template,
                 prov::can_copy(vm, busy),
@@ -364,6 +381,9 @@ pub struct ProvisionUi {
     pending_select: Option<(ConnectionId, String, Instant)>,
     /// Messages for the window's error list.
     pub errors: Vec<String>,
+    /// Dialogs opened here that another part of the window draws (Export
+    /// Snapshot As Template).
+    pub forwarded: Vec<(xen_core::ConnectionId, DialogRequest)>,
 }
 
 impl ProvisionUi {
@@ -611,7 +631,10 @@ impl ProvisionUi {
             | DialogRequest::Backup(_)
             | DialogRequest::Restore(_)
             | DialogRequest::ConfigureHa
-            | DialogRequest::DisableHa => {
+            | DialogRequest::DisableHa
+            | DialogRequest::Export(_)
+            | DialogRequest::ExportToFile(_)
+            | DialogRequest::Import(_) => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(
@@ -845,6 +868,16 @@ impl ProvisionUi {
                             open = Some(DialogRequest::TemplateFromSnapshot(r.clone()));
                             ui.close();
                         }
+                        if ui
+                            .add_enabled(
+                                xen_core::xva::can_export_to_file(s, false),
+                                Button::new(crate::xva_strings::xva_strings().menu_export_snapshot),
+                            )
+                            .clicked()
+                        {
+                            open = Some(DialogRequest::ExportToFile(r.clone()));
+                            ui.close();
+                        }
                     }
                 });
             });
@@ -932,7 +965,11 @@ impl ProvisionUi {
             });
         }
         if let Some(request) = open {
-            self.open(conn, request);
+            if request.is_transfer() {
+                self.forwarded.push((conn.id, request));
+            } else {
+                self.open(conn, request);
+            }
         }
     }
 

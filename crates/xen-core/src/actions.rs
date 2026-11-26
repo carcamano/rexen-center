@@ -414,9 +414,29 @@ pub enum ActionRequest {
     LogoutSubjects {
         subjects: Vec<Ref<Subject>>,
     },
+    /// Export to an XVA file (`ExportVmAction`: `GET /export` into `path`,
+    /// checked again afterwards with `verify`).
+    ExportXva {
+        vm: Ref<Vm>,
+        path: String,
+        verify: bool,
+    },
+    /// The Import wizard's XVA import (`ImportVmAction`: `PUT /import` of
+    /// `path` into `sr`, `affinity` as the home server). The wizard ends it
+    /// with [`crate::Command::FinishImport`].
+    ImportXva {
+        path: String,
+        sr: Ref<Sr>,
+        affinity: Option<Ref<Host>>,
+    },
 }
 
 impl ActionRequest {
+    /// An XVA export or import (run by [`crate::xva_run`]).
+    pub fn is_transfer(&self) -> bool {
+        matches!(self, Self::ExportXva { .. } | Self::ImportXva { .. })
+    }
+
     /// An HA request (run by [`crate::ha_run`]).
     pub fn is_ha(&self) -> bool {
         matches!(
@@ -798,6 +818,24 @@ impl ActionRequest {
         }
         let own: &[&str] = match self {
             Self::DismissAlerts { .. } => return vec!["message.destroy"],
+            // `ExportVmAction` / `ImportVmAction.ConstantRBACRequirements`.
+            Self::ExportXva { .. } => &["task.create", "http/get_export"],
+            Self::ImportXva { affinity, .. } => {
+                let mut m = vec![
+                    "task.create",
+                    "vm.set_name_label",
+                    "network.destroy",
+                    "vif.create",
+                    "vif.destroy",
+                    "vif.move",
+                    "http/put_import",
+                ];
+                if affinity.is_some() {
+                    m.push("vm.set_affinity");
+                }
+                m.extend(TASK);
+                return m;
+            }
             Self::SetPerfmon { object, config } => {
                 let (remove, add) = match object {
                     PerfmonObjectRef::Vm(_) => (

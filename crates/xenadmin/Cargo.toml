@@ -26,6 +26,7 @@ xen-vnc = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["eframe"] }
+flate2 = { workspace = true }
 serde_json = { workspace = true }
 xapi-mock = { workspace = true }
 xen-vnc = { workspace = true, features = ["testing"] }

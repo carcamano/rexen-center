@@ -8,11 +8,11 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F10b (high availability, Active Directory and RBAC) on top
-of F1–F10a (base, connection and model, detail tabs, VM and host
-operations, VNC console, performance graphs and alerts, VM creation,
-templates, snapshots and disks, storage repositories, networking, pools
-and pool and server properties).** What works:
+**Status: phase F11a (XVA export and import) on top of F1–F10b (base,
+connection and model, detail tabs, VM and host operations, VNC console,
+performance graphs and alerts, VM creation, templates, snapshots and
+disks, storage repositories, networking, pools and pool and server
+properties, high availability, Active Directory and RBAC).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -263,6 +263,28 @@ and pool and server properties).** What works:
   including removing or logging out oneself. **Add Server** and **New
   Pool** join a server to the pool's domain first, asking for a domain
   account (asked again when refused);
+- **XVA export and import**, as the original's wizards: **Export...** (VM
+  menu, and the context menus of VMs, servers and pools) opens the Export
+  wizard for the XVA format (file name and folder, checked; a blocking
+  RBAC page for restricted users; the halted or suspended VM to export,
+  with the folder's free space checked; **Verify export on completion**);
+  templates and snapshots have **Export to File...** / **Export Snapshot
+  As Template...** (file, verify, a question when space may be short).
+  The archive streams from `GET /export` into `<file>.tmp`, checked as it
+  arrives (tar headers, every block's SHA-1 or XXH64 checksum, the end of
+  the archive), then renamed; a cancelled or failed export removes it,
+  with the original's messages (checksum mismatch, disk full, disk in use
+  elsewhere). **Import...** (File menu, and the context menus of servers
+  and pools) opens the Import wizard: the `.xva` (an `.xva.gz` is
+  uncompressed next to it first), the home server or pool, the RBAC page,
+  the SR, then **Import >** streams the file to `PUT /import` with its
+  progress and Cancel; once the server made the VM the wizard shows its
+  interfaces (MAC, network, add, delete), then the summary and **Start
+  the new VM(s) automatically**. The imported VM gets a free name and its
+  home server; interfaces are moved, created or removed as asked, and
+  networks the import made but left unused are destroyed. A cancelled or
+  failed transfer leaves no VM or disk behind. Files are never held in
+  memory (32 KiB at a time). Progress and Cancel are in the Events panel;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -274,8 +296,10 @@ The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
 (VM properties, so also a VM's own HA page), custom graphs
-(New/Edit Graph), import/export and cross-pool migration come in later
-phases (RDP is not embedded). The New VM wizard leaves out the pages the
+(New/Edit Graph), OVF/OVA packages and disk images (the Export wizard
+offers the XVA format only, and the Import wizard refuses those files
+for now) and cross-pool migration come in later phases (RDP is not
+embedded). The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
 copying BIOS strings). See the port plan for the full roadmap.
 
@@ -507,6 +531,18 @@ end to end:
   the settings dialog and Disable HA, the questions of other operations,
   the Users tab and its dialogs, and role elevation for a domain VM
   Operator;
+- XVA export and import against the mock (`xapi_mock::xva`: streamed
+  `GET /export` and `PUT /import` that answers before reading the body as
+  XAPI does, task progress, the VM's and disks' objects made from
+  `ova.xml`, every block's checksum checked): a VM and a template exported
+  and imported back with a 4 KiB buffer (the disk's content checked, the
+  name, home server and interfaces as the wizard asked, start after
+  import); cancelled transfers, a server error, a disk in use, a full disk,
+  a file that ends early, a dropped link and a wrong block checksum, each
+  leaving no file and no VM (also when the server does not clean up); the
+  upload read no more than one buffer at a time; in the window: the Export
+  wizard and its checks, Export to File of a template, the Import wizard
+  from an `.xva.gz`, and a transfer cancelled from the wizard;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -609,6 +645,16 @@ cancels it, checks the Users tab and opens and cancels the Join (or Leave)
 Domain prompt. No operation runs. `f10b_real_run_on_the_mock` rehearses it
 on the capture and checks every call made is a read or one of those checks.
 
+XVA on a real host (`app/tests/xva_real.rs`, same variables plus
+`XENADMIN_REAL_LOG` and `XENADMIN_REAL_XVA_DIR`, a folder outside the
+repository): `real_f11a_xva_round_trip` makes one disposable VM
+(`xenadmin-rs-test-f11a`, a 100 MiB disk on "Local storage", never
+started, refused if one exists), exports it with the Export wizard into
+that folder, deletes it, imports it back with the Import wizard, checks
+it and deletes it. Nothing else is acted on. `f11a_real_run_on_the_mock`
+rehearses it on the lab pool and checks no other object changes and only
+the calls it needs are made.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -642,9 +688,9 @@ same directory explains how to rebuild it with opam.
 
 | Crate | Role |
 |---|---|
-| `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
+| `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

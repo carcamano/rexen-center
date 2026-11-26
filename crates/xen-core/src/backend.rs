@@ -138,8 +138,15 @@ pub enum Command {
         id: u64,
         check: Precheck,
     },
-    /// Cancel an operation of the history that runs as a XAPI task.
+    /// Cancel an operation of the history that runs as a XAPI task (an
+    /// XVA transfer also stops on this side).
     CancelOperation { operation: OperationId },
+    /// The Import wizard finished (`Some`) or was cancelled (`None`) while
+    /// its XVA import waits ([`crate::ActionRequest::ImportXva`]).
+    FinishImport {
+        operation: OperationId,
+        finish: Option<crate::xva_run::ImportFinish>,
+    },
     /// Cancel a XAPI task (one started by any client).
     CancelTask {
         connection: ConnectionId,
@@ -463,6 +470,15 @@ pub struct BackendOptions {
     /// How long Install Certificate waits for the server to present the
     /// new certificate.
     pub certificate_wait: Duration,
+    /// Bytes an XVA export or import moves at a time (the original's
+    /// `HTTP.BUFFER_SIZE`, 32 KiB): files are never held whole.
+    pub transfer_buffer: usize,
+    /// How long a transfer may wait for its next piece (the original's
+    /// `HTTP_PUT_TIMEOUT`, 30 minutes).
+    pub transfer_timeout: Duration,
+    /// Faults injected into transfers, for tests.
+    #[doc(hidden)]
+    pub transfer_faults: crate::xva_run::TransferFaults,
 }
 
 impl Default for BackendOptions {
@@ -488,6 +504,9 @@ impl Default for BackendOptions {
             eject_reconnect_poll: Duration::from_secs(15),
             eject_reconnect_attempts: 27,
             certificate_wait: Duration::from_secs(600),
+            transfer_buffer: 32 << 10,
+            transfer_timeout: Duration::from_secs(30 * 60),
+            transfer_faults: crate::xva_run::TransferFaults::default(),
         }
     }
 }
@@ -531,6 +550,7 @@ impl BackendHandle {
             notify_tx,
             commands: commands.downgrade(),
             credentials: Mutex::new(HashMap::new()),
+            transfers: Mutex::new(HashMap::new()),
             options,
         });
         runtime.spawn(run(shared.clone(), command_rx));
@@ -600,6 +620,8 @@ pub(crate) struct Shared {
     commands: mpsc::WeakUnboundedSender<Command>,
     /// Where each connection's password comes from.
     credentials: Mutex<HashMap<ConnectionId, SecretCell>>,
+    /// The XVA transfers running: their cancel buttons and wizard ends.
+    transfers: Mutex<HashMap<OperationId, crate::xva_run::TransferControl>>,
     pub(crate) options: BackendOptions,
 }
 
@@ -791,6 +813,52 @@ impl Shared {
     pub(crate) fn notify(&self, notification: Notification) {
         let _ = self.notify_tx.send(notification);
         (self.repaint)();
+    }
+
+    pub(crate) fn register_transfer(
+        &self,
+        op: OperationId,
+        control: crate::xva_run::TransferControl,
+    ) {
+        self.transfers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(op, control);
+    }
+
+    pub(crate) fn unregister_transfer(&self, op: OperationId) {
+        self.transfers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&op);
+    }
+
+    /// Presses the cancel button of transfer `op`, if it is one.
+    fn cancel_transfer(&self, op: OperationId) {
+        if let Some(c) = self
+            .transfers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&op)
+        {
+            c.cancel.cancel();
+        }
+    }
+
+    /// Hands the wizard's end to import `op`.
+    fn finish_import(&self, op: OperationId, finish: Option<crate::xva_run::ImportFinish>) {
+        let sender = self
+            .transfers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&op)
+            .and_then(|c| c.finish.take());
+        match sender {
+            Some(tx) => {
+                let _ = tx.send(finish);
+            }
+            None => tracing::debug!("import finish ignored: not waiting"),
+        }
     }
 
     /// Adds a running entry to the operation history.
@@ -990,6 +1058,7 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 None => tracing::debug!("precheck ignored: not connected"),
             },
             Command::CancelOperation { operation } => {
+                shared.cancel_transfer(operation);
                 let state = shared.state();
                 let target = state
                     .operation(operation)
@@ -1000,6 +1069,9 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                 {
                     operations::cancel_task(&shared, connection, session, task, false);
                 }
+            }
+            Command::FinishImport { operation, finish } => {
+                shared.finish_import(operation, finish);
             }
             Command::CancelTask { connection, task } => {
                 match active.get(&connection).and_then(|c| slot_get(&c.session)) {
