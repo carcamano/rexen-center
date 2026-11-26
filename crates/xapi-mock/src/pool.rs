@@ -973,6 +973,7 @@ pub(crate) fn check_join(params: &[Value]) -> Result<JoinTarget, (String, Vec<St
 
 /// Runs the cross-server work left by the last call of `state`.
 pub(crate) fn run_after(state: &Arc<State>) {
+    crate::dr::sync(state);
     let work: Vec<After> = std::mem::take(&mut state.db().pool.after);
     for w in work {
         match w {

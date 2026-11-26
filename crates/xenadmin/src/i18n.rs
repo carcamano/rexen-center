@@ -460,6 +460,13 @@ pub fn describe_xapi_error_in(conn: Option<&ConnectionView>, error: &xapi::Error
             .or_else(|| crate::xva_strings::xva_error(code, params))
             .or_else(|| crate::ovf_strings::ovf_error(code, params))
             .or_else(|| crate::cpm_strings::cpm_error(code, params))
+            .or_else(|| {
+                (code == xen_core::dr::NOTHING_TO_START).then(|| {
+                    crate::dr_strings::dr_strings()
+                        .err_nothing_to_start
+                        .to_owned()
+                })
+            })
     {
         return text;
     }
@@ -631,6 +638,8 @@ pub fn operation_title(kind: &OperationKind, server: &str) -> String {
             .unwrap_or_else(|| crate::xva_strings::xva_title(kind)),
         OperationKind::Migrate(kind) => crate::cpm_strings::cpm_title(kind),
         OperationKind::VApp(kind) => crate::vapp_strings::vapp_title(kind),
+        OperationKind::Vmss(kind) => crate::vmss_strings::vmss_title(kind),
+        OperationKind::Dr(kind) => crate::dr_strings::dr_title(kind),
     }
 }
 
@@ -786,6 +795,9 @@ pub fn operation_step(step: &OperationStep) -> String {
         return text;
     }
     if let Some(text) = crate::xva_strings::xva_step(step) {
+        return text;
+    }
+    if let Some(text) = crate::dr_strings::f12b_step(step) {
         return text;
     }
     let o = ops_strings();

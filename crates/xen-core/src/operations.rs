@@ -96,6 +96,51 @@ pub enum OperationKind {
     Migrate(MigrateKind),
     /// A vApp operation (F12a).
     VApp(VAppKind),
+    /// A snapshot schedule operation (F12b).
+    Vmss(VmssKind),
+    /// A disaster recovery operation (F12b).
+    Dr(DrKind),
+}
+
+/// The history entry of a snapshot schedule operation (F12b), with the
+/// names its title shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmssKind {
+    /// `CREATE_POLICY` (`CREATING_VMSS`).
+    Create { name: String },
+    /// `CHANGE_POLICY_STATUS`.
+    SetEnabled { name: String, enabled: bool },
+    /// `RUN_POLICY`.
+    RunNow { name: String },
+    /// `DELETE_POLICIES`.
+    Delete,
+    /// `ASSIGN_VMSS_POLICY_NOAMP`.
+    Assign { policy: String },
+    /// `REMOVE_VM_FROM_VMSS` / `REMOVE_VMS_FROM_VMSS`.
+    Remove { vm: Option<String>, policy: String },
+    /// The Properties dialog.
+    Properties { name: String },
+}
+
+/// The history entry of a disaster recovery operation (F12b).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrKind {
+    /// `ACTION_DR_CONFIGURING`.
+    Configure,
+    /// `ACTION_DR_TASK_CREATE_TITLE`.
+    TaskCreate,
+    /// `ACTION_DR_TASK_DESTROY_TITLE`.
+    TaskDestroy { srs: String },
+    /// `ACTION_DR_RECOVER_VM_TITLE` / `ACTION_DR_RECOVER_APPLIANCE_TITLE`.
+    Recover { name: String, vapp: bool },
+    /// `ACTION_START_VMS_AND_APPLIANCES_TITLE`.
+    Start,
+    /// `ACTION_SHUTDOWN_AND_DESTROY_VM(S)_TITLE`.
+    DestroyVms { count: usize },
+    /// `DELETE_VM_APPLIANCES`.
+    DestroyVApps,
+    /// `VM_APPLIANCE_SHUTTING_DOWN` (forced).
+    HardShutDownVApp { name: String },
 }
 
 /// The history entry of a migration, copy or move (F12a).
@@ -528,6 +573,16 @@ pub enum OperationStep {
     DeletingVApp { name: String },
     /// OVF import: `IMPORT_CREATING_APPLIANCE`.
     CreatingVApp { name: String },
+    /// `DELETING_VMSS`.
+    DeletingPolicy { name: String },
+    /// `ACTION_DR_ENABLING_ON`.
+    EnablingDr { sr: String },
+    /// `ACTION_DR_DISABLING_ON`.
+    DisablingDr { sr: String },
+    /// Starting a recovered VM.
+    StartingRecoveredVm { vm: String },
+    /// Starting a recovered vApp.
+    StartingVApp { name: String },
 }
 
 /// How an operation ended (or that it has not).
@@ -585,6 +640,9 @@ pub struct Operation {
     pub notice: Option<OperationNotice>,
     /// Add Users: each entered name and what became of it.
     pub subjects: Vec<crate::ad::SubjectEntry>,
+    /// What it produced that the window needs next (the `DR_task` a
+    /// `DR_task.create` made).
+    pub result: Option<String>,
     pub started: SystemTime,
     pub finished: Option<SystemTime>,
 }
@@ -679,6 +737,8 @@ pub fn operation_kind(model: &ConnectionModel, request: &ActionRequest) -> Opera
         request if request.is_transfer() => OperationKind::Transfer(transfer_kind(model, request)),
         request if request.is_migrate() => OperationKind::Migrate(migrate_kind(model, request)),
         request if request.is_vapp() => OperationKind::VApp(vapp_kind(model, request)),
+        request if request.is_vmss() => OperationKind::Vmss(vmss_kind(model, request)),
+        request if request.is_dr() => OperationKind::Dr(dr_kind(model, request)),
         request => OperationKind::Provision(provision_kind(model, request)),
     }
 }
@@ -779,6 +839,66 @@ fn vapp_kind(model: &ConnectionModel, request: &ActionRequest) -> VAppKind {
             name: app_name(vapp),
         },
         _ => unreachable!("not a vApp request"),
+    }
+}
+
+/// The history entry of an F12b snapshot schedule operation.
+fn vmss_kind(model: &ConnectionModel, request: &ActionRequest) -> VmssKind {
+    let name = |r: &Ref<xapi::Vmss>| {
+        model
+            .vmss
+            .get(r)
+            .map(|p| p.name_label.clone())
+            .unwrap_or_default()
+    };
+    match request {
+        ActionRequest::NewPolicy(spec) => VmssKind::Create {
+            name: spec.name.clone(),
+        },
+        ActionRequest::SetPolicyEnabled { policy, enabled } => VmssKind::SetEnabled {
+            name: name(policy),
+            enabled: *enabled,
+        },
+        ActionRequest::RunPolicyNow { policy } => VmssKind::RunNow { name: name(policy) },
+        ActionRequest::DeletePolicies { .. } => VmssKind::Delete,
+        ActionRequest::AssignPolicy { policy, .. } => VmssKind::Assign {
+            policy: name(policy),
+        },
+        ActionRequest::RemoveFromPolicy { policy, vms } => VmssKind::Remove {
+            vm: match vms.as_slice() {
+                [one] => model.vms.get(one).map(|v| v.name_label.clone()),
+                _ => None,
+            },
+            policy: name(policy),
+        },
+        ActionRequest::SetPolicy { policy, changes } => VmssKind::Properties {
+            name: changes.name.clone().unwrap_or_else(|| name(policy)),
+        },
+        _ => unreachable!("not a snapshot schedule request"),
+    }
+}
+
+/// The history entry of an F12b disaster recovery operation.
+fn dr_kind(model: &ConnectionModel, request: &ActionRequest) -> DrKind {
+    match request {
+        ActionRequest::ConfigureDr { .. } => DrKind::Configure,
+        ActionRequest::DrTaskCreate(_) => DrKind::TaskCreate,
+        ActionRequest::DrTaskDestroy { srs, .. } => DrKind::TaskDestroy { srs: srs.clone() },
+        ActionRequest::DrRecover { item, name, .. } => DrKind::Recover {
+            name: name.clone(),
+            vapp: matches!(item, crate::dr::DrItem::VApp(_)),
+        },
+        ActionRequest::DrStart { .. } => DrKind::Start,
+        ActionRequest::DrDestroyVms { vms } => DrKind::DestroyVms { count: vms.len() },
+        ActionRequest::DrDestroyVApps { .. } => DrKind::DestroyVApps,
+        ActionRequest::HardShutDownVApp { vapp } => DrKind::HardShutDownVApp {
+            name: model
+                .vm_appliances
+                .get(vapp)
+                .map(|a| a.name_label.clone())
+                .unwrap_or_default(),
+        },
+        _ => unreachable!("not a disaster recovery request"),
     }
 }
 
@@ -1169,7 +1289,22 @@ fn request_object(model: &ConnectionModel, request: &ActionRequest) -> Option<Op
         | ActionRequest::RemoveFromVApp { .. }
         | ActionRequest::DeleteVApps { .. }
         | ActionRequest::StartVApp { .. }
-        | ActionRequest::ShutDownVApp { .. } => None,
+        | ActionRequest::ShutDownVApp { .. }
+        | ActionRequest::HardShutDownVApp { .. }
+        | ActionRequest::NewPolicy(_)
+        | ActionRequest::SetPolicyEnabled { .. }
+        | ActionRequest::RunPolicyNow { .. }
+        | ActionRequest::DeletePolicies { .. }
+        | ActionRequest::AssignPolicy { .. }
+        | ActionRequest::RemoveFromPolicy { .. }
+        | ActionRequest::SetPolicy { .. }
+        | ActionRequest::ConfigureDr { .. }
+        | ActionRequest::DrTaskCreate(_)
+        | ActionRequest::DrTaskDestroy { .. }
+        | ActionRequest::DrRecover { .. }
+        | ActionRequest::DrStart { .. }
+        | ActionRequest::DrDestroyVms { .. }
+        | ActionRequest::DrDestroyVApps { .. } => None,
         ActionRequest::ImportXva { .. }
         | ActionRequest::ExportOvf(_)
         | ActionRequest::ImportOvf(_) => None,
@@ -1323,6 +1458,12 @@ pub(crate) fn start_action_with(
             }
             request if request.is_vapp() => {
                 crate::vapp_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_vmss() => {
+                crate::vmss_run::run(&shared, connection, op, &session, request).await
+            }
+            request if request.is_dr() => {
+                crate::dr_run::run(&shared, connection, op, &session, request).await
             }
             request => crate::provision_run::run(&shared, connection, op, &session, request).await,
         };
@@ -1980,6 +2121,24 @@ pub enum Precheck {
         mode: crate::migrate::WizardMode,
         checks: Vec<(Ref<Vm>, Ref<Host>)>,
     },
+    /// The server's clock (`GetServerLocalTimeAction`:
+    /// `host.get_servertime` and `host.get_server_localtime` of `host`).
+    ServerTime { host: Ref<Host> },
+    /// `SR.assert_supports_database_replication` for each SR (F12b).
+    DrSupportedSrs { srs: Vec<Ref<Sr>> },
+    /// `SR.probe` with `metadata = true` (the DR Storage page's scans).
+    DrProbe {
+        sr_type: String,
+        device_config: DeviceConfig,
+    },
+    /// The metadata on these SRs (uuids): `GetMetadataVDIsAction`, then
+    /// `VdiLoadMetadataAction` per metadata VDI.
+    DrMetadata { srs: Vec<String> },
+    /// `AssertCanBeRecoveredCheck` for items of the metadata on `vdi`.
+    DrRecoverable {
+        vdi: Ref<xapi::Vdi>,
+        items: Vec<crate::dr::DrItem>,
+    },
 }
 
 /// A VM that keeps a host from entering maintenance mode, and why (an
@@ -2011,6 +2170,12 @@ pub enum PrecheckResult {
     LoggedInSubjects(Result<Vec<String>, Arc<xapi::Error>>),
     /// Per VM and server: what the servers said.
     Migrate(Vec<(Ref<Vm>, Ref<Host>, crate::migrate::ServerVerdict)>),
+    ServerTime(Result<crate::vmss::ServerTime, Arc<xapi::Error>>),
+    /// Per SR: whether it can hold the pool's metadata.
+    DrSupportedSrs(Vec<(Ref<Sr>, bool)>),
+    DrProbe(Result<ProbeResult, Arc<xapi::Error>>),
+    DrMetadata(Result<Vec<crate::dr::PoolMetadata>, Arc<xapi::Error>>),
+    DrRecoverable(Result<Vec<(crate::dr::DrItem, crate::dr::Recoverable)>, Arc<xapi::Error>>),
 }
 
 pub(crate) fn run_precheck(
@@ -2134,6 +2299,38 @@ pub(crate) fn run_precheck(
                 tracing::debug!("migration checks need the destination; see migrate_run");
                 PrecheckResult::Migrate(Vec::new())
             }
+            Precheck::ServerTime { host } => PrecheckResult::ServerTime(
+                crate::dr_run::server_time(&session, &host)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::DrSupportedSrs { srs } => {
+                PrecheckResult::DrSupportedSrs(crate::dr_run::supported_srs(&session, srs).await)
+            }
+            Precheck::DrProbe {
+                sr_type,
+                device_config,
+            } => PrecheckResult::DrProbe(
+                crate::dr_run::probe_metadata(
+                    &shared,
+                    &session,
+                    connection,
+                    &sr_type,
+                    &device_config,
+                )
+                .await
+                .map_err(Arc::new),
+            ),
+            Precheck::DrMetadata { srs } => PrecheckResult::DrMetadata(
+                crate::dr_run::load_metadata(&session, &srs)
+                    .await
+                    .map_err(Arc::new),
+            ),
+            Precheck::DrRecoverable { vdi, items } => PrecheckResult::DrRecoverable(
+                crate::dr_run::recoverable(&session, &vdi, items)
+                    .await
+                    .map_err(Arc::new),
+            ),
         };
         shared.notify(Notification::Precheck {
             connection,

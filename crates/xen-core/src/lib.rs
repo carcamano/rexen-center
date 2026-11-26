@@ -42,6 +42,11 @@
 //!   motion, and Move VM, call for call as the original's actions.
 //! * [`vapp`]: vApps (Manage vApps, New vApp, Properties, Start and Shut
 //!   Down, Assign to vApp); [`vapp_run`]: how they run.
+//! * [`vmss`]: scheduled snapshots (the policies, their schedules in the
+//!   server's time and their run history); [`vmss_run`]: how they run.
+//! * [`dr`]: disaster recovery (Configure, the wizard's lists, pre-checks
+//!   and report); [`dr_run`]: replication, `DR_task`, metadata sessions
+//!   and recovery, call for call as the original's actions.
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
 //!   passwords in the OS keyring.
@@ -55,6 +60,8 @@ pub mod backend;
 pub mod connection;
 pub mod console;
 pub mod disk_image;
+pub mod dr;
+pub mod dr_run;
 pub mod format;
 pub mod ha;
 pub mod ha_run;
@@ -85,6 +92,8 @@ pub mod storage_run;
 pub mod store;
 pub mod vapp;
 pub mod vapp_run;
+pub mod vmss;
+pub mod vmss_run;
 pub mod xva;
 pub mod xva_run;
 

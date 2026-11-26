@@ -8,8 +8,8 @@
 //! (see [`crate::rbac`]).
 
 use xapi::{
-    Bond, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Role, Sr,
-    Subject, Vbd, Vdi, Vif, Vm, VmAppliance, VmOperations, VmPowerState, VmRecord,
+    Bond, DrTask, Host, HostAllowedOperations, HostRecord, Message, Network, Pif, Pool, Ref, Role,
+    Sr, Subject, Vbd, Vdi, Vif, Vm, VmAppliance, VmOperations, VmPowerState, VmRecord, Vmss,
 };
 
 use crate::ha::VmStartup;
@@ -479,6 +479,76 @@ pub enum ActionRequest {
     ShutDownVApp {
         vapp: Ref<VmAppliance>,
     },
+    /// Force shut down a vApp (`HardShutDownApplianceAction`, a DR
+    /// pre-check's fix).
+    HardShutDownVApp {
+        vapp: Ref<VmAppliance>,
+    },
+    /// New Snapshot Schedule (`CreateVMPolicy`, F12b).
+    NewPolicy(Box<crate::vmss::NewPolicySpec>),
+    /// Enable or Disable a snapshot schedule (`ChangePolicyEnabledAction`).
+    SetPolicyEnabled {
+        policy: Ref<Vmss>,
+        enabled: bool,
+    },
+    /// Run Now (`RunPolicyNowAction`).
+    RunPolicyNow {
+        policy: Ref<Vmss>,
+    },
+    /// Delete snapshot schedules (`DestroyPolicyAction`); their VMs stay.
+    DeletePolicies {
+        policies: Vec<Ref<Vmss>>,
+    },
+    /// Assign to Snapshot Schedule (`AssignVMsToPolicyAction`): `vms`
+    /// become the policy's VMs.
+    AssignPolicy {
+        policy: Ref<Vmss>,
+        vms: Vec<Ref<Vm>>,
+    },
+    /// Leave a snapshot schedule (`RemoveVMsFromPolicyAction`).
+    RemoveFromPolicy {
+        policy: Ref<Vmss>,
+        vms: Vec<Ref<Vm>>,
+    },
+    /// The snapshot schedule Properties dialog.
+    SetPolicy {
+        policy: Ref<Vmss>,
+        changes: Box<crate::vmss::PolicyChanges>,
+    },
+    /// Disaster Recovery > Configure: replication turned on and off.
+    ConfigureDr {
+        enable: Vec<Ref<Sr>>,
+        disable: Vec<Ref<Sr>>,
+    },
+    /// `DrTaskCreateAction`: the SRs of a device introduced for recovery;
+    /// the `DR_task` made is the operation's `result`.
+    DrTaskCreate(Box<crate::dr::DrTaskSpec>),
+    /// `DR_task.destroy` (`srs`: the names of its SRs, for the title).
+    DrTaskDestroy {
+        task: Ref<DrTask>,
+        srs: String,
+    },
+    /// `DrRecoverAction`: one VM or vApp of the metadata on `vdi`
+    /// (references of that database; `name` for the title).
+    DrRecover {
+        vdi: Ref<Vdi>,
+        item: crate::dr::DrItem,
+        name: String,
+    },
+    /// `StartVMsAndAppliancesAction` after a recovery.
+    DrStart {
+        vms: Vec<Ref<Vm>>,
+        vapps: Vec<Ref<VmAppliance>>,
+        paused: bool,
+    },
+    /// `ShutdownAndDestroyVMsAction` (disks kept).
+    DrDestroyVms {
+        vms: Vec<Ref<Vm>>,
+    },
+    /// `ShutdownAndDestroyVmAppliancesAction`.
+    DrDestroyVApps {
+        vapps: Vec<Ref<VmAppliance>>,
+    },
 }
 
 impl ActionRequest {
@@ -499,6 +569,35 @@ impl ActionRequest {
                 | Self::DeleteVApps { .. }
                 | Self::StartVApp { .. }
                 | Self::ShutDownVApp { .. }
+        )
+    }
+
+    /// A snapshot schedule operation (run by [`crate::vmss_run`]).
+    pub fn is_vmss(&self) -> bool {
+        matches!(
+            self,
+            Self::NewPolicy(_)
+                | Self::SetPolicyEnabled { .. }
+                | Self::RunPolicyNow { .. }
+                | Self::DeletePolicies { .. }
+                | Self::AssignPolicy { .. }
+                | Self::RemoveFromPolicy { .. }
+                | Self::SetPolicy { .. }
+        )
+    }
+
+    /// A disaster recovery operation (run by [`crate::dr_run`]).
+    pub fn is_dr(&self) -> bool {
+        matches!(
+            self,
+            Self::ConfigureDr { .. }
+                | Self::DrTaskCreate(_)
+                | Self::DrTaskDestroy { .. }
+                | Self::DrRecover { .. }
+                | Self::DrStart { .. }
+                | Self::DrDestroyVms { .. }
+                | Self::DrDestroyVApps { .. }
+                | Self::HardShutDownVApp { .. }
         )
     }
 
@@ -945,6 +1044,85 @@ impl ActionRequest {
             Self::DeleteVApps { .. } => &["vm.set_appliance", "vm_appliance.destroy"],
             Self::StartVApp { .. } => &["vm_appliance.start", "task.destroy"],
             Self::ShutDownVApp { .. } => &["vm_appliance.shutdown", "task.destroy"],
+            Self::HardShutDownVApp { .. } => &["vm_appliance.hard_shutdown", "task.destroy"],
+            // `CreateVMPolicy`.
+            Self::NewPolicy(spec) => {
+                let mut m = vec!["vmss.create", "task.destroy"];
+                if !spec.vms.is_empty() {
+                    m.push("vm.set_snapshot_schedule");
+                }
+                if spec.run_now {
+                    m.push("vmss.snapshot_now");
+                }
+                return m;
+            }
+            Self::SetPolicyEnabled { .. } => &["vmss.set_enabled"],
+            Self::RunPolicyNow { .. } => &["vmss.snapshot_now"],
+            Self::DeletePolicies { .. } => &["vm.set_snapshot_schedule", "vmss.destroy"],
+            Self::AssignPolicy { .. } | Self::RemoveFromPolicy { .. } => {
+                &["vm.set_snapshot_schedule"]
+            }
+            Self::SetPolicy { changes, .. } => {
+                let c = &**changes;
+                let mut m = Vec::new();
+                for (on, name) in [
+                    (c.name.is_some(), "vmss.set_name_label"),
+                    (c.description.is_some(), "vmss.set_name_description"),
+                    (c.kind.is_some(), "vmss.set_type"),
+                    (c.retained.is_some(), "vmss.set_retained_snapshots"),
+                    (c.frequency.is_some(), "vmss.set_frequency"),
+                    (c.schedule.is_some(), "vmss.set_schedule"),
+                    (c.members.is_some(), "vm.set_snapshot_schedule"),
+                ] {
+                    if on {
+                        m.push(name);
+                    }
+                }
+                return m;
+            }
+            Self::ConfigureDr { enable, disable } => {
+                let mut m = Vec::new();
+                if !disable.is_empty() {
+                    m.push("sr.disable_database_replication");
+                }
+                if !enable.is_empty() {
+                    m.push("sr.enable_database_replication");
+                }
+                return m;
+            }
+            Self::DrTaskCreate(_) => &["dr_task.create", "task.destroy"],
+            Self::DrTaskDestroy { .. } => &["dr_task.destroy"],
+            Self::DrRecover { item, .. } => match item {
+                crate::dr::DrItem::Vm(_) => &["vdi.open_database", "vm.recover", "task.destroy"],
+                crate::dr::DrItem::VApp(_) => {
+                    &["vdi.open_database", "vm_appliance.recover", "task.destroy"]
+                }
+            },
+            Self::DrStart { vms, vapps, .. } => {
+                let mut m = vec!["task.destroy"];
+                if !vms.is_empty() {
+                    m.push("vm.start");
+                }
+                if !vapps.is_empty() {
+                    m.push("vm_appliance.start");
+                }
+                return m;
+            }
+            Self::DrDestroyVms { .. } => &[
+                "vm.hard_shutdown",
+                "vm.destroy",
+                "vbd.destroy",
+                "vif.destroy",
+            ],
+            Self::DrDestroyVApps { .. } => &[
+                "vm_appliance.hard_shutdown",
+                "vm_appliance.destroy",
+                "vm.destroy",
+                "vbd.unplug",
+                "vbd.destroy",
+                "vif.unplug",
+                "vif.destroy",
+            ],
             // `ExportVmAction` / `ImportVmAction.ConstantRBACRequirements`.
             Self::ExportXva { .. } => &["task.create", "http/get_export"],
             // `ApplianceAction.StaticRBACDependencies` and the transfers.

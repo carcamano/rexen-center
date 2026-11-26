@@ -351,6 +351,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
             }
         }
         request if request.is_vapp() => crate::vapp_ui::confirmation(conn, request),
+        request if request.is_vmss() => crate::vmss_ui::confirmation(conn, request),
         request if request.is_pool() => crate::pool_ui::confirmation(conn, request),
         request if request.is_ha() || request.is_ad() => crate::ha_ui::confirmation(conn, request),
         request => crate::net_ui::confirmation(conn, request),

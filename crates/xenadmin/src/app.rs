@@ -143,6 +143,8 @@ pub struct XenAdminApp {
     xva: crate::xva_ui::XvaUi,
     migrate: crate::migrate_ui::MigrateUi,
     vapp: crate::vapp_ui::VAppUi,
+    vmss: crate::vmss_ui::VmssUi,
+    dr: crate::dr_ui::DrUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -189,6 +191,8 @@ impl XenAdminApp {
             xva: crate::xva_ui::XvaUi::default(),
             migrate: crate::migrate_ui::MigrateUi::default(),
             vapp: crate::vapp_ui::VAppUi::default(),
+            vmss: crate::vmss_ui::VmssUi::default(),
+            dr: crate::dr_ui::DrUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -221,6 +225,8 @@ impl XenAdminApp {
                     if !self.ha.on_precheck(&state, id, &result)
                         && !self.pool.on_precheck(id, &result)
                         && !self.migrate.on_precheck(id, &result)
+                        && !self.vmss.on_precheck(id, &result)
+                        && !self.dr.on_precheck(id, &result)
                     {
                         self.storage.on_precheck(&state, id, result);
                     }
@@ -1829,6 +1835,10 @@ impl eframe::App for XenAdminApp {
                     self.migrate.open(conn, request);
                 } else if request.is_vapp() {
                     self.vapp.open(conn, request, &mut self.ops, &self.backend);
+                } else if request.is_vmss() {
+                    self.vmss.open(conn, request, &mut self.ops, &self.backend);
+                } else if request.is_dr() {
+                    self.dr.open(conn, request, &self.backend);
                 } else if request.is_ha() {
                     let hidden = state.settings.preferences.show_hidden_objects;
                     self.ha
@@ -1860,7 +1870,11 @@ impl eframe::App for XenAdminApp {
         self.errors.append(&mut self.ha.errors);
         for (c, request) in std::mem::take(&mut self.provision.forwarded) {
             if let Some(conn) = state.connection(c) {
-                self.xva.open(conn, request);
+                if request.is_vmss() {
+                    self.vmss.open(conn, request, &mut self.ops, &self.backend);
+                } else {
+                    self.xva.open(conn, request);
+                }
             }
         }
         self.migrate
@@ -1869,6 +1883,11 @@ impl eframe::App for XenAdminApp {
         self.vapp
             .windows(&ctx, &state, &mut self.ops, &self.backend);
         self.errors.append(&mut self.vapp.errors);
+        self.vmss
+            .windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.vmss.errors);
+        self.dr.windows(&ctx, &state, &mut self.ops, &self.backend);
+        self.errors.append(&mut self.dr.errors);
         for (c, request) in std::mem::take(&mut self.vapp.forwarded) {
             if let Some(conn) = state.connection(c) {
                 self.xva.open(conn, request);
@@ -2076,6 +2095,12 @@ mod tests {
     // wizard on a disposable test VM (`app/tests/migrate_real.rs`).
     mod migrate;
     mod migrate_real;
+    // F12b: scheduled snapshots and disaster recovery between two mock
+    // pools (`app/tests/vmss_dr.rs`), and the real host's snapshot
+    // schedule on a disposable test VM with DR read only
+    // (`app/tests/vmss_dr_real.rs`).
+    mod vmss_dr;
+    mod vmss_dr_real;
 
     const WAIT: Duration = Duration::from_secs(10);
 

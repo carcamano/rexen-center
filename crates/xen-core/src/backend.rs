@@ -883,6 +883,7 @@ impl Shared {
             created: None,
             notice: None,
             subjects: Vec::new(),
+            result: None,
             started: SystemTime::now(),
             finished: None,
         };

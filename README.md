@@ -8,13 +8,13 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F12a (cross-pool migration and copy, Move VM, vApps) on
-top of F1–F11b (base, connection and model, detail tabs, VM and host
+**Status: phase F12b (scheduled snapshots and disaster recovery) on top
+of F1–F12a (base, connection and model, detail tabs, VM and host
 operations, VNC console, performance graphs and alerts, VM creation,
 templates, snapshots and disks, storage repositories, networking, pools
 and pool and server properties, high availability, Active Directory and
-RBAC, XVA export and import, OVF/OVA packages and disk images).** What
-works:
+RBAC, XVA export and import, OVF/OVA packages and disk images, cross-pool
+migration and copy, Move VM, vApps).** What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -337,6 +337,32 @@ works:
   VM Startup Sequence), and in the VM menus Start vApp, Shut Down vApp
   (asked first) and Assign to vApp (New vApp... and each vApp; assigning a
   VM of another vApp is asked first);
+- **scheduled snapshots** (VMSS): VM Snapshot Schedules... (Pool menu: the
+  pool's schedules with their status, number of VMs, next snapshot time
+  here and on the server, last result; New..., Properties, Enable /
+  Disable, Run Now, Delete asked first, and the selected schedule's run
+  history, a failure listing the VMs that failed and why), the New
+  Snapshot Schedule wizard (Name, Virtual Machines, Snapshot Type: disks
+  only or disks and memory, Snapshot Schedule: hourly at a quarter, daily
+  or weekly at a time with the days, the number of snapshots kept and the
+  next run here and on the server; Finish with "run now"); a schedule
+  without VMs is made disabled. Properties (General, Virtual Machines,
+  Snapshot Type, Snapshot Schedule), Assign to Snapshot Schedule in the
+  VM menus, and the VM's Snapshots tab says which schedule it is in. The
+  schedule is stored in the server's local time, rounded to a quarter of
+  an hour, as the original does;
+- **disaster recovery**: Pool > Disaster Recovery > Configure... (the SRs
+  that can hold the pool's metadata, at most 8) and the Disaster Recovery
+  wizard (Failover, Failback, Test Failover): the SRs with VM
+  configuration data, also found on an iSCSI target or the HBAs and
+  introduced with a `DR_task`; the vApps and VMs of each pool found, with
+  the power state after the recovery; the pre-checks (HA off for a test
+  failover, nothing running in the source pool when connected, VMs and
+  vApps already here, the SRs the recovery needs) with Resolve, Resolve
+  All and Check Again; the recovery one vApp or VM at a time, then the
+  start; the clean-up (the `DR_task`s, a test failover's VMs, vApps and
+  SRs, what the fixes changed) and the summary report. Cancelling cleans
+  up too;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
@@ -347,9 +373,9 @@ works:
 The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
-(VM properties, so also a VM's own HA page), custom graphs
-(New/Edit Graph), scheduled snapshots and disaster recovery (F12b) come in
-later phases (RDP is not embedded); the vApps navigation mode comes with
+(VM properties, so also a VM's own HA page) and custom graphs
+(New/Edit Graph) come in later phases (RDP is not embedded); the vApps
+navigation mode comes with
 the other navigation modes (F13). The OVF wizards leave out signing a package (it
 needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
 LUN-per-VDI page, URL sources and disk conversion (no external
@@ -623,6 +649,22 @@ end to end:
   the window: Move VM through the wizard to another pool, a refused
   destination with the server's reason, Copy VM within the pool and to
   another pool, and Manage vApps with the New vApp wizard and Properties;
+- scheduled snapshots and disaster recovery against the mock
+  (`xapi_mock::vmss`: policies, a clock that runs the enabled ones on
+  schedule with their retention and history messages; `xapi_mock::dr`:
+  metadata replicated to a shared SR that two mock pools see, `DR_task`,
+  metadata sessions and `VM.recover` / `VM_appliance.recover`): a
+  schedule made, run three times keeping two snapshots, failing for a VM,
+  run now, disabled (no more runs), edited, assigned and deleted; DR
+  configured on one pool, a test failover on the other listing the
+  recoverable VMs and vApps, each failing pre-check and its fix (HA on, a
+  VM running in the source pool, a newer VM here, local storage, a missing
+  shared SR attached with a `DR_task`), a recovery failing in the middle
+  and one cancelled leaving nothing, a failover and a failback; in the
+  window: the New Snapshot Schedule wizard, the schedule's history,
+  Disable, Properties and Delete, Configure, and the Disaster Recovery
+  wizard's test failover through an iSCSI scan to its report, and a
+  cancelled wizard cleaning up;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -756,6 +798,16 @@ delay and description, and deletes the vApp and the VM. It never calls a
 migration or feasibility call, nor starts or shuts down a vApp;
 `f12a_real_run_on_the_mock` rehearses it and checks exactly that.
 
+Scheduled snapshots on a real host (`app/tests/vmss_dr_real.rs`, same
+variables): `real_f12b_snapshot_schedule_and_dr_read_only` makes the
+disposable VM `xenadmin-rs-test-f12b` (64 MiB disk on "Local storage",
+never started), makes the schedule `xenadmin-rs-test-f12b-schedule`
+without VMs (so disabled), assigns the VM to it, edits it and deletes it,
+then the VM. The schedule is never enabled or run. Disaster recovery is
+only looked at: Configure and the wizard (up to its Storage page) are
+opened and cancelled; no replication, `DR_task`, recovery or SR change is
+made. `f12b_real_run_on_the_mock` rehearses it and checks exactly that.
+
 A view-only snapshot of a console from the command line (no input is ever
 sent): `XAPI_HOST=… XAPI_USER=root XAPI_PASSWORD=… XAPI_FINGERPRINT=AA:BB:…
 CONSOLE_HOST=1 CONSOLE_OUT=/tmp/dom0.ppm cargo run -p xen-core --example
@@ -791,7 +843,7 @@ same directory explains how to rebuild it with opam.
 |---|---|
 | `crates/xapi` | XAPI client. Its hand-written core covers the transport, session, `event.from`, errors, dates, lenient decoding, TLS certificate pinning and the streamed file transfers of the HTTP handlers (`http`: downloads read piece by piece; uploads written by hand on their own connection, read from the file one buffer at a time while the server's answer is read, the connection closed at once on any failure or cancel). `src/generated/` holds every API class, record, enum and call, generated from the pinned datamodel. |
 | `crates/xapi-codegen` | The generator for `crates/xapi/src/generated/`, and the pinned datamodel in `data/`. |
-| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
+| `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xenadmin` | The egui/eframe desktop app. |

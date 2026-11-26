@@ -142,6 +142,21 @@ pub(crate) async fn run(
         | ActionRequest::DeleteVApps { .. }
         | ActionRequest::StartVApp { .. }
         | ActionRequest::ShutDownVApp { .. }
+        | ActionRequest::HardShutDownVApp { .. }
+        | ActionRequest::NewPolicy(_)
+        | ActionRequest::SetPolicyEnabled { .. }
+        | ActionRequest::RunPolicyNow { .. }
+        | ActionRequest::DeletePolicies { .. }
+        | ActionRequest::AssignPolicy { .. }
+        | ActionRequest::RemoveFromPolicy { .. }
+        | ActionRequest::SetPolicy { .. }
+        | ActionRequest::ConfigureDr { .. }
+        | ActionRequest::DrTaskCreate(_)
+        | ActionRequest::DrTaskDestroy { .. }
+        | ActionRequest::DrRecover { .. }
+        | ActionRequest::DrStart { .. }
+        | ActionRequest::DrDestroyVms { .. }
+        | ActionRequest::DrDestroyVApps { .. }
         | ActionRequest::DismissAlerts { .. }
         | ActionRequest::SetPerfmon { .. }
         | ActionRequest::NewSr(_)

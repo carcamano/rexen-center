@@ -48,7 +48,12 @@
 //!   `VM.migrate_send` (see [`migrate`]);
 //! * vApps: `VM_appliance.create` / `destroy` / `start` / `shutdown` /
 //!   `clean_shutdown` / `hard_shutdown`, `VM.set_appliance` and the
-//!   startup sequence (see [`appliance`]).
+//!   startup sequence (see [`appliance`]);
+//! * scheduled snapshots (`VMSS`), with a clock that runs the enabled
+//!   policies when a test moves it (see [`vmss`]);
+//! * disaster recovery between mock pools: database replication to shared
+//!   SRs, `DR_task`, metadata sessions and `VM.recover` /
+//!   `VM_appliance.recover` (see [`dr`]).
 //!
 //! Tests can also change objects behind the client's back
 //! ([`MockServer::set_vm_power_state`], [`MockServer::set_field`],
@@ -69,6 +74,7 @@
 
 pub mod ad;
 pub mod appliance;
+pub mod dr;
 pub mod ha;
 pub mod migrate;
 pub mod networking;
@@ -79,6 +85,7 @@ pub mod raw_vdi;
 pub mod rrd;
 pub mod storage;
 pub mod vhd;
+pub mod vmss;
 pub mod xva;
 
 pub use ad::{AD_ADMIN, AD_DOMAIN, AD_USERS};
@@ -465,6 +472,51 @@ impl MockServer {
     /// (see [`appliance`]).
     pub fn appliance_log(&self) -> Vec<(String, String)> {
         self.state.db().appliance.log.clone()
+    }
+
+    /// Moves the mock's clock `seconds` forward; the enabled snapshot
+    /// schedules whose times it passes run (see [`vmss`]).
+    pub fn advance_clock(&self, seconds: i64) {
+        vmss::advance(&self.state, seconds);
+    }
+
+    /// The server's time zone, in seconds east of UTC
+    /// (`host.get_server_localtime`).
+    pub fn set_server_utc_offset(&self, seconds: i64) {
+        self.state.db().vmss.utc_offset = seconds;
+    }
+
+    /// The mock clock now, in Unix seconds (UTC).
+    pub fn clock(&self) -> i64 {
+        self.state.db().vmss.now()
+    }
+
+    /// The snapshot schedule runs so far: `(policy, scheduled)`, `false`
+    /// for `VMSS.snapshot_now`.
+    pub fn vmss_runs(&self) -> Vec<(String, bool)> {
+        self.state.db().vmss.runs.clone()
+    }
+
+    /// Makes scheduled snapshots of `vm` fail with XAPI error `code`
+    /// (`None`: work again).
+    pub fn fail_vmss_snapshot(&self, vm: &str, code: Option<&str>) {
+        let mut db = self.state.db();
+        db.vmss.failing.retain(|(v, _)| v != vm);
+        if let Some(code) = code {
+            db.vmss.failing.push((vm.to_owned(), code.to_owned()));
+        }
+    }
+
+    /// Makes the recovery of the VM with `vm_uuid` (alone or in a vApp)
+    /// fail with XAPI error `code` (`None`: work again; see [`dr`]).
+    pub fn fail_recovery(&self, vm_uuid: &str, code: Option<&str>) {
+        dr::fail_recovery(&self.state, vm_uuid, code);
+    }
+
+    /// Writes this pool's database to its metadata VDIs now (it also
+    /// happens after every call it answers).
+    pub fn sync_metadata(&self) {
+        dr::sync(&self.state);
     }
 
     /// XVA exports write `blocks` blocks of `block_size` bytes per disk
@@ -857,6 +909,8 @@ impl State {
             xva: xva::World::default(),
             migrate: migrate::World::default(),
             appliance: appliance::World::default(),
+            vmss: vmss::World::default(),
+            dr: dr::World::default(),
         };
         db.init_sr_ops();
         db.init_vif_ops();
@@ -973,6 +1027,10 @@ struct Db {
     migrate: migrate::World,
     /// vApp knobs and log.
     appliance: appliance::World,
+    /// Scheduled snapshots and the clock.
+    vmss: vmss::World,
+    /// Disaster recovery.
+    dr: dr::World,
 }
 
 impl Db {
@@ -1564,6 +1622,9 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
         .trim_start_matches("Async.")
         .split_once('.')
         .unwrap_or((method, ""));
+    if dr::is_metadata_session(state, &session) {
+        return dr::metadata_call(state, method, &session, params).await;
+    }
     if migrate::handles(wait_class, wait_call) {
         let failure = admit(state, method, &session)?;
         return migrate::call(state, method, params, failure).await;
@@ -1763,7 +1824,7 @@ async fn dispatch(state: &Arc<State>, method: &str, params: &[Value]) -> Reply {
                 .objects
                 .contains_key(&("host".to_owned(), host.to_owned()))
             {
-                Ok(json!("20261125T12:00:00Z"))
+                Ok(json!(format!("{}Z", vmss::stamp(db.vmss.now()))))
             } else {
                 api_error("HANDLE_INVALID", &["host", host])
             }

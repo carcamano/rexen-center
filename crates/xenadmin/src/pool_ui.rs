@@ -234,6 +234,8 @@ pub fn pool_entries(state: &AppState, conn: &ConnectionView) -> Vec<Entry> {
     // `highAvailabilityToolStripMenuItem`, after the vApp entries.
     entries.push(crate::vapp_ui::manage_entry(conn));
     entries.extend(crate::ha_ui::pool_entries(state, conn));
+    entries.push(crate::dr_ui::menu_entry(conn));
+    entries.push(crate::vmss_ui::manage_entry(conn));
     entries.push(Entry::Separator);
     entries.extend([
         Entry::Named {

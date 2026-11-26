@@ -250,6 +250,22 @@ fn sr_list(srs: &[(String, i64)], versions: bool) -> String {
     xml
 }
 
+/// `<SRlist>` of a metadata probe: name, description and
+/// `pool_metadata_detected` per SR.
+fn metadata_sr_list(srs: &[(String, i64, String, String, bool)]) -> String {
+    let mut xml = String::from("<?xml version=\"1.0\" ?>\n<SRlist>\n");
+    for (uuid, size, name, description, metadata) in srs {
+        xml.push_str(&format!(
+            "\t<SR>\n\t\t<UUID>{}</UUID>\n\t\t<size>{size}</size>\n\t\t<name_label>{}</name_label>\n\t\t<name_description>{}</name_description>\n\t\t<pool_metadata_detected>{metadata}</pool_metadata_detected>\n\t</SR>\n",
+            xml_escape(uuid),
+            xml_escape(name),
+            xml_escape(description)
+        ));
+    }
+    xml.push_str("</SRlist>\n");
+    xml
+}
+
 fn iqn_list(target: &Target) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" ?>\n<iscsi-target-iqns>\n");
     for (i, (iqn, _)) in target.iqns.iter().enumerate() {
@@ -282,8 +298,8 @@ fn get<'a>(m: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 }
 
 /// What a `device_config` designates.
-struct Located {
-    key: String,
+pub(crate) struct Located {
+    pub(crate) key: String,
     size: i64,
     /// Formatting replaces what was there (LUNs, disks).
     exclusive: bool,
@@ -436,6 +452,15 @@ impl Db {
         }
     }
 
+    /// The place `dconf` of an SR of `sr_type` designates.
+    pub(crate) fn locate_pub(
+        &self,
+        sr_type: &str,
+        dconf: &Map<String, Value>,
+    ) -> Result<String, Failure> {
+        self.locate(sr_type, dconf).map(|l| l.key)
+    }
+
     fn iscsi_target(&self, dconf: &Map<String, Value>) -> Result<&'static Target, Failure> {
         let name = get(dconf, "target").unwrap_or_default();
         if name == "unreachable.lab" {
@@ -455,7 +480,7 @@ impl Db {
     }
 
     /// The place an SR's first PBD designates.
-    fn sr_location(&self, sr: &str) -> Option<Located> {
+    pub(crate) fn sr_location(&self, sr: &str) -> Option<Located> {
         let rec = self.record("sr", sr)?;
         let sr_type = get(rec, "type")?.to_owned();
         let pbd = rec
@@ -705,6 +730,21 @@ impl Db {
             .find(&located.key)
             .map(|l| l.srs.iter().map(|s| (s.clone(), l.size)).collect())
             .unwrap_or_default();
+        let metadata = map_of(params.get(4))
+            .get("metadata")
+            .and_then(Value::as_str)
+            == Some("true");
+        if metadata {
+            // The DR scan: the SRs on the shared storage, with whether
+            // they hold pool metadata.
+            let mut found = crate::dr::srs_at(&located.key);
+            for (uuid, size) in &srs {
+                if !found.iter().any(|f| f.0 == *uuid) {
+                    found.push((uuid.clone(), *size, String::new(), String::new(), false));
+                }
+            }
+            return Ok(json!(metadata_sr_list(&found)));
+        }
         Ok(json!(sr_list(&srs, dconf.contains_key("probeversion"))))
     }
 
@@ -818,6 +858,11 @@ impl Db {
                 .map(|l| l.isos.clone())
                 .unwrap_or_default();
             self.add_isos(sr, &isos);
+            let uuid = self.get_str("sr", sr, "uuid").unwrap_or_default();
+            if crate::dr::has(&located.key, &uuid) {
+                let sr = sr.to_owned();
+                self.add_fabric_vdis(&sr, &uuid);
+            }
         }
         Ok(json!(""))
     }
@@ -870,8 +915,9 @@ impl Db {
         let sr_type = self.get_str("sr", &sr, "type").unwrap_or_default();
         let located = self.locate(&sr_type, &dconf)?;
         let uuid = self.get_str("sr", &sr, "uuid").unwrap_or_default();
+        let in_fabric = crate::dr::has(&located.key, &uuid);
         let loc = self.storage.location(&located.key, located.size);
-        if !loc.srs.contains(&uuid) {
+        if !loc.srs.contains(&uuid) && !in_fabric {
             // XAPI's SM finds no SR with this UUID there.
             return Err(backend(
                 47,
@@ -892,6 +938,9 @@ impl Db {
         }
         if sr_type == "iso" {
             self.add_isos(&sr, &isos);
+        }
+        if in_fabric {
+            self.add_fabric_vdis(&sr, &uuid);
         }
         self.refresh_sr_ops(&sr);
         Ok(json!(""))

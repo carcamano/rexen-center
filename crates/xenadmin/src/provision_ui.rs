@@ -122,6 +122,22 @@ pub enum DialogRequest {
         vapp: Ref<xapi::VmAppliance>,
         vms: Vec<Ref<Vm>>,
     },
+    /// VM Snapshot Schedules (`ScheduledSnapshotsDialog`, F12b).
+    ManagePolicies,
+    /// New Snapshot Schedule, with these VMs ticked.
+    NewPolicy(Vec<Ref<Vm>>),
+    /// A snapshot schedule's Properties.
+    PolicyProperties(Ref<xapi::Vmss>),
+    /// Assign to Snapshot Schedule: `vms` join `policy` (or leave it,
+    /// when the one VM is already in it).
+    AssignPolicy {
+        policy: Ref<xapi::Vmss>,
+        vms: Vec<Ref<Vm>>,
+    },
+    /// Disaster Recovery > Configure (`DRConfigureDialog`).
+    ConfigureDr,
+    /// The Disaster Recovery wizard (`DRFailoverWizard`).
+    DrWizard,
 }
 
 impl DialogRequest {
@@ -160,6 +176,22 @@ impl DialogRequest {
                 | Self::VAppProperties(_)
                 | Self::AssignVApp { .. }
         )
+    }
+
+    /// A snapshot schedule dialog ([`crate::vmss_ui`]).
+    pub fn is_vmss(&self) -> bool {
+        matches!(
+            self,
+            Self::ManagePolicies
+                | Self::NewPolicy(_)
+                | Self::PolicyProperties(_)
+                | Self::AssignPolicy { .. }
+        )
+    }
+
+    /// A disaster recovery dialog ([`crate::dr_ui`]).
+    pub fn is_dr(&self) -> bool {
+        matches!(self, Self::ConfigureDr | Self::DrWizard)
     }
 
     /// An HA dialog ([`crate::ha_ui`]).
@@ -206,6 +238,7 @@ pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec
             DialogRequest::MakeTemplate(vm_ref.clone()),
         ),
         crate::vapp_ui::assign_entry(conn, std::slice::from_ref(vm_ref)),
+        crate::vmss_ui::assign_entry(conn, std::slice::from_ref(vm_ref)),
         item(
             install_tools_label(),
             prov::can_install_tools(&conn.model, vm, busy),
@@ -675,7 +708,13 @@ impl ProvisionUi {
             | DialogRequest::ManageVApps
             | DialogRequest::NewVApp(_)
             | DialogRequest::VAppProperties(_)
-            | DialogRequest::AssignVApp { .. } => {
+            | DialogRequest::AssignVApp { .. }
+            | DialogRequest::ManagePolicies
+            | DialogRequest::NewPolicy(_)
+            | DialogRequest::PolicyProperties(_)
+            | DialogRequest::AssignPolicy { .. }
+            | DialogRequest::ConfigureDr
+            | DialogRequest::DrWizard => {
                 return;
             }
             DialogRequest::InstallTools(vm) => confirm(
@@ -859,6 +898,10 @@ impl ProvisionUi {
         let usable = conn.status.is_connected();
         let busy = conn.busy_vms.contains(vm_ref);
         let mut open = None;
+        // `RefreshVMSSPanel` (F12b).
+        if crate::vmss_ui::snapshots_line(ui, conn, vm) {
+            open = Some(DialogRequest::ManagePolicies);
+        }
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -1006,7 +1049,7 @@ impl ProvisionUi {
             });
         }
         if let Some(request) = open {
-            if request.is_transfer() {
+            if request.is_transfer() || request.is_vmss() {
                 self.forwarded.push((conn.id, request));
             } else {
                 self.open(conn, request);

@@ -12,7 +12,8 @@
 //! `hard_shutdown`, `clean_reboot`, `hard_reboot`, `suspend`, `resume`,
 //! `resume_on`, `pause`, `unpause` and `pool_migrate` (and their `Async.*`
 //! forms) check the power state, `allowed_operations` and the target host
-//! like XAPI, then change `power_state`, `resident_on`,
+//! like XAPI (`start` / `start_on` with `start_paused` leave the VM
+//! paused), then change `power_state`, `resident_on`,
 //! `allowed_operations` and the hosts' `resident_VMs`. Running, halted and
 //! suspended guests also offer `migrate_send` (see [`crate::migrate`]; the
 //! fixtures' guests get it when loaded). While an `Async.*`
@@ -269,6 +270,22 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("pool.disable_ha", "pool-operator"),
     ("pool.set_ha_host_failures_to_tolerate", "pool-operator"),
     ("pool.sync_database", "pool-operator"),
+    ("vmss.create", "pool-operator"),
+    ("vmss.destroy", "pool-operator"),
+    ("vmss.set_name_label", "pool-operator"),
+    ("vmss.set_name_description", "pool-operator"),
+    ("vmss.set_enabled", "pool-operator"),
+    ("vmss.set_type", "pool-operator"),
+    ("vmss.set_frequency", "pool-operator"),
+    ("vmss.set_schedule", "pool-operator"),
+    ("vmss.set_retained_snapshots", "pool-operator"),
+    ("vmss.snapshot_now", "pool-operator"),
+    ("vm.set_snapshot_schedule", "pool-operator"),
+    ("sr.enable_database_replication", "pool-operator"),
+    ("sr.disable_database_replication", "pool-operator"),
+    ("dr_task.create", "pool-operator"),
+    ("dr_task.destroy", "pool-operator"),
+    ("vdi.open_database", "pool-operator"),
     (
         "pool.ha_compute_hypothetical_max_host_failures_to_tolerate",
         "pool-operator",
@@ -606,6 +623,18 @@ impl Db {
         {
             return Err(("OPERATION_NOT_ALLOWED".into(), vec![op.into()]));
         }
+        // `start(vm, start_paused, force)` / `start_on(vm, host, start_paused, force)`.
+        let paused_at = match call {
+            "start" => Some(2),
+            "start_on" => Some(3),
+            _ => None,
+        };
+        let target =
+            if paused_at.is_some_and(|i| params.get(i).and_then(Value::as_bool) == Some(true)) {
+                "Paused"
+            } else {
+                target
+            };
         if !required.contains(&state.as_str()) {
             return Err((
                 "VM_BAD_POWER_STATE".into(),

@@ -19,6 +19,8 @@ mod cli;
 mod console_keys;
 mod console_view;
 mod cpm_strings;
+mod dr_strings;
+mod dr_ui;
 mod events;
 mod friendly_errors;
 mod ha_strings;
@@ -51,6 +53,8 @@ mod tab_strings;
 mod tabs;
 mod vapp_strings;
 mod vapp_ui;
+mod vmss_strings;
+mod vmss_ui;
 mod xva_strings;
 mod xva_ui;
 

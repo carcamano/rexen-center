@@ -743,13 +743,32 @@ pub(crate) async fn probe(
     sr_type: &str,
     device_config: &DeviceConfig,
 ) -> xapi::Result<ProbeResult> {
+    probe_with(
+        shared,
+        s,
+        connection,
+        sr_type,
+        device_config,
+        &HashMap::new(),
+    )
+    .await
+}
+
+/// `SR.probe` with an `sm_config` (`metadata = true` for the DR scans).
+pub(crate) async fn probe_with(
+    shared: &Shared,
+    s: &Session,
+    connection: ConnectionId,
+    sr_type: &str,
+    device_config: &DeviceConfig,
+    sm_config: &HashMap<String, String>,
+) -> xapi::Result<ProbeResult> {
     let host = coordinator(&model(shared, connection)).map_err(no_coordinator)?;
     let dconf = device_config.map();
-    let none = HashMap::new();
     let result = await_task(
         shared,
         s,
-        xapi::sr::async_probe(s, &host, &dconf, sr_type, Some(&none)),
+        xapi::sr::async_probe(s, &host, &dconf, sr_type, Some(sm_config)),
     )
     .await?;
     storage::parse_probe(&result)

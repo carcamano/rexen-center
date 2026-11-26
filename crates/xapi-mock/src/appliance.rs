@@ -7,7 +7,8 @@
 //! accepts `appliance`, `order`, `start_delay` and `shutdown_delay`. A
 //! vApp's `VMs` and `allowed_operations` follow its members, as XAPI's:
 //! `start` while a member is halted; `clean_shutdown`, `hard_shutdown` and
-//! `shutdown` while one runs; nothing without members. `VM.set_order`,
+//! `shutdown` while one runs (`hard_shutdown` and `shutdown` while one is
+//! paused); nothing without members. `VM.set_order`,
 //! `set_start_delay` (see [`crate::ha`]) and `set_shutdown_delay` set the
 //! startup sequence.
 //!
@@ -192,6 +193,9 @@ impl Db {
         }
         if states.iter().any(|s| s == "Running") {
             ops.extend(["clean_shutdown", "hard_shutdown", "shutdown"]);
+        } else if states.iter().any(|s| s == "Paused") {
+            // A paused VM can only be forced off.
+            ops.extend(["hard_shutdown", "shutdown"]);
         }
         let current = rec.get("allowed_operations").cloned();
         if current != Some(json!(ops)) {

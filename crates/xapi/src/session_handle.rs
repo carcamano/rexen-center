@@ -57,6 +57,16 @@ impl Session {
         Ok(())
     }
 
+    /// A session the server already opened, used over `client`: the one
+    /// `VDI.open_database` returns on a pool's metadata (disaster
+    /// recovery), whose calls read that database.
+    pub fn from_ref(client: Arc<JsonRpcClient>, session_ref: Ref<SessionClass>) -> Self {
+        Self {
+            client,
+            session_ref,
+        }
+    }
+
     /// The same session over another client bound to the same server.
     pub fn with_client(&self, client: Arc<JsonRpcClient>) -> Self {
         Self {

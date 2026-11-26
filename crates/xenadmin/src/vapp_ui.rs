@@ -110,7 +110,7 @@ pub fn assign_entry(conn: &ConnectionView, vms: &[Ref<Vm>]) -> Entry {
             app.name_label.clone()
         };
         if current.as_ref() == Some(r) {
-            label = format!("✔ {label}");
+            label = format!("\u{2022} {label}");
         }
         entries.push(Entry::Named {
             label,
@@ -165,7 +165,7 @@ pub fn confirmation(conn: &ConnectionView, request: &ActionRequest) -> Option<Co
     }
 }
 
-fn change_text(warning: Option<ChangeWarning>) -> Option<String> {
+pub(crate) fn change_text(warning: Option<ChangeWarning>) -> Option<String> {
     let s = vapp_strings();
     Some(match warning? {
         ChangeWarning::One { vm, old, new } => {
@@ -181,16 +181,36 @@ fn in_pool(m: &ConnectionModel) -> bool {
 
 // ---- shared pages ----------------------------------------------------------------------
 
-/// The Virtual Machines page (`NewVMGroupVMsPage<VM_appliance>`).
+/// Which group the Virtual Machines page fills (`NewVMGroupVMsPage<T>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GroupKind {
+    #[default]
+    VApp,
+    /// A snapshot schedule (`VMSS`, F12b).
+    Vmss,
+}
+
+/// The Virtual Machines page (`NewVMGroupVMsPage<T>`).
 #[derive(Default)]
 pub(crate) struct VmsPage {
     pub(crate) selected: Vec<Ref<Vm>>,
-    search: String,
+    pub(crate) search: String,
+    pub(crate) kind: GroupKind,
 }
 
 impl VmsPage {
-    fn show(&mut self, ui: &mut Ui, conn: &ConnectionView, show_hidden: bool, id: &str) {
+    pub(crate) fn new(kind: GroupKind, selected: Vec<Ref<Vm>>) -> Self {
+        Self {
+            selected,
+            search: String::new(),
+            kind,
+        }
+    }
+
+    pub(crate) fn show(&mut self, ui: &mut Ui, conn: &ConnectionView, show_hidden: bool, id: &str) {
         let s = vapp_strings();
+        let v = crate::vmss_strings::vmss_strings();
+        let vmss = self.kind == GroupKind::Vmss;
         let m = &conn.model;
         ui.horizontal(|ui| {
             ui.label(fill(
@@ -207,7 +227,7 @@ impl VmsPage {
                     .hint_text(s.search_hint),
             );
         });
-        ui.label(s.vms_rubric);
+        ui.label(if vmss { v.vms_rubric } else { s.vms_rubric });
         let needle = self.search.to_lowercase();
         let mut rows: Vec<_> = rules::selectable_vms(m, show_hidden)
             .into_iter()
@@ -226,7 +246,7 @@ impl VmsPage {
                     .show(ui, |ui| {
                         ui.strong(s.col_vm);
                         ui.strong(s.col_description);
-                        ui.strong(s.col_current);
+                        ui.strong(if vmss { v.col_current } else { s.col_current });
                         ui.end_row();
                         for (r, v) in &rows {
                             let mut on = self.selected.contains(r);
@@ -238,11 +258,12 @@ impl VmsPage {
                                 }
                             }
                             ui.label(&v.name_description);
-                            ui.label(
-                                rules::vapp_of(m, v)
-                                    .map(|(_, a)| a.name_label.clone())
-                                    .unwrap_or_else(|| s.none.to_owned()),
-                            );
+                            let current = if vmss {
+                                xen_core::vmss::policy_of(m, v).map(|(_, p)| p.name_label.clone())
+                            } else {
+                                rules::vapp_of(m, v).map(|(_, a)| a.name_label.clone())
+                            };
+                            ui.label(current.unwrap_or_else(|| s.none.to_owned()));
                             ui.end_row();
                         }
                     });
@@ -436,10 +457,7 @@ impl NewVAppWizard {
             rbac_blocked,
             name: String::new(),
             description: String::new(),
-            vms: VmsPage {
-                selected: vms,
-                search: String::new(),
-            },
+            vms: VmsPage::new(GroupKind::VApp, vms),
             order: OrderPage::default(),
             warning: None,
             error: None,
@@ -686,10 +704,7 @@ impl VAppProperties {
             original_name: app.name_label.clone(),
             original_description: app.name_description.clone(),
             original_members: members.clone(),
-            vms: VmsPage {
-                selected: members,
-                search: String::new(),
-            },
+            vms: VmsPage::new(GroupKind::VApp, members),
             order,
             warning: None,
         })

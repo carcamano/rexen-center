@@ -79,6 +79,8 @@ pub(crate) fn handles(class: &str, call: &str) -> bool {
         || crate::ha::handles(class, call)
         || crate::ad::handles(class, call)
         || crate::appliance::handles(class, call)
+        || crate::vmss::handles(class, call)
+        || crate::dr::handles(class, call)
     {
         return true;
     }
@@ -244,11 +246,15 @@ impl Db {
 
     /// A new reference and uuid for an object of `class`.
     pub(crate) fn new_ref(&mut self, class: &str) -> (String, String) {
+        static UUIDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let n = self.next_object;
         self.next_object += 1;
+        // UUIDs are unique in the process: pools that share storage (and
+        // disaster recovery) match objects by UUID.
+        let u = UUIDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         (
             format!("OpaqueRef:mock-{class}-{n}"),
-            format!("f7000000-0000-4000-8000-{n:012}"),
+            format!("f7000000-0000-4000-8000-{u:012}"),
         )
     }
 
@@ -410,6 +416,14 @@ impl Db {
             return Some(reply);
         }
         if let Some(reply) = self.appliance_call(class, call, params) {
+            return Some(reply);
+        }
+        if let Some(reply) = self.vmss_call(class, call, params) {
+            return Some(reply);
+        }
+        if crate::dr::handles(class, call)
+            && let Some(reply) = self.dr_call(class, call, params)
+        {
             return Some(reply);
         }
         let lower = class.to_lowercase();
