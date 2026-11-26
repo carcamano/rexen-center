@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center mark, concept X inside a gear</title>
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C9BF5"/>
+      <stop offset="1" stop-color="#1E63C8"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFD36B"/>
+      <stop offset="1" stop-color="#F07A2E"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(512 512) scale(1.18) translate(-512 -512)">
+  <path fill-rule="evenodd" fill="url(#rust)" d="M825.1 535.4 L881.6 554.3 L869.6 614.4 L810.2 610.2 L792.3 653.5 L837.3 692.5 L803.2 743.4 L750 716.9 L716.9 750 L743.4 803.2 L692.5 837.3 L653.5 792.3 L610.2 810.2 L614.4 869.6 L554.3 881.6 L535.4 825.1 L488.6 825.1 L469.7 881.6 L409.6 869.6 L413.8 810.2 L370.5 792.3 L331.5 837.3 L280.6 803.2 L307.1 750 L274 716.9 L220.8 743.4 L186.7 692.5 L231.7 653.5 L213.8 610.2 L154.4 614.4 L142.4 554.3 L198.9 535.4 L198.9 488.6 L142.4 469.7 L154.4 409.6 L213.8 413.8 L231.7 370.5 L186.7 331.5 L220.8 280.6 L274 307.1 L307.1 274 L280.6 220.8 L331.5 186.7 L370.5 231.7 L413.8 213.8 L409.6 154.4 L469.7 142.4 L488.6 198.9 L535.4 198.9 L554.3 142.4 L614.4 154.4 L610.2 213.8 L653.5 231.7 L692.5 186.7 L743.4 220.8 L716.9 274 L750 307.1 L803.2 280.6 L837.3 331.5 L792.3 370.5 L810.2 413.8 L869.6 409.6 L881.6 469.7 L825.1 488.6 Z M242 512 A270 270 0 1 0 782 512 A270 270 0 1 0 242 512 Z"/>
+  <circle cx="512" cy="512" r="262" fill="#1F2C3B"/>
+  <g stroke-width="92" stroke-linecap="butt">
+    <path d="M394 394 L630 630" stroke="#F3F5F8"/>
+    <path d="M630 394 L394 630" stroke="url(#blue)"/>
+  </g>
+  </g>
+</svg>
