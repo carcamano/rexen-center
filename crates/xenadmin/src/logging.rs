@@ -2,8 +2,8 @@
 //! daily-rotated file in its `logs` folder (the last 7 days are kept).
 //!
 //! The level comes from `RUST_LOG` (default
-//! `warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info`). The MCP
-//! server (`--mcp`) logs to its own file (`xenadmin-rs-mcp.*.log`) and to
+//! `warn,xapi=info,xen_core=info,xen_mcp=info,rexencenter=info`). The MCP
+//! server (`--mcp`) logs to its own file (`rexen-center-mcp.*.log`) and to
 //! stderr, never to stdout, which carries the protocol. Passwords and session
 //! references are never logged: calls are traced by method name only, the
 //! password type redacts itself and the XAPI client redacts session
@@ -16,7 +16,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use xen_core::ConfigPaths;
 
-const DEFAULT_FILTER: &str = "warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info";
+const DEFAULT_FILTER: &str = "warn,xapi=info,xen_core=info,xen_mcp=info,rexencenter=info";
 
 /// Installs the global subscriber, with log files named `file_prefix`.
 /// Keep the returned guard alive until exit so buffered file output is

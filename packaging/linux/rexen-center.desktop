@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ReXen Center
+GenericName=XCP-ng management console
+Comment=ReXen Center — XCP-ng Center, born again in Rust
+Exec=rexencenter
+Icon=rexen-center
+Terminal=false
+Categories=System;Network;
+StartupWMClass=rexen-center

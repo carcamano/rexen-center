@@ -88,6 +88,7 @@ string_table! {
     /// `{version}`
     about_version = "Version {version}",
     about_summary = "A cross-platform management console for XCP-ng pools.",
+    about_disclaimer = "An independent community project: not an official XCP-ng, Vates or Citrix product.",
     about_credits_heading = "Credits",
     about_credits = "Based on XCP-ng Center, maintained by the XCP-ng community, which derives from \
                     XenAdmin (Citrix XenCenter) by Citrix Systems, Inc. and Cloud Software Group, Inc. \
@@ -168,7 +169,7 @@ string_table! {
     options_log_dir = "Log folder",
     options_mode_user = "per-user settings",
     options_mode_portable = "portable mode (next to the program)",
-    options_mode_override = "set by XENADMIN_CONFIG_DIR",
+    options_mode_override = "set by REXENCENTER_CONFIG_DIR",
     /// The button beside a path field (`BROWSE`).
     browse = "Browse...",
     filter_all = "All Files",

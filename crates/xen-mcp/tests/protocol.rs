@@ -38,7 +38,18 @@ async fn handshake_and_the_lists() {
         result["protocolVersion"], "2025-11-25",
         "unknown revision: our newest"
     );
-    assert_eq!(result["serverInfo"]["name"], "xenadmin-rs");
+    assert_eq!(result["serverInfo"]["name"], "rexen-center");
+    assert_eq!(result["serverInfo"]["title"], "ReXen Center MCP server");
+    assert_eq!(
+        result["serverInfo"]["description"],
+        "ReXen Center — XCP-ng Center, born again in Rust"
+    );
+    assert!(
+        result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("the ReXen Center console's saved servers")
+    );
     assert!(result["capabilities"]["tools"].is_object());
     assert!(result["capabilities"]["resources"].is_object());
     assert!(
@@ -87,10 +98,10 @@ async fn handshake_and_the_lists() {
     let uris = names(&resources["result"]["resources"], "uri");
     let server = xen_mcp::resources::encode(&saved_address(&mock));
     assert_eq!(uris.len(), 7, "{uris:?}");
-    assert_eq!(uris[0], "xenadmin://servers");
+    assert_eq!(uris[0], "rexencenter://servers");
     for list in ["pool", "hosts", "vms", "srs", "networks", "alerts"] {
         assert!(
-            uris.contains(&format!("xenadmin://server/{server}/{list}")),
+            uris.contains(&format!("rexencenter://server/{server}/{list}")),
             "{list}"
         );
     }
@@ -114,7 +125,7 @@ async fn handshake_and_the_lists() {
         .await;
     assert_eq!(e["error"]["code"], -32602);
     let e = c
-        .request("resources/read", json!({"uri": "xenadmin://nothing"}))
+        .request("resources/read", json!({"uri": "rexencenter://nothing"}))
         .await;
     assert_eq!(e["error"]["code"], -32002);
     c.send_line("{not json").await;
@@ -349,10 +360,10 @@ async fn resources_read_the_same_views() {
     c.wait_connected().await;
     let server = xen_mcp::resources::encode(&saved_address(&mock));
 
-    let servers = c.read_resource("xenadmin://servers").await;
+    let servers = c.read_resource("rexencenter://servers").await;
     assert_eq!(servers["servers"][0]["status"], "connected");
     let vms = c
-        .read_resource(&format!("xenadmin://server/{server}/vms"))
+        .read_resource(&format!("rexencenter://server/{server}/vms"))
         .await;
     assert_eq!(vms, c.ok("list_vms", json!({})).await);
     for (list, key) in [
@@ -362,35 +373,35 @@ async fn resources_read_the_same_views() {
         ("alerts", "alerts"),
     ] {
         let v = c
-            .read_resource(&format!("xenadmin://server/{server}/{list}"))
+            .read_resource(&format!("rexencenter://server/{server}/{list}"))
             .await;
         assert!(v[key].is_array(), "{list}: {v}");
     }
     let pool = c
-        .read_resource(&format!("xenadmin://server/{server}/pool"))
+        .read_resource(&format!("rexencenter://server/{server}/pool"))
         .await;
     assert_eq!(pool["name"], "Lab Pool");
     let vm = c
         .read_resource(&format!(
-            "xenadmin://server/{server}/vm/0b0b0b0b-0000-4000-8000-000000000001"
+            "rexencenter://server/{server}/vm/0b0b0b0b-0000-4000-8000-000000000001"
         ))
         .await;
     assert_eq!(vm["name"], "web-01");
     let host = c
         .read_resource(&format!(
-            "xenadmin://server/{server}/host/1c0e3b3c-0000-4000-8000-000000000001"
+            "rexencenter://server/{server}/host/1c0e3b3c-0000-4000-8000-000000000001"
         ))
         .await;
     assert_eq!(host["name"], "xcp-host-01");
     let p = c
         .read_resource(&format!(
-            "xenadmin://server/{server}/pool/5a0e3b3c-0000-4000-8000-000000000001"
+            "rexencenter://server/{server}/pool/5a0e3b3c-0000-4000-8000-000000000001"
         ))
         .await;
     assert_eq!(p["name"], "Lab Pool");
     let perf = c
         .read_resource(&format!(
-            "xenadmin://server/{server}/vm/0b0b0b0b-0000-4000-8000-000000000001/performance"
+            "rexencenter://server/{server}/vm/0b0b0b0b-0000-4000-8000-000000000001/performance"
         ))
         .await;
     assert_eq!(perf["interval"], "1m");
@@ -418,7 +429,7 @@ async fn an_unpinned_certificate_is_refused_before_login() {
         servers["servers"][0]["problem"]
             .as_str()
             .unwrap()
-            .contains("xenadmin window"),
+            .contains("ReXen Center window"),
         "{servers}"
     );
     assert!(

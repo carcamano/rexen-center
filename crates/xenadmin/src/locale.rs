@@ -440,7 +440,7 @@ pub fn placeholders(text: &str) -> BTreeSet<&str> {
 #[cfg(test)]
 pub fn english_catalogue() -> String {
     let mut out = String::from(
-        "# xenadmin-rs user-interface strings: the English catalogue.\n\
+        "# ReXen Center user-interface strings: the English catalogue.\n\
          #\n\
          # Generated from the string tables (`cargo test -p xenadmin` checks it;\n\
          # `XENADMIN_BLESS=1` rewrites it). Do not edit by hand: copy it to\n\

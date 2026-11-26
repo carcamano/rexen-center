@@ -7,8 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# The package keeps its development name; the program is ReXen Center's.
 [[bin]]
-name = "xenadmin"
+name = "rexencenter"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds the macOS application bundle and disk image:
-#   <out>/xenadmin-rs.app and <out>/xenadmin-rs-<version>-macos-<arch>.dmg
+#   "<out>/ReXen Center.app" and <out>/rexen-center-<version>-macos-<arch>.dmg
+# (the names come from crates/xen-core/src/branding.rs, see ../brand.sh).
 #
 # Usage: packaging/macos/build.sh [out-dir]      (default: target/dist)
 # Environment: TARGET=<rust target triple> to cross-build for the other
@@ -8,23 +9,23 @@
 #
 # Needs only Xcode's command line tools (iconutil, sips, hdiutil). The
 # bundle is not signed or notarized: Gatekeeper asks before the first start
-# (right-click > Open, or `xattr -dr com.apple.quarantine xenadmin-rs.app`).
+# (right-click > Open, or `xattr -dr com.apple.quarantine "ReXen Center.app"`).
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=${1:-"$root/target/dist"}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
-name=xenadmin-rs
+. "$root/packaging/brand.sh"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -n 1)
 
 if [ -n "${TARGET:-}" ]; then
     cargo build --manifest-path "$root/Cargo.toml" --release --locked -p xenadmin --target "$TARGET"
-    bin="$root/target/$TARGET/release/xenadmin"
+    bin="$root/target/$TARGET/release/$brand_bin"
     arch=${TARGET%%-*}
 else
     cargo build --manifest-path "$root/Cargo.toml" --release --locked -p xenadmin
-    bin="$root/target/release/xenadmin"
+    bin="$root/target/release/$brand_bin"
     arch=$(uname -m)
 fi
 
@@ -32,7 +33,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # Icon: every size iconutil wants, from the 1024 px master.
-iconset="$work/$name.iconset"
+iconset="$work/$brand_id.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
     sips -z $size $size "$root/packaging/icons/icon-1024.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
@@ -40,13 +41,15 @@ for size in 16 32 128 256 512; do
     sips -z $double $double "$root/packaging/icons/icon-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 
-app="$out/$name.app"
+app="$out/$brand_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin" "$app/Contents/MacOS/xenadmin"
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/$name.icns"
+cp "$bin" "$app/Contents/MacOS/$brand_bin"
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/$brand_id.icns"
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
-sed -e "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
+sed -e "s/@VERSION@/$version/g" -e "s/@NAME@/$brand_name/g" -e "s/@SUBTITLE@/$brand_subtitle/g" \
+    -e "s/@ID@/$brand_id/g" -e "s/@BIN@/$brand_bin/g" \
+    "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Disk image: the app and a link to /Applications.
@@ -54,9 +57,9 @@ stage="$work/dmg"
 mkdir -p "$stage"
 cp -R "$app" "$stage/"
 ln -s /Applications "$stage/Applications"
-dmg="$out/$name-$version-macos-$arch.dmg"
+dmg="$out/$brand_id-$version-macos-$arch.dmg"
 rm -f "$dmg"
-hdiutil create -quiet -volname "$name $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+hdiutil create -quiet -volname "$brand_name $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
 
 echo "$app"
 echo "$dmg"

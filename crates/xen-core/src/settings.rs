@@ -9,7 +9,8 @@
 //!   (`host:port`), loaded into the [`TrustStore`] on start and rewritten
 //!   whenever the user trusts a certificate.
 //!
-//! [`ConfigPaths::resolve`] picks the directory: `XENADMIN_CONFIG_DIR` if set,
+//! [`ConfigPaths::resolve`] picks the directory: `REXENCENTER_CONFIG_DIR` (or
+//! the former `XENADMIN_CONFIG_DIR`) if set,
 //! otherwise a `settings` directory next to the executable when a `portable`
 //! marker file sits beside it (portable mode, as in the original), otherwise
 //! the platform's configuration directory
@@ -28,7 +29,11 @@ use serde::{Deserialize, Serialize};
 use xapi::{Fingerprint, TrustStore};
 
 /// Environment variable that overrides the configuration directory.
-pub const CONFIG_DIR_ENV: &str = "XENADMIN_CONFIG_DIR";
+pub const CONFIG_DIR_ENV: &str = "REXENCENTER_CONFIG_DIR";
+
+/// [`CONFIG_DIR_ENV`]'s former name, still honoured when the new one is
+/// not set (so scripts that isolate a profile keep doing so).
+pub const LEGACY_CONFIG_DIR_ENV: &str = "XENADMIN_CONFIG_DIR";
 
 /// Name of the marker file that turns on portable mode when it sits next to
 /// the executable.
@@ -72,11 +77,18 @@ impl ConfigPaths {
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
-        Self::resolve_with(
-            app_name,
-            std::env::var_os(CONFIG_DIR_ENV).map(PathBuf::from),
-            exe_dir.as_deref(),
-        )
+        let override_dir = [CONFIG_DIR_ENV, LEGACY_CONFIG_DIR_ENV]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .find(|v| !v.is_empty())
+            .map(PathBuf::from);
+        Self::resolve_with(app_name, override_dir, exe_dir.as_deref())
+    }
+
+    /// The platform's per-user configuration directory for `app_name`
+    /// (where [`ConfigLocation::User`] settings live).
+    pub fn user_dir(app_name: &str) -> Option<PathBuf> {
+        directories::ProjectDirs::from("", "", app_name).map(|d| d.config_dir().to_path_buf())
     }
 
     /// [`ConfigPaths::resolve`] with its inputs made explicit (for tests).
@@ -96,9 +108,8 @@ impl ConfigPaths {
                 location: ConfigLocation::Portable,
             });
         }
-        let dirs = directories::ProjectDirs::from("", "", app_name)?;
         Some(Self {
-            dir: dirs.config_dir().to_path_buf(),
+            dir: Self::user_dir(app_name)?,
             location: ConfigLocation::User,
         })
     }

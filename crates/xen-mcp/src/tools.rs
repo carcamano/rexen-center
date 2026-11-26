@@ -246,9 +246,10 @@ fn list_servers(server: &McpServer, args: &Args<'_>) -> ToolResult {
         out["not_saved"] = json!(server.unknown);
     }
     if server.slots.is_empty() {
-        out["hint"] = json!(
-            "No saved server is configured: save one with `xenadmin --add-server <address> --password-stdin` or in the window with Remember password."
-        );
+        out["hint"] = json!(format!(
+            "No saved server is configured: save one with `{} --add-server <address> --password-stdin` or in the window with Remember password.",
+            xen_core::branding::BINARY_NAME
+        ));
     }
     Ok(out)
 }

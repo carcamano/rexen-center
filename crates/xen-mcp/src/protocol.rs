@@ -14,6 +14,7 @@ use std::time::Instant;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
+use xen_core::branding;
 
 use crate::server::{Args, Call, McpServer, ToolError};
 
@@ -29,10 +30,16 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 /// JSON-RPC internal error: the server could not answer (not connected…).
 const INTERNAL_ERROR: i64 = -32603;
 
-const INSTRUCTIONS: &str = "Manages XCP-ng / XenServer pools through the xenadmin-rs console's saved servers. \
+/// What the server tells the client about itself (MCP `instructions`).
+fn instructions() -> String {
+    format!(
+        "Manages XCP-ng / XenServer pools through the {} console's saved servers. \
 Read tools answer from a live cache and change nothing. Objects are named by UUID or exact name. \
 Write tools (VM start, shutdown, reboot, suspend, resume and snapshots) exist only when enabled in mcp.toml, \
-touch only the VMs in the server's allow-list, and need confirm: true after the user agreed.";
+touch only the VMs in the server's allow-list, and need confirm: true after the user agreed.",
+        branding::PRODUCT_NAME
+    )
+}
 
 /// A JSON-RPC error.
 struct RpcError {
@@ -169,11 +176,12 @@ async fn handle(
                     "resources": {"listChanged": false, "subscribe": false},
                 },
                 "serverInfo": {
-                    "name": "xenadmin-rs",
-                    "title": "XenAdmin (Rust) MCP server",
+                    "name": branding::APP_ID,
+                    "title": format!("{} MCP server", branding::PRODUCT_NAME),
+                    "description": branding::SUBTITLE,
                     "version": env!("CARGO_PKG_VERSION"),
                 },
-                "instructions": INSTRUCTIONS,
+                "instructions": instructions(),
             }))
         }
         "ping" => Ok(json!({})),

@@ -1327,6 +1327,7 @@ impl XenAdminApp {
                     .size(28.0)
                     .strong(),
             );
+            ui.label(RichText::new(branding::SUBTITLE).italics());
             ui.add_space(4.0);
             ui.label(fill(
                 s.welcome_blurb,
@@ -2078,8 +2079,10 @@ impl XenAdminApp {
             .default_width(480.0)
             .show(ctx, |ui| {
                 ui.heading(branding::PRODUCT_NAME);
+                ui.label(RichText::new(branding::SUBTITLE).italics());
                 ui.label(fill(s.about_version, &[("version", branding::VERSION)]));
                 ui.label(s.about_summary);
+                ui.label(s.about_disclaimer);
                 ui.add_space(8.0);
                 ui.strong(s.about_credits_heading);
                 ui.label(s.about_credits);
@@ -2715,8 +2718,11 @@ mod tests {
         step_until(&mut harness, "about window", |h| {
             h.query_by_label(s.about_credits).is_some()
         });
+        assert_eq!(about_item, "About ReXen Center");
         harness.get_by_label(branding::PRODUCT_NAME);
+        harness.get_by_label("ReXen Center — XCP-ng Center, born again in Rust");
         harness.get_by_label(&fill(s.about_version, &[("version", branding::VERSION)]));
+        harness.get_by_label(s.about_disclaimer);
         harness.get_by_label(s.about_credits);
     }
 
@@ -3238,7 +3244,10 @@ mod tests {
             h.query_by_label(s.welcome_add_server).is_some()
                 && h.query_by_label(s.connect_title).is_none()
         });
-        harness.get_by_label(branding::PRODUCT_NAME);
+        // The product's name and subtitle head the page.
+        assert_eq!(branding::PRODUCT_NAME, "ReXen Center");
+        harness.get_by_label("ReXen Center");
+        harness.get_by_label(branding::SUBTITLE);
         harness.get_by_label(s.welcome_add_server).click();
         step_until(&mut harness, "connect dialog", |h| {
             h.query_by_label(s.connect_title).is_some()

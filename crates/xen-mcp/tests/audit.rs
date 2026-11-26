@@ -76,7 +76,7 @@ async fn every_call_is_audited_and_no_secret_leaks() {
         c.call(tool, args.clone()).await;
     }
     let uri = format!(
-        "xenadmin://server/{}/vms",
+        "rexencenter://server/{}/vms",
         xen_mcp::resources::encode(&address)
     );
     c.read_resource(&uri).await;

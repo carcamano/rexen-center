@@ -59,7 +59,8 @@
 //!   [`consoles`]: the external SSH and Remote Desktop consoles (F14a).
 //! * [`settings`], [`secrets`] and [`store`]: preferences and the saved
 //!   server list (TOML, with portable mode), pinned certificates, and
-//!   passwords in the OS keyring.
+//!   passwords in the OS keyring; [`migration`]: carrying them over from the
+//!   console's former name. [`branding`]: the product's name.
 //!
 //! This crate does not depend on any UI toolkit.
 
@@ -67,6 +68,7 @@ pub mod actions;
 pub mod ad;
 pub mod alerts;
 pub mod backend;
+pub mod branding;
 pub mod connection;
 pub mod console;
 pub mod consoles;
@@ -81,6 +83,7 @@ pub mod ha_run;
 pub mod memory;
 pub mod migrate;
 pub mod migrate_run;
+pub mod migration;
 pub mod model;
 pub mod network;
 pub mod network_run;

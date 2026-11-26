@@ -505,7 +505,7 @@ pub fn rdp_command(
         Platform::Windows => CommandLine::new("mstsc.exe", &[&target]),
         Platform::Linux => CommandLine::new("xfreerdp", &[&target]),
         Platform::MacOs => {
-            let path = temp.join(format!("xenadmin-{name}.rdp"));
+            let path = temp.join(format!("{}-{name}.rdp", crate::branding::APP_ID));
             let content =
                 format!("full address:s:{address}:{RDP_PORT}\r\nprompt for credentials:i:1\r\n");
             CommandLine {
@@ -618,7 +618,7 @@ mod tests {
             "xfreerdp /v:[fe80::2]"
         );
         let mac = rdp_command(&t, Platform::MacOs, "10.0.0.7", "u", temp);
-        assert_eq!(mac.to_string(), "open /tmp/x/xenadmin-u.rdp");
+        assert_eq!(mac.to_string(), "open /tmp/x/rexen-center-u.rdp");
         assert_eq!(
             mac.file.unwrap().1,
             "full address:s:10.0.0.7:3389\r\nprompt for credentials:i:1\r\n"
@@ -678,7 +678,7 @@ mod tests {
         );
         with_file.program = "/usr/bin/true".into();
         with_file.launch().unwrap();
-        let path = dir.join("xenadmin-u.rdp");
+        let path = dir.join("rexen-center-u.rdp");
         assert!(
             std::fs::read_to_string(&path)
                 .unwrap()

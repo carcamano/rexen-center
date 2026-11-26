@@ -1,11 +1,11 @@
 //! The resources: the same views as the read tools, addressed by URI.
 //!
-//! * `xenadmin://servers`: the configured servers (as `list_servers`);
-//! * `xenadmin://server/{server}/{list}`, where `{list}` is `pool`,
+//! * `rexencenter://servers`: the configured servers (as `list_servers`);
+//! * `rexencenter://server/{server}/{list}`, where `{list}` is `pool`,
 //!   `hosts`, `vms`, `srs`, `networks` or `alerts`;
-//! * `xenadmin://server/{server}/{kind}/{uuid}`, `{kind}` one of `pool`,
+//! * `rexencenter://server/{server}/{kind}/{uuid}`, `{kind}` one of `pool`,
 //!   `host`, `vm`, `sr`, `network`: one object's details;
-//! * `xenadmin://server/{server}/{host|vm}/{uuid}/performance`: the last
+//! * `rexencenter://server/{server}/{host|vm}/{uuid}/performance`: the last
 //!   hour of the default graphs' data, a point a minute.
 //!
 //! `{server}` is the saved address, percent-encoded (`10.0.0.1`,
@@ -62,7 +62,7 @@ pub fn decode(text: &str) -> Option<String> {
 /// `resources/list`: the server list, and each configured server's lists.
 pub fn list(server: &McpServer) -> Value {
     let mut resources = vec![json!({
-        "uri": "xenadmin://servers",
+        "uri": "rexencenter://servers",
         "name": "servers",
         "title": "Servers",
         "description": "The saved servers this MCP server uses and their status",
@@ -71,7 +71,7 @@ pub fn list(server: &McpServer) -> Value {
     for slot in &server.slots {
         for (list, _, description) in LISTS {
             resources.push(json!({
-                "uri": format!("xenadmin://server/{}/{list}", encode(&slot.address)),
+                "uri": format!("rexencenter://server/{}/{list}", encode(&slot.address)),
                 "name": format!("{} {list}", slot.address),
                 "title": format!("{description} ({})", slot.address),
                 "mimeType": "application/json",
@@ -85,14 +85,14 @@ pub fn list(server: &McpServer) -> Value {
 pub fn templates() -> Value {
     json!({"resourceTemplates": [
         {
-            "uriTemplate": "xenadmin://server/{server}/{kind}/{uuid}",
+            "uriTemplate": "rexencenter://server/{server}/{kind}/{uuid}",
             "name": "object",
             "title": "One object's details",
             "description": "kind: pool, host, vm, sr or network; server: the saved address, percent-encoded",
             "mimeType": "application/json",
         },
         {
-            "uriTemplate": "xenadmin://server/{server}/{kind}/{uuid}/performance",
+            "uriTemplate": "rexencenter://server/{server}/{kind}/{uuid}/performance",
             "name": "performance",
             "title": "Performance of a host or VM",
             "description": "kind: host or vm. The last hour of the default graphs' data, one point a minute",
@@ -104,13 +104,15 @@ pub fn templates() -> Value {
 /// `resources/read` of `uri`.
 pub async fn read(server: &McpServer, call: &mut Call, uri: &str) -> ToolResult {
     let invalid = || ToolError::Invalid(format!("unknown resource {uri}"));
-    if uri == "xenadmin://servers" {
+    if uri == "rexencenter://servers" {
         let empty = Map::new();
         return crate::tools::call_read(server, call, "list_servers", &Args(&empty))
             .await
             .unwrap_or_else(|| Err(invalid()));
     }
-    let rest = uri.strip_prefix("xenadmin://server/").ok_or_else(invalid)?;
+    let rest = uri
+        .strip_prefix("rexencenter://server/")
+        .ok_or_else(invalid)?;
     let parts: Vec<&str> = rest.split('/').collect();
     let address = decode(parts.first().copied().unwrap_or_default()).ok_or_else(invalid)?;
     let mut args = Map::new();

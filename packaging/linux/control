@@ -1,14 +1,15 @@
-Package: xenadmin-rs
+Package: @ID@
 Version: @VERSION@
 Architecture: @ARCH@
-Maintainer: xenadmin-rs maintainers
+Maintainer: ReXen Center maintainers
 Installed-Size: @SIZE@
 Depends: libc6, libgl1, libxkbcommon0
 Recommends: xdg-desktop-portal, gnome-keyring | kwalletmanager
 Section: admin
 Priority: optional
-Homepage: https://xcp-ng.org
-Description: Management console for XCP-ng pools
- A cross-platform rewrite of XCP-ng Center / XenAdmin 25.04 in Rust and
- egui: connect to XCP-ng hosts, manage VMs, storage, networks and pools,
- and open VM consoles.
+Description: @SUBTITLE@
+ @NAME@ is a cross-platform management console for XCP-ng, written in Rust
+ and egui and derived from XCP-ng Center / XenAdmin 25.04: connect to
+ XCP-ng hosts, manage VMs, storage, networks and pools, and open VM
+ consoles. An independent community project, not an official XCP-ng, Vates
+ or Citrix product.

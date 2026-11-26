@@ -1,9 +1,9 @@
 //! The command-line modes, which do not open the window:
 //!
 //! ```text
-//! xenadmin --add-server <address> [--user <name>] --password-stdin
-//! xenadmin --forget-server <address>
-//! xenadmin --mcp [--mcp-config <file>]
+//! rexencenter --add-server <address> [--user <name>] --password-stdin
+//! rexencenter --forget-server <address>
+//! rexencenter --mcp [--mcp-config <file>]
 //! ```
 //!
 //! `--add-server` saves the server (marked to reconnect on the next start)
@@ -93,19 +93,29 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     }
 }
 
-pub const USAGE: &str = "usage:
-  xenadmin                                   open the window
-  xenadmin --add-server <address> [--user <name>] --password-stdin
-                                             save a server and its password (read from stdin)
-  xenadmin --forget-server <address>         remove a saved server and its password
-  xenadmin --mcp [--mcp-config <file>]       run the MCP server on stdin/stdout (mcp.toml)";
+/// The `--help` text: the subtitle and the usage.
+pub fn usage() -> String {
+    let bin = xen_core::branding::BINARY_NAME;
+    let pad = " ".repeat(bin.len());
+    format!(
+        "{subtitle}
+
+usage:
+  {bin}                                   open the window
+  {bin} --add-server <address> [--user <name>] --password-stdin
+  {pad}                                   save a server and its password (read from stdin)
+  {bin} --forget-server <address>         remove a saved server and its password
+  {bin} --mcp [--mcp-config <file>]       run the MCP server on stdin/stdout (mcp.toml)",
+        subtitle = xen_core::branding::SUBTITLE,
+    )
+}
 
 /// Runs a provisioning command; returns the process exit code.
 pub fn run(cli: Cli, store: &Store) -> i32 {
     match cli {
         Cli::Gui | Cli::Mcp { .. } => 0,
         Cli::Help => {
-            println!("{USAGE}");
+            println!("{}", usage());
             0
         }
         Cli::AddServer { address, user } => {
@@ -193,6 +203,17 @@ mod tests {
         ));
         assert!(parse(&args(&["--mcp", "--mcp-config"])).is_err());
         assert!(parse(&args(&["--mcp", "--write"])).is_err());
+    }
+
+    #[test]
+    fn usage_names_the_program() {
+        let text = usage();
+        assert!(text.starts_with(xen_core::branding::SUBTITLE), "{text}");
+        assert!(
+            text.contains("  rexencenter --mcp [--mcp-config <file>]"),
+            "{text}"
+        );
+        assert!(!text.to_lowercase().contains("xenadmin"), "{text}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `xenadmin --mcp` over real standard input and output: stdout carries
+//! `rexencenter --mcp` over real standard input and output: stdout carries
 //! only protocol lines, the configuration folder is only read, the session
 //! ends when stdin closes, and a broken `mcp.toml` stops the start.
 
@@ -8,21 +8,22 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("xenadmin-mcp-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("rexencenter-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 fn mcp(dir: &std::path::Path, extra: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xenadmin"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rexencenter"));
     cmd.arg("--mcp")
         .args(extra)
-        .env("XENADMIN_CONFIG_DIR", dir)
+        .env("REXENCENTER_CONFIG_DIR", dir)
+        .env_remove("XENADMIN_CONFIG_DIR")
         // A service name nobody uses: nothing is saved under it.
         .env(
-            "XENADMIN_KEYRING_SERVICE",
-            format!("xenadmin-rs-test-mcp-{}", std::process::id()),
+            "REXENCENTER_KEYRING_SERVICE",
+            format!("rexen-center-test-mcp-{}", std::process::id()),
         )
         .env("RUST_LOG", "info")
         .stdin(Stdio::piped())
@@ -58,7 +59,11 @@ fn serves_mcp_on_stdio_and_only_reads_the_configuration() {
         "initialize",
         json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}),
     );
-    assert_eq!(init["result"]["serverInfo"]["name"], "xenadmin-rs");
+    assert_eq!(init["result"]["serverInfo"]["name"], "rexen-center");
+    assert_eq!(
+        init["result"]["serverInfo"]["title"],
+        "ReXen Center MCP server"
+    );
     let tools = ask(2, "tools/list", json!({}));
     let names: Vec<&str> = tools["result"]["tools"]
         .as_array()
@@ -105,6 +110,15 @@ fn serves_mcp_on_stdio_and_only_reads_the_configuration() {
     let audit = std::fs::read_to_string(dir.join("logs").join("mcp-audit.jsonl")).unwrap();
     assert_eq!(audit.lines().count(), 2, "{audit}");
     assert!(audit.contains("\"outcome\":\"refused\""));
+    // The MCP server's own log is named after the product too.
+    let logs: Vec<String> = std::fs::read_dir(dir.join("logs"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        logs.iter().any(|f| f.starts_with("rexen-center-mcp.")),
+        "{logs:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

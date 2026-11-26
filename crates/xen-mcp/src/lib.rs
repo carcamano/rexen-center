@@ -1,5 +1,5 @@
 //! A Model Context Protocol (MCP) server for the management console,
-//! started with `xenadmin --mcp`: an MCP client (an AI assistant) can read
+//! started with `rexencenter --mcp`: an MCP client (an AI assistant) can read
 //! the pools, hosts, VMs, storage, networks, alerts and performance data of
 //! the saved servers and, when the configuration allows it, start, stop and
 //! snapshot the VMs it names.

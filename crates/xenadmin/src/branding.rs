@@ -1,8 +1,8 @@
-//! Product identity. The final product name is not chosen yet: change it here
-//! and nowhere else.
+//! Product identity. The name, subtitle and identifiers are defined once, in
+//! [`xen_core::branding`] (shared with the MCP server and the packaging
+//! scripts); this module adds what only the desktop app needs.
 
-/// Product name shown in the window title, About box and login originator.
-pub const PRODUCT_NAME: &str = "xenadmin-rs";
+pub use xen_core::branding::{APP_ID, PRODUCT_NAME, SUBTITLE};
 
 /// The server platform the console manages (the original's
 /// `BrandManager.ProductBrand`).
@@ -19,5 +19,5 @@ pub const LICENSE_TEXT: &str = include_str!("../../../LICENSE");
 
 /// Login originator: identifies this client in the server's logs.
 pub fn originator() -> String {
-    format!("{PRODUCT_NAME}/{VERSION}")
+    format!("{APP_ID}/{VERSION}")
 }

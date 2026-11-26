@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 use xapi::{Endpoint, Ref};
+use xen_core::branding;
 use xen_core::{
     BackendHandle, BackendOptions, Command, ConnectionError, ConnectionId, ConnectionStatus,
     ConnectionView, Notification,
@@ -333,10 +334,10 @@ impl McpServer {
         match server {
             None => match self.slots.as_slice() {
                 [only] => Ok(only),
-                [] => Err(ToolError::Invalid(
-                    "no server is configured: save one with `xenadmin --add-server` or in the window"
-                        .into(),
-                )),
+                [] => Err(ToolError::Invalid(format!(
+                    "no server is configured: save one with `{} --add-server` or in the window",
+                    branding::BINARY_NAME
+                ))),
                 many => Err(ToolError::Invalid(format!(
                     "several servers are configured; pass 'server' (one of: {})",
                     many.iter()
@@ -451,12 +452,14 @@ async fn pump(server: std::sync::Weak<McpServer>, mut rx: UnboundedReceiver<Noti
             Notification::CertificatePrompt(p) => {
                 let text = match &p.previous {
                     Some(_) => format!(
-                        "the server's certificate changed (SHA-256 {}); refused. If the change is expected, connect once with the xenadmin window and trust it",
-                        p.fingerprint
+                        "the server's certificate changed (SHA-256 {}); refused. If the change is expected, connect once with the {} window and trust it",
+                        p.fingerprint,
+                        branding::PRODUCT_NAME
                     ),
                     None => format!(
-                        "the server's certificate is not trusted yet (SHA-256 {}); refused. Connect once with the xenadmin window and trust it",
-                        p.fingerprint
+                        "the server's certificate is not trusted yet (SHA-256 {}); refused. Connect once with the {} window and trust it",
+                        p.fingerprint,
+                        branding::PRODUCT_NAME
                     ),
                 };
                 tracing::warn!(server = %p.server, "untrusted certificate refused");
@@ -497,7 +500,10 @@ pub(crate) fn describe_connection_error(e: &ConnectionError) -> String {
     match e {
         ConnectionError::CertificateRejected => "certificate not trusted".into(),
         ConnectionError::PasswordRequired => {
-            "no saved password for this server (save it with `xenadmin --add-server` or Remember password in the window)".into()
+            format!(
+                "no saved password for this server (save it with `{} --add-server` or Remember password in the window)",
+                branding::BINARY_NAME
+            )
         }
         ConnectionError::PasswordUnavailable(e) => {
             format!("the saved password could not be read from the keyring: {e}")

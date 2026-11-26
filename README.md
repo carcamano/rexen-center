@@ -1,14 +1,22 @@
-# xenadmin-rs
+# ReXen Center
+
+**ReXen Center — XCP-ng Center, born again in Rust**
 
 A cross-platform (Windows, Linux, macOS) management console for XCP-ng pools,
 written in Rust with [egui](https://github.com/emilk/egui). It is a rewrite of
 XCP-ng Center / XenAdmin 25.04, whose C# source in `../original-source/` is kept
-untouched as the reference.
+untouched as the reference. ReXen Center is an independent community project:
+it is not an official XCP-ng, Vates or Citrix product and does not use their
+logos.
 
-`xenadmin-rs` is the product name for now. It is defined once, in
-`crates/xenadmin/src/branding.rs`.
+The name, the subtitle, the program name (`rexencenter`) and the identifier
+used for the settings folder, the keyring and the packages (`rexen-center`)
+are defined once, in `crates/xen-core/src/branding.rs`; the packaging
+scripts read them from there. Inside the source tree the workspace folder
+(`xenadmin-rs/`), the app's crate (`crates/xenadmin`, package `xenadmin`)
+and some internal names keep the console's former development name.
 
-**Status: phase F15 (an MCP server, `xenadmin --mcp`, for AI assistants;
+**Status: phase F15 (an MCP server, `rexencenter --mcp`, for AI assistants;
 see [MCP server](#mcp-server)) on top of F1–F14b (light and dark themes,
 the message catalogue for translations, native file dialogs, the home page
 and release packages, base, connection and model, detail tabs, VM and host
@@ -481,7 +489,7 @@ You need a stable Rust toolchain (edition 2024, Rust 1.88 or newer) from
 [rustup](https://rustup.rs).
 
 ```sh
-cargo run --release -p xenadmin
+cargo run --release -p xenadmin     # builds and starts the rexencenter program
 ```
 
 On Linux, eframe also needs the usual X11/Wayland development packages (for
@@ -514,9 +522,9 @@ notarized. The output folder defaults to `target/dist`.
 
 | Platform | Command | Result |
 |---|---|---|
-| macOS | `packaging/macos/build.sh [out-dir]` | `xenadmin-rs.app` and `xenadmin-rs-<version>-macos-<arch>.dmg` (Xcode command line tools only: `sips`, `iconutil`, `hdiutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
-| Linux | `packaging/linux/build.sh [out-dir]` | `xenadmin-rs-<version>-linux-<arch>.tar.gz`, plus a `.deb` when `dpkg-deb` is present and an AppImage when `appimagetool` is present |
-| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `xenadmin-rs-<version>-windows-<arch>.zip` (`xenadmin.exe`, `LICENSE`, `README.md`) |
+| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `sips`, `iconutil`, `hdiutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` when `dpkg-deb` is present and an AppImage when `appimagetool` is present |
+| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`) |
 
 The macOS package is built and started on the development machine; the
 Linux and Windows scripts have not been run yet. Gatekeeper asks before
@@ -530,12 +538,13 @@ exit code only (`--mcp` still works through the pipes its client gives it).
 
 The configuration folder is, in order of preference:
 
-1. `XENADMIN_CONFIG_DIR`, if set;
+1. `REXENCENTER_CONFIG_DIR`, if set (the former name
+   `XENADMIN_CONFIG_DIR` is still honoured when it is not);
 2. `settings/` next to the executable when a file named `portable` sits
    beside it (**portable mode**);
-3. the per-user folder: `~/Library/Application Support/xenadmin-rs` on
-   macOS, `%APPDATA%\xenadmin-rs\config` on Windows,
-   `$XDG_CONFIG_HOME/xenadmin-rs` on Linux.
+3. the per-user folder: `~/Library/Application Support/rexen-center` on
+   macOS, `%APPDATA%\rexen-center\config` on Windows,
+   `$XDG_CONFIG_HOME/rexen-center` on Linux.
 
 It holds `settings.toml` (preferences, including `theme` and `language`,
 and the saved servers),
@@ -544,21 +553,35 @@ and the saved servers),
 shows where it is.
 
 Passwords are never written to these files: with "Remember password" they go
-to the OS keyring under the service `xenadmin-rs`
-(`XENADMIN_KEYRING_SERVICE` overrides the name, e.g. to keep a test profile
-apart), one entry per `user@https://host:port`. Without it the password stays
+to the OS keyring under the service `rexen-center`
+(`REXENCENTER_KEYRING_SERVICE` overrides the name, e.g. to keep a test
+profile apart; the former `XENADMIN_KEYRING_SERVICE` is still honoured when
+it is not set), one entry per `user@https://host:port`. Without it the password stays
 in memory for the session only. Forgetting a server (right-click a saved
 server > Forget Server) deletes its saved password.
+
+**Upgrading from xenadmin-rs.** Before it was named ReXen Center the
+console kept its per-user settings in a `xenadmin-rs` folder (for example
+`~/Library/Application Support/xenadmin-rs`) and its passwords under the
+keyring service `xenadmin-rs`. On the first start, when the `rexen-center`
+folder does not exist yet and the `xenadmin-rs` one does, ReXen Center
+copies the old folder's files (saved servers, pinned certificates,
+preferences, `mcp.toml`; not the old logs) and copies each saved server's
+password to the new keyring service, then logs one line saying what it
+carried over. Nothing is deleted: the old folder and keyring entries stay
+in place. Once the new folder exists this never runs again, so later
+changes are not overwritten. A portable `settings/` folder and an explicit
+`REXENCENTER_CONFIG_DIR` are used as they are.
 
 Servers can also be saved from a script, without opening the window:
 
 ```sh
-printf '%s\n' "$PASSWORD" | xenadmin --add-server 192.0.2.10 --user root --password-stdin
-xenadmin --forget-server 192.0.2.10
+printf '%s\n' "$PASSWORD" | rexencenter --add-server 192.0.2.10 --user root --password-stdin
+rexencenter --forget-server 192.0.2.10
 ```
 
 Logging goes to stderr and the log folder; the level comes from `RUST_LOG`
-(default `warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info`). Passwords and session
+(default `warn,xapi=info,xen_core=info,xen_mcp=info,rexencenter=info`). Passwords and session
 references are never logged: calls are traced by method name only, and the
 client redacts the session reference XAPI puts in `SESSION_INVALID` errors.
 A test runs every flow at `trace` level and checks the log for both.
@@ -566,20 +589,20 @@ A test runs every flow at `trace` level and checks the log for both.
 
 ## MCP server
 
-`xenadmin --mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+`rexencenter --mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server instead of the window, so an MCP client (Claude Code, Claude
 Desktop, any other) can read the saved servers' pools, hosts, VMs, storage,
 networks, alerts and performance data and, only when the configuration
 allows it, start, stop and snapshot the VMs it names. It speaks JSON-RPC
 over standard input and output (protocol revisions 2024-11-05 to
-2025-11-25); logs go to stderr and `logs/xenadmin-rs-mcp.*.log`, never to
+2025-11-25); logs go to stderr and `logs/rexen-center-mcp.*.log`, never to
 stdout.
 
 It uses the window's configuration folder, read only:
 
 - it connects to the **saved servers** (all of them, or those `mcp.toml`
   lists) with their **saved passwords** from the keyring. Save one in the
-  window with "Remember password", or with `xenadmin --add-server`;
+  window with "Remember password", or with `rexencenter --add-server`;
 - it accepts only **pinned certificates** (`known_servers.toml`): an
   unknown or changed certificate is refused and `list_servers` says why.
   Connect once in the window to trust it;
@@ -593,23 +616,24 @@ Claude Code (the server then starts with each session; `--scope user`
 makes it available in every project):
 
 ```sh
-claude mcp add --scope user xenadmin -- /path/to/xenadmin --mcp
+claude mcp add --scope user rexen-center -- /path/to/rexencenter --mcp
 # with another configuration folder or keyring service:
-claude mcp add --scope user xenadmin \
-  -e XENADMIN_CONFIG_DIR=/path/to/config -e XENADMIN_KEYRING_SERVICE=xenadmin-rs \
-  -- /path/to/xenadmin --mcp
+claude mcp add --scope user rexen-center \
+  -e REXENCENTER_CONFIG_DIR=/path/to/config -e REXENCENTER_KEYRING_SERVICE=rexen-center \
+  -- /path/to/rexencenter --mcp
 ```
 
 On macOS the binary of the packaged app is
-`/Applications/xenadmin-rs.app/Contents/MacOS/xenadmin`. Other clients take
+`/Applications/ReXen Center.app/Contents/MacOS/rexencenter` (quote it, it has
+a space). Other clients take
 the same command in their JSON configuration (a project's `.mcp.json`,
 Claude Desktop's `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "xenadmin": {
-      "command": "/path/to/xenadmin",
+    "rexen-center": {
+      "command": "/path/to/rexencenter",
       "args": ["--mcp"]
     }
   }
@@ -681,11 +705,11 @@ SR or network is a tool.
 
 ### Resources
 
-The same views, as JSON: `xenadmin://servers`;
-`xenadmin://server/{server}/{list}` with `{list}` one of `pool`, `hosts`,
+The same views, as JSON: `rexencenter://servers`;
+`rexencenter://server/{server}/{list}` with `{list}` one of `pool`, `hosts`,
 `vms`, `srs`, `networks`, `alerts` (listed by `resources/list`); and the
-templates `xenadmin://server/{server}/{kind}/{uuid}` (`kind`: pool, host,
-vm, sr, network) and `xenadmin://server/{server}/{host|vm}/{uuid}/performance`
+templates `rexencenter://server/{server}/{kind}/{uuid}` (`kind`: pool, host,
+vm, sr, network) and `rexencenter://server/{server}/{host|vm}/{uuid}/performance`
 (the last hour, a point a minute). `{server}` is the saved address,
 percent-encoded.
 
@@ -721,8 +745,10 @@ catalogue with `XENADMIN_BLESS=1 cargo test -p xenadmin english_catalogue`
 (the test fails while `locales/en.toml` is out of date). Native file
 dialogs never open under test: tests queue the path the dialog returns.
 
-The tests need no XCP-ng host and never touch the OS keyring (they use an
-in-memory store). `crates/xapi-mock` is a JSON-RPC server loaded
+The tests need no XCP-ng host and never touch the owner's settings or
+saved passwords: they use an in-memory store, and the tests that start the
+program itself (`crates/xenadmin/tests/`) give it a scratch configuration
+folder (or a scratch `HOME`) and keyring service names nobody uses. `crates/xapi-mock` is a JSON-RPC server loaded
 with fixtures from `tests/fixtures/`: `records.json`, a small hand-written lab
 pool (two hosts, one in maintenance mode, VMs in several power states,
 templates, a snapshot, local, NFS and ISO storage with a broken SR, the
@@ -956,8 +982,16 @@ end to end:
   down and snapshotted (taken, reverted, deleted); the audit log's line for
   every call; and no password or session reference in any response, the
   audit log or the trace log. `crates/xenadmin/tests/mcp_stdio.rs` runs
-  `xenadmin --mcp` itself over real stdin and stdout and checks that the
+  `rexencenter --mcp` itself over real stdin and stdout and checks that the
   configuration folder is only read;
+- the move from the former name (`crates/xen-core/src/migration.rs`, and
+  `crates/xenadmin/tests/migration.rs` end to end with the real program):
+  only the old folder (copied with its saved passwords, logs left out, the
+  old folder and keyring entries untouched), both folders, only the new one
+  and none; a second start that neither migrates again nor overwrites newer
+  settings; a locked keyring; and the product's name and subtitle in the
+  window title, the About box, the home page, `--help` and the MCP server's
+  `serverInfo`;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -1159,8 +1193,8 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`), GPUs, USB, vTPMs and memory settings (`devices`, `memory`, `devices_run`), the external SSH and Remote Desktop consoles (`consoles`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
-| `crates/xen-mcp` | The MCP server (`xenadmin --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
-| `crates/xenadmin` | The egui/eframe desktop app; its message catalogue's English export and translation guide are in `locales/`. |
+| `crates/xen-mcp` | The MCP server (`rexencenter --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
+| `crates/xenadmin` | The egui/eframe desktop app, built as the `rexencenter` program; its message catalogue's English export and translation guide are in `locales/`. |
 | `packaging/` | The release package scripts and the generic icon (not a crate). |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 

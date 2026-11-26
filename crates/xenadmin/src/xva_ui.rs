@@ -155,7 +155,11 @@ pub(crate) fn xva_path(folder: &str, name: &str) -> PathBuf {
 
 /// `CheckPermissions`: a file can be made in `dir`.
 pub(crate) fn writable(dir: &Path) -> bool {
-    let touch = dir.join(format!("_xenadmin-rs-{}", std::process::id()));
+    let touch = dir.join(format!(
+        "_{}-{}",
+        crate::branding::APP_ID,
+        std::process::id()
+    ));
     let ok = std::fs::File::create(&touch).is_ok();
     let _ = std::fs::remove_file(&touch);
     ok

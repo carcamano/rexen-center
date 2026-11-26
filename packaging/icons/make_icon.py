@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws the generic xenadmin-rs application icon (no third-party logo):
+"""Draws the generic ReXen Center application icon (no third-party logo):
 a rounded slate square with three white server units and status lights.
 
 Usage: python3 make_icon.py <size> <out.png>

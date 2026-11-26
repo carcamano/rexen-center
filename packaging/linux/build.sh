@@ -1,9 +1,10 @@
 #!/bin/sh
 # Builds the Linux packages (not built or run on the development machine;
 # see README.md):
-#   <out>/xenadmin-rs-<version>-linux-<arch>.tar.gz   always
-#   <out>/xenadmin-rs_<version>_<debarch>.deb          when dpkg-deb exists
-#   <out>/xenadmin-rs-<version>-<arch>.AppImage        when appimagetool exists
+#   <out>/rexen-center-<version>-linux-<arch>.tar.gz   always
+#   <out>/rexen-center_<version>_<debarch>.deb          when dpkg-deb exists
+#   <out>/rexen-center-<version>-<arch>.AppImage        when appimagetool exists
+# (the names come from crates/xen-core/src/branding.rs, see ../brand.sh).
 #
 # Usage: packaging/linux/build.sh [out-dir]      (default: target/dist)
 #
@@ -19,26 +20,27 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 out=${1:-"$root/target/dist"}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
-name=xenadmin-rs
+. "$root/packaging/brand.sh"
+name=$brand_id
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -n 1)
 arch=$(uname -m)
 
 cargo build --manifest-path "$root/Cargo.toml" --release --locked -p xenadmin
-bin="$root/target/release/xenadmin"
+bin="$root/target/release/$brand_bin"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # A /usr-style tree shared by the tarball, the .deb and the AppImage.
 tree="$work/tree"
-install -Dm755 "$bin" "$tree/usr/bin/xenadmin"
+install -Dm755 "$bin" "$tree/usr/bin/$brand_bin"
 install -Dm644 "$root/packaging/linux/$name.desktop" "$tree/usr/share/applications/$name.desktop"
 install -Dm644 "$root/packaging/icons/icon-1024.png" "$tree/usr/share/icons/hicolor/1024x1024/apps/$name.png"
 install -Dm644 "$root/crates/xenadmin/assets/icon-256.png" "$tree/usr/share/icons/hicolor/256x256/apps/$name.png"
 install -Dm644 "$root/LICENSE" "$tree/usr/share/doc/$name/copyright"
 install -Dm644 "$root/README.md" "$tree/usr/share/doc/$name/README.md"
 
-# Tarball: unpack anywhere, run bin/xenadmin.
+# Tarball: unpack anywhere, run bin/rexencenter.
 tar_dir="$work/$name-$version"
 mkdir -p "$tar_dir"
 cp -R "$tree/usr/." "$tar_dir/"
@@ -52,6 +54,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     mkdir -p "$deb/DEBIAN"
     size=$(du -sk "$deb/usr" | cut -f1)
     sed -e "s/@VERSION@/$version/" -e "s/@ARCH@/$debarch/" -e "s/@SIZE@/$size/" \
+        -e "s/@ID@/$brand_id/" -e "s/@NAME@/$brand_name/" -e "s/@SUBTITLE@/$brand_subtitle/" \
         "$root/packaging/linux/control" > "$deb/DEBIAN/control"
     dpkg-deb --root-owner-group --build "$deb" "$out/${name}_${version}_${debarch}.deb"
     echo "$out/${name}_${version}_${debarch}.deb"
@@ -62,7 +65,7 @@ if command -v appimagetool >/dev/null 2>&1; then
     cp -R "$tree" "$appdir"
     cp "$root/packaging/linux/$name.desktop" "$appdir/$name.desktop"
     cp "$root/crates/xenadmin/assets/icon-256.png" "$appdir/$name.png"
-    printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/usr/bin/xenadmin" "$@"\n' > "$appdir/AppRun"
+    printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/usr/bin/%s" "$@"\n' "$brand_bin" > "$appdir/AppRun"
     chmod +x "$appdir/AppRun"
     ARCH=$arch appimagetool "$appdir" "$out/$name-$version-$arch.AppImage"
     echo "$out/$name-$version-$arch.AppImage"
