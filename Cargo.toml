@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xen-rrd", "crates/xapi-mock", "crates/xenadmin"]
+members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xen-rrd", "crates/xapi-mock", "crates/xen-mcp", "crates/xenadmin"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ xen-core = { path = "crates/xen-core" }
 xapi-mock = { path = "crates/xapi-mock" }
 xen-vnc = { path = "crates/xen-vnc" }
 xen-rrd = { path = "crates/xen-rrd" }
+xen-mcp = { path = "crates/xen-mcp" }
 
 arc-swap = "1.7"
 bytes = "1"

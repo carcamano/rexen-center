@@ -2,7 +2,9 @@
 //! daily-rotated file in its `logs` folder (the last 7 days are kept).
 //!
 //! The level comes from `RUST_LOG` (default
-//! `warn,xapi=info,xen_core=info,xenadmin=info`). Passwords and session
+//! `warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info`). The MCP
+//! server (`--mcp`) logs to its own file (`xenadmin-rs-mcp.*.log`) and to
+//! stderr, never to stdout, which carries the protocol. Passwords and session
 //! references are never logged: calls are traced by method name only, the
 //! password type redacts itself and the XAPI client redacts session
 //! references out of `SESSION_INVALID` errors.
@@ -14,14 +16,18 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use xen_core::ConfigPaths;
 
-const DEFAULT_FILTER: &str = "warn,xapi=info,xen_core=info,xenadmin=info";
+const DEFAULT_FILTER: &str = "warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info";
 
-/// Installs the global subscriber. Keep the returned guard alive until exit
-/// so buffered file output is flushed.
-pub fn init(paths: Option<&ConfigPaths>) -> Option<WorkerGuard> {
+/// Installs the global subscriber, with log files named `file_prefix`.
+/// Keep the returned guard alive until exit so buffered file output is
+/// flushed.
+pub fn init(paths: Option<&ConfigPaths>, file_prefix: &str) -> Option<WorkerGuard> {
     let filter =
         || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    // Colours only on a terminal (an MCP client captures stderr as text).
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr());
     let stderr = tracing_subscriber::fmt::layer()
+        .with_ansi(ansi)
         .with_writer(std::io::stderr)
         .with_filter(filter());
     let file = paths.and_then(|p| {
@@ -31,7 +37,7 @@ pub fn init(paths: Option<&ConfigPaths>) -> Option<WorkerGuard> {
         }
         RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
-            .filename_prefix(crate::branding::PRODUCT_NAME)
+            .filename_prefix(file_prefix)
             .filename_suffix("log")
             .max_log_files(7)
             .build(p.log_dir())

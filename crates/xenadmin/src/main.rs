@@ -92,12 +92,12 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
     let paths = ConfigPaths::resolve(branding::PRODUCT_NAME);
-    let _log_guard = logging::init(paths.as_ref());
+    if let cli::Cli::Mcp { config } = command {
+        std::process::exit(run_mcp(paths, config));
+    }
+    let _log_guard = logging::init(paths.as_ref(), branding::PRODUCT_NAME);
 
-    let service = std::env::var(KEYRING_SERVICE_ENV)
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| branding::PRODUCT_NAME.to_owned());
+    let service = keyring_service();
     let store = match paths {
         Some(paths) => {
             tracing::info!(dir = %paths.dir.display(), location = ?paths.location, "configuration");
@@ -159,6 +159,81 @@ fn main() -> eframe::Result<()> {
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     result
+}
+
+/// The keyring service name: `xenadmin-rs`, or `XENADMIN_KEYRING_SERVICE`.
+fn keyring_service() -> String {
+    std::env::var(KEYRING_SERVICE_ENV)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| branding::PRODUCT_NAME.to_owned())
+}
+
+/// `--mcp`: the MCP server on stdin/stdout, with the saved servers, pins
+/// and keyring read only; returns the exit code.
+fn run_mcp(paths: Option<ConfigPaths>, config: Option<std::path::PathBuf>) -> i32 {
+    let _log_guard = logging::init(paths.as_ref(), &format!("{}-mcp", branding::PRODUCT_NAME));
+    let Some(paths) = paths else {
+        eprintln!("no configuration directory: the MCP server needs the saved servers");
+        return 1;
+    };
+    let config_file = config.unwrap_or_else(|| paths.dir.join(xen_mcp::config::CONFIG_FILE));
+    let config = match xen_mcp::McpConfig::load(&config_file) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "MCP configuration");
+            eprintln!("invalid MCP configuration: {e}");
+            return 2;
+        }
+    };
+    tracing::info!(
+        dir = %paths.dir.display(),
+        config = %config_file.display(),
+        writes = config.writes.enabled,
+        "MCP server starting"
+    );
+    let audit = match xen_mcp::AuditLog::in_dir(&paths.log_dir()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!(
+                "cannot open the audit log in {}: {e}",
+                paths.log_dir().display()
+            );
+            return 1;
+        }
+    };
+    let secrets: Arc<dyn SecretStore> = Arc::new(xen_mcp::ReadOnlySecrets(
+        KeyringSecretStore::new(keyring_service()),
+    ));
+    let store = Arc::new(Store::open_read_only(paths, secrets));
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("xen-mcp")
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("failed to start the async runtime: {e}");
+            return 1;
+        }
+    };
+    let run = xen_mcp::run_stdio(
+        store,
+        branding::originator(),
+        config,
+        audit,
+        shutdown_signal(),
+    );
+    let code = match runtime.block_on(run) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::error!(error = %e, "MCP transport");
+            1
+        }
+    };
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    code
 }
 
 /// The generic application icon (`packaging/icons/make_icon.py`).

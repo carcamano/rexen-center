@@ -120,6 +120,14 @@ pub enum Command {
         connection: ConnectionId,
         request: ActionRequest,
     },
+    /// [`Command::Action`], answering with the id of the history entry
+    /// that follows it (for callers that wait for its outcome, such as the
+    /// MCP server).
+    ActionTracked {
+        connection: ConnectionId,
+        request: ActionRequest,
+        reply: oneshot::Sender<OperationId>,
+    },
     /// Run an operation as another user (role elevation): log in with
     /// `username`/`password`, check that this user may run it, and run it
     /// with that session (logged out afterwards). The outcome of the check
@@ -602,6 +610,15 @@ impl BackendHandle {
         self.notifications.recv().await
     }
 
+    /// Takes the notification stream, so another task can drain it while
+    /// this handle is shared (`send` and `state` only need `&self`).
+    /// Afterwards [`BackendHandle::try_recv`] and [`BackendHandle::recv`]
+    /// see nothing.
+    pub fn take_notifications(&mut self) -> mpsc::UnboundedReceiver<Notification> {
+        let (_, closed) = mpsc::unbounded_channel();
+        std::mem::replace(&mut self.notifications, closed)
+    }
+
     /// Logs out and stops the backend, waiting at most `timeout`. Blocking;
     /// call from a thread that is not running the tokio runtime.
     pub fn shutdown_blocking(&self, timeout: Duration) {
@@ -1049,6 +1066,21 @@ async fn run(shared: Arc<Shared>, mut commands: mpsc::UnboundedReceiver<Command>
                     .and_then(|t| active.get(&t))
                     .and_then(|c| slot_get(&c.session));
                 operations::start_action_with(&shared, connection, session, target, request, None);
+            }
+            Command::ActionTracked {
+                connection,
+                request,
+                reply,
+            } => {
+                let session = active.get(&connection).and_then(|c| slot_get(&c.session));
+                let target = request
+                    .target_connection()
+                    .and_then(|t| active.get(&t))
+                    .and_then(|c| slot_get(&c.session));
+                let op = operations::start_action_with(
+                    &shared, connection, session, target, request, None,
+                );
+                let _ = reply.send(op);
             }
             Command::RunElevated {
                 connection,

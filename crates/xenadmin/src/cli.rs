@@ -1,8 +1,9 @@
-//! Command-line provisioning of saved servers, without opening the window:
+//! The command-line modes, which do not open the window:
 //!
 //! ```text
 //! xenadmin --add-server <address> [--user <name>] --password-stdin
 //! xenadmin --forget-server <address>
+//! xenadmin --mcp [--mcp-config <file>]
 //! ```
 //!
 //! `--add-server` saves the server (marked to reconnect on the next start)
@@ -10,6 +11,11 @@
 //! the connect dialog does with "Remember password". The certificate is
 //! still confirmed in the window on first connection. `--forget-server`
 //! removes the server and its saved password.
+//!
+//! `--mcp` runs the Model Context Protocol server on standard input and
+//! output instead of the window (the `xen-mcp` crate); its configuration is
+//! `mcp.toml` in the configuration folder unless `--mcp-config` names
+//! another file.
 
 use std::io::BufRead;
 
@@ -26,6 +32,10 @@ pub enum Cli {
     },
     ForgetServer {
         address: String,
+    },
+    /// Serve MCP on stdio; `config` overrides `mcp.toml`'s location.
+    Mcp {
+        config: Option<std::path::PathBuf>,
     },
     Help,
 }
@@ -67,6 +77,18 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 None => Ok(Cli::ForgetServer { address }),
             }
         }
+        "--mcp" => {
+            let mut config = None;
+            while let Some(arg) = iter.next() {
+                match arg.as_str() {
+                    "--mcp-config" => {
+                        config = Some(iter.next().ok_or("--mcp-config needs a file")?.into());
+                    }
+                    other => return Err(format!("unexpected argument {other}")),
+                }
+            }
+            Ok(Cli::Mcp { config })
+        }
         other => Err(format!("unknown argument {other} (see --help)")),
     }
 }
@@ -75,12 +97,13 @@ pub const USAGE: &str = "usage:
   xenadmin                                   open the window
   xenadmin --add-server <address> [--user <name>] --password-stdin
                                              save a server and its password (read from stdin)
-  xenadmin --forget-server <address>         remove a saved server and its password";
+  xenadmin --forget-server <address>         remove a saved server and its password
+  xenadmin --mcp [--mcp-config <file>]       run the MCP server on stdin/stdout (mcp.toml)";
 
 /// Runs a provisioning command; returns the process exit code.
 pub fn run(cli: Cli, store: &Store) -> i32 {
     match cli {
-        Cli::Gui => 0,
+        Cli::Gui | Cli::Mcp { .. } => 0,
         Cli::Help => {
             println!("{USAGE}");
             0
@@ -160,6 +183,16 @@ mod tests {
             Ok(Cli::ForgetServer { .. })
         ));
         assert!(parse(&args(&["--bogus"])).is_err());
+        assert!(matches!(
+            parse(&args(&["--mcp"])),
+            Ok(Cli::Mcp { config: None })
+        ));
+        assert!(matches!(
+            parse(&args(&["--mcp", "--mcp-config", "/tmp/m.toml"])),
+            Ok(Cli::Mcp { config: Some(ref p) }) if p.ends_with("m.toml")
+        ));
+        assert!(parse(&args(&["--mcp", "--mcp-config"])).is_err());
+        assert!(parse(&args(&["--mcp", "--write"])).is_err());
     }
 
     #[test]

@@ -16,6 +16,9 @@ use crate::settings::{self, ConfigPaths, Preferences, SavedServer, Settings};
 /// Settings, known servers and passwords.
 pub struct Store {
     paths: Option<ConfigPaths>,
+    /// Never write the settings or known servers back (see
+    /// [`Store::open_read_only`]).
+    read_only: bool,
     settings: Mutex<Settings>,
     trust: TrustStore,
     secrets: Arc<dyn SecretStore>,
@@ -59,10 +62,42 @@ impl Store {
         }
         Self {
             paths: Some(paths),
+            read_only: false,
             settings: Mutex::new(settings),
             trust,
             secrets,
         }
+    }
+
+    /// [`Store::open`] for a process that only reads the configuration (the
+    /// MCP server): the settings and known servers are loaded, changes stay
+    /// in memory and nothing is written back to `paths`, nor is a malformed
+    /// `settings.toml` renamed. Secrets go through `secrets` as given (wrap
+    /// it to refuse writes as well).
+    pub fn open_read_only(paths: ConfigPaths, secrets: Arc<dyn SecretStore>) -> Self {
+        let settings = settings::load_settings(&paths).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the settings; using defaults");
+            Settings::default()
+        });
+        let trust = TrustStore::new();
+        match settings::load_known_servers(&paths, &trust) {
+            Ok(n) => {
+                tracing::info!(pinned = n, dir = %paths.dir.display(), "settings loaded (read only)")
+            }
+            Err(e) => tracing::warn!(error = %e, "could not read the known servers"),
+        }
+        Self {
+            paths: Some(paths),
+            read_only: true,
+            settings: Mutex::new(settings),
+            trust,
+            secrets,
+        }
+    }
+
+    /// Whether changes are kept in memory only.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// A store that writes nothing to disk.
@@ -74,6 +109,7 @@ impl Store {
     pub fn in_memory_with(settings: Settings, secrets: Arc<dyn SecretStore>) -> Self {
         Self {
             paths: None,
+            read_only: false,
             settings: Mutex::new(settings),
             trust: TrustStore::new(),
             secrets,
@@ -99,7 +135,7 @@ impl Store {
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) -> Settings {
         let mut settings = self.lock();
         f(&mut settings);
-        if let Some(paths) = &self.paths
+        if let Some(paths) = self.paths.as_ref().filter(|_| !self.read_only)
             && let Err(e) = settings::save_settings(paths, &settings)
         {
             tracing::warn!(error = %e, "could not save the settings");
@@ -115,7 +151,7 @@ impl Store {
     /// Pins `fingerprint` for `authority` and saves the known servers.
     pub fn trust_certificate(&self, authority: &str, fingerprint: Fingerprint) {
         self.trust.trust(authority, fingerprint);
-        if let Some(paths) = &self.paths
+        if let Some(paths) = self.paths.as_ref().filter(|_| !self.read_only)
             && let Err(e) = settings::save_known_servers(paths, &self.trust)
         {
             tracing::warn!(error = %e, "could not save the known servers");
@@ -192,5 +228,47 @@ impl Store {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Settings> {
         self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_read_only_store_writes_nothing_back() {
+        let dir = std::env::temp_dir().join(format!(
+            "xen-core-store-ro-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = ConfigPaths::at(&dir);
+        let settings_text =
+            "[[server]]\naddress = \"10.0.0.1\"\nusername = \"root\"\nreconnect = false\n";
+        std::fs::write(paths.settings_file(), settings_text).unwrap();
+        let fp = Fingerprint::of_der(b"one");
+        let known = format!("[servers]\n\"10.0.0.1:443\" = \"{fp}\"\n");
+        std::fs::write(paths.known_servers_file(), &known).unwrap();
+
+        let store = Store::open_read_only(paths.clone(), Arc::new(MemorySecretStore::new()));
+        assert!(store.is_read_only());
+        assert_eq!(store.settings().servers.len(), 1);
+        assert!(store.trust().get("10.0.0.1:443").is_some(), "pins loaded");
+
+        let after = store.remember_server(None, "10.0.0.2", "root");
+        assert_eq!(after.servers.len(), 2, "kept in memory");
+        store.set_reconnect("10.0.0.1", true);
+        store.trust_certificate("10.0.0.2:443", Fingerprint::of_der(b"two"));
+        assert_eq!(
+            std::fs::read_to_string(paths.settings_file()).unwrap(),
+            settings_text
+        );
+        assert_eq!(
+            std::fs::read_to_string(paths.known_servers_file()).unwrap(),
+            known
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

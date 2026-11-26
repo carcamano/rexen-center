@@ -5118,6 +5118,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "xen-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "xapi",
+ "xapi-mock",
+ "xen-core",
+ "xen-rrd",
+]
+
+[[package]]
 name = "xen-rrd"
 version = "0.1.0"
 dependencies = [
@@ -5162,6 +5178,7 @@ dependencies = [
  "xapi",
  "xapi-mock",
  "xen-core",
+ "xen-mcp",
  "xen-rrd",
  "xen-vnc",
 ]

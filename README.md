@@ -8,9 +8,10 @@ untouched as the reference.
 `xenadmin-rs` is the product name for now. It is defined once, in
 `crates/xenadmin/src/branding.rs`.
 
-**Status: phase F14b (light and dark themes, the message catalogue for
-translations, native file dialogs, the home page and release packages) on
-top of F1–F14a (base, connection and model, detail tabs, VM and host
+**Status: phase F15 (an MCP server, `xenadmin --mcp`, for AI assistants;
+see [MCP server](#mcp-server)) on top of F1–F14b (light and dark themes,
+the message catalogue for translations, native file dialogs, the home page
+and release packages, base, connection and model, detail tabs, VM and host
 operations, VNC console, performance graphs and alerts, VM creation,
 templates, snapshots and disks, storage repositories, networking, pools
 and pool and server properties, high availability, Active Directory and
@@ -523,7 +524,7 @@ the first start of the unsigned app (right-click > Open). On Linux the file
 dialogs use the XDG desktop portal (`xdg-desktop-portal` with a GTK or KDE
 backend). Windows release builds have no console window, so the
 command-line modes (`--add-server`, `--forget-server`) report through their
-exit code only.
+exit code only (`--mcp` still works through the pipes its client gives it).
 
 ## Settings, passwords and logs
 
@@ -557,11 +558,156 @@ xenadmin --forget-server 192.0.2.10
 ```
 
 Logging goes to stderr and the log folder; the level comes from `RUST_LOG`
-(default `warn,xapi=info,xen_core=info,xenadmin=info`). Passwords and session
+(default `warn,xapi=info,xen_core=info,xen_mcp=info,xenadmin=info`). Passwords and session
 references are never logged: calls are traced by method name only, and the
 client redacts the session reference XAPI puts in `SESSION_INVALID` errors.
 A test runs every flow at `trace` level and checks the log for both.
 `Ctrl+C` or `SIGTERM` close the app normally, logging out of every server.
+
+## MCP server
+
+`xenadmin --mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server instead of the window, so an MCP client (Claude Code, Claude
+Desktop, any other) can read the saved servers' pools, hosts, VMs, storage,
+networks, alerts and performance data and, only when the configuration
+allows it, start, stop and snapshot the VMs it names. It speaks JSON-RPC
+over standard input and output (protocol revisions 2024-11-05 to
+2025-11-25); logs go to stderr and `logs/xenadmin-rs-mcp.*.log`, never to
+stdout.
+
+It uses the window's configuration folder, read only:
+
+- it connects to the **saved servers** (all of them, or those `mcp.toml`
+  lists) with their **saved passwords** from the keyring. Save one in the
+  window with "Remember password", or with `xenadmin --add-server`;
+- it accepts only **pinned certificates** (`known_servers.toml`): an
+  unknown or changed certificate is refused and `list_servers` says why.
+  Connect once in the window to trust it;
+- it never changes the saved list, the pins or the keyring, and never sends
+  a password, session reference or keyring detail to the client, the log
+  or the audit log.
+
+### Registering it in a client
+
+Claude Code (the server then starts with each session; `--scope user`
+makes it available in every project):
+
+```sh
+claude mcp add --scope user xenadmin -- /path/to/xenadmin --mcp
+# with another configuration folder or keyring service:
+claude mcp add --scope user xenadmin \
+  -e XENADMIN_CONFIG_DIR=/path/to/config -e XENADMIN_KEYRING_SERVICE=xenadmin-rs \
+  -- /path/to/xenadmin --mcp
+```
+
+On macOS the binary of the packaged app is
+`/Applications/xenadmin-rs.app/Contents/MacOS/xenadmin`. Other clients take
+the same command in their JSON configuration (a project's `.mcp.json`,
+Claude Desktop's `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "xenadmin": {
+      "command": "/path/to/xenadmin",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+`--mcp-config <file>` reads another file than `mcp.toml`. On Windows the
+release build has no console window, but its standard input and output
+still work through the pipes an MCP client gives it.
+
+### Configuration: `mcp.toml`
+
+In the configuration folder, next to `settings.toml`. Without the file the
+server connects to every saved server and is **read only**.
+
+```toml
+# Saved servers to connect to (addresses as in the server list).
+# Empty or absent: all of them.
+servers = ["192.0.2.10"]
+
+[writes]
+# The write tools exist only when this is true.
+enabled = false
+
+# Per server, the only VMs the write tools may touch: UUIDs, or names that
+# exactly one VM has. A server without an entry allows no write.
+[writes.allow]
+"192.0.2.10" = ["test-vm-01", "0b0b0b0b-0000-4000-8000-000000000003"]
+```
+
+An unknown key (a misspelt `enable = true`) stops the start with an error
+instead of leaving the server in another mode than intended. Optional
+timings: `connect_wait_seconds` (30), `operation_timeout_seconds` (600),
+`performance_wait_seconds` (60).
+
+### Tools
+
+Objects are named by UUID or exact name (a name several objects share is
+refused, listing their UUIDs). `server` (a saved address, pool name or pool
+UUID) may be left out when one server is configured; list tools without it
+cover every configured server. Read tools answer from the live cache the
+connection keeps through `event.from`, so they make no call to the server;
+`get_performance` reads the RRDs as the Performance tab does.
+
+| Tool | What it returns or does |
+|---|---|
+| `list_servers` | The configured servers: status (or why one cannot connect), pool, API version, the write switch and allow-list |
+| `get_pool` | Pool: coordinator, hosts, VM counts, default SR, HA |
+| `list_hosts`, `get_host` | Hosts: address, enabled, live, maintenance mode, memory, CPUs, versions, NICs, storage, running VMs |
+| `list_vms`, `get_vm` | VMs (filters: name, power state, host, tag; templates, snapshots and control domains on request): power state, host, vCPUs, memory, OS, IP addresses, disks, interfaces, snapshots, allowed operations |
+| `list_srs`, `get_sr` | Storage: type, shared, size, utilisation, hosts, virtual disks and their VMs (never `device_config`) |
+| `list_networks`, `get_network` | Networks: bridge, MTU, VLAN, NICs, VM interfaces |
+| `list_alerts` | Alerts newest first (filters: priority, object) |
+| `get_performance` | A host's or VM's recent data per data source (interval 5s, 1m, 1h or 1d; CPU in percent, memory in bytes, throughput in bytes per second) |
+| `vm_start`, `vm_shutdown` (`force` for a forced shutdown), `vm_reboot` (`force`), `vm_suspend`, `vm_resume` | VM lifecycle (**write**) |
+| `vm_snapshot` (`name`, `description`, `memory`), `vm_snapshot_revert`, `vm_snapshot_delete` | Snapshots (**write**) |
+
+Write tools are listed only when `[writes] enabled = true`, and each call
+must pass `confirm: true`. Before anything reaches the server a write is
+refused, with the reason, when: writes are disabled; there is no
+confirmation; the VM (for a snapshot, the VM it belongs to) is not in the
+server's allow-list; the window would not offer the operation now (power
+state, `allowed_operations`, a host to run on, an operation of this client
+already running on it); the pool's HA protects a VM to start or resume (the
+window checks the HA plan first); or the user's roles do not allow it (no
+role elevation here). Otherwise the operation runs exactly as from the
+window, and the tool waits for its end. Nothing that changes a host, pool,
+SR or network is a tool.
+
+### Resources
+
+The same views, as JSON: `xenadmin://servers`;
+`xenadmin://server/{server}/{list}` with `{list}` one of `pool`, `hosts`,
+`vms`, `srs`, `networks`, `alerts` (listed by `resources/list`); and the
+templates `xenadmin://server/{server}/{kind}/{uuid}` (`kind`: pool, host,
+vm, sr, network) and `xenadmin://server/{server}/{host|vm}/{uuid}/performance`
+(the last hour, a point a minute). `{server}` is the saved address,
+percent-encoded.
+
+### Audit log
+
+Every tool call and resource read appends one JSON line to
+`logs/mcp-audit.jsonl`: the time (UTC), the tool, its arguments (any
+argument whose name looks like a secret, such as `password`, `token` or
+`session`, is replaced by `[redacted]`), the server and object it resolved
+to, the outcome (`ok`, `refused` or `error`), the refusal or error text or
+the operation's end, and the duration.
+
+### Not in this phase
+
+There is no HTTP transport. It would be a second front end on the same
+server object (`xen_mcp::McpServer`): a local `hyper` listener taking the
+"Streamable HTTP" `POST` bodies to the same request handler, with a bearer
+token and the `Origin` check the specification asks for. The operations of
+the later phases (disks, storage, networking, pools, HA, migration and
+copy, vApps, scheduled snapshots, disaster recovery, folders and tags,
+devices, memory settings, performance alerts, dismissing alerts) are not
+tools yet; each could follow the write tools' pattern.
 
 ## Test
 
@@ -799,6 +945,19 @@ end to end:
   dialogs, the vTPM manager, the memory dialog and wizard, and the SSH
   and Remote Desktop command lines (recorded, never started; a unit test
   starts a harmless local program through the launcher);
+- the MCP server (`crates/xen-mcp/tests`, a scripted client over the same
+  line protocol as stdio): the handshake and version negotiation, the tool
+  and resource lists, every read tool and resource checked against the
+  fixture, pinned certificates only, every write tool refused when writes
+  are disabled, without `confirm: true`, outside the allow-list (by name,
+  UUID, a shared name, a server without a list), when not offered, for a
+  read-only user and for an HA-protected VM, each time with no call reaching
+  the server; an allowed VM started, rebooted, suspended, resumed, shut
+  down and snapshotted (taken, reverted, deleted); the audit log's line for
+  every call; and no password or session reference in any response, the
+  audit log or the trace log. `crates/xenadmin/tests/mcp_stdio.rs` runs
+  `xenadmin --mcp` itself over real stdin and stdout and checks that the
+  configuration folder is only read;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -1000,11 +1159,12 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-core` | UI-independent backend: the connection manager and per-connection actors (login, TOFU, redirect, heartbeat, reconnection), the live object cache (one map per class), its tree and the facts derived from it (VM home, SR state, host memory, NIC and network names), the VM and host operations (when each is offered, how each runs as XAPI tasks), VM creation, templates, snapshots and disks (`provisioning`, `provision_run`), storage (`storage`, `storage_run`), networking (`network`, `network_run`), pools and pool and server settings (`pool`, `properties`, `pool_run`), high availability and Active Directory (`ha`, `ad`, `ha_run`), XVA files and the import and export wizards' rules (`xva`: the streaming verifier, XXH64, `ova.xml`, `.gz`) and the transfers (`xva_run`), OVF/OVA packages and disk images (`ovf`: the descriptor read with roxmltree and written with quick-xml; `ovf_package`: folders and OVAs, manifests and signatures; `ova`: tar; `disk_image`: VHD, raw, ISO and the formats refused; `ovf_rules`: the wizards' rules) and their transfers (`ovf_run`), the Migrate / Move / Copy wizard's rules and runs (`migrate`, `migrate_run`), vApps (`vapp`, `vapp_run`), scheduled snapshots (`vmss`, `vmss_run`) and disaster recovery (`dr`, `dr_run`), folders, tags and custom fields (`org`, `org_run`), GPUs, USB, vTPMs and memory settings (`devices`, `memory`, `devices_run`), the external SSH and Remote Desktop consoles (`consoles`) and searches (`search`: the model and the `.xensearch` XML; `search_eval`: properties, filters, grouping, views and built-in searches; `search_metrics`: the Search tab's figures), the consoles (finding a VM's console, opening it, reconnecting), the performance feeds and default graphs, alerts and the perfmon settings, the RBAC check, the operation history, settings, known servers and the keyring store. |
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
+| `crates/xen-mcp` | The MCP server (`xenadmin --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
 | `crates/xenadmin` | The egui/eframe desktop app; its message catalogue's English export and translation guide are in `locales/`. |
 | `packaging/` | The release package scripts and the generic icon (not a crate). |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
-`xapi`, `xen-rrd`, `xen-vnc` and `xen-core` do not depend on egui. The app runs a tokio runtime on
+`xapi`, `xen-rrd`, `xen-vnc`, `xen-core` and `xen-mcp` do not depend on egui. The app runs a tokio runtime on
 background threads and keeps eframe on the main thread. It sends `Command`s to
 the backend over an mpsc channel and reads an immutable `Arc<AppState>`
 snapshot each frame (every connection, the operation history and the
