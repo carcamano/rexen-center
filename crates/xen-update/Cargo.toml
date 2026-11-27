@@ -1,0 +1,35 @@
+[package]
+name = "xen-update"
+description = "Update discovery and installation: GitHub Releases, install-method detection, SHA-256 verification against the signed SHA256SUMS and the per-method apply"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2 = { workspace = true }
+reqwest = { workspace = true, features = ["stream", "system-proxy"] }
+ring = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[features]
+# A fake GitHub Releases server for the tests of this crate and the app's
+# (`testing::FakeReleaseServer`).
+testing = []
+
+[lints]
+workspace = true

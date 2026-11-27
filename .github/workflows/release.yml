@@ -5,11 +5,19 @@
 #   Linux    rexen-center_<version>-1_amd64.deb (Debian, Ubuntu)
 #            rexen-center-<version>-1.x86_64.rpm (Fedora)
 #            rexen-center-<version>-linux-x86_64.tar.gz
-#   SHA256SUMS of all of them.
+#   SHA256SUMS of all of them, and SHA256SUMS.minisig when it is signed.
 # A tag v<version> also publishes them as a GitHub Release with generated
 # notes; the tag must match the workspace version in Cargo.toml. A push to
-# release-prep or a manual run only attaches them to the run. Nothing is
-# signed or notarized.
+# release-prep or a manual run only attaches them to the run.
+#
+# Signing: the app's updater installs only a release whose SHA256SUMS is
+# signed with the release key (crates/xen-update/src/signature.rs). With the
+# repository secret RELEASE_SIGNING_KEY (the minisign secret key file,
+# without a password) the checksums job signs it here; without it nothing is
+# signed, and a tag makes a *draft* release for the owner to sign offline
+# with packaging/sign-release.sh and then publish (see
+# packaging/release-signing/README.md). The packages themselves are not
+# code-signed or notarized.
 name: Release
 
 on:
@@ -151,15 +159,41 @@ jobs:
     needs: [version, macos, windows, linux]
     runs-on: ubuntu-latest
     steps:
+      # For packaging/sign-release.sh and the app's public keys.
+      - uses: actions/checkout@v7
+        with:
+          path: src
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      # The app's updater refuses a download that SHA256SUMS does not
+      # list (crates/xen-update): every package must be in it.
       - name: Write SHA256SUMS
         working-directory: dist
         run: |
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+          packages=$(find . -maxdepth 1 -type f ! -name SHA256SUMS | wc -l)
+          listed=$(wc -l < SHA256SUMS)
+          if [ "$packages" -ne 7 ] || [ "$listed" -ne "$packages" ]; then
+            echo "::error::expected 7 packages listed in SHA256SUMS, found $packages files and $listed lines"
+            exit 1
+          fi
+      # The key is passed to the script in the environment only; it writes
+      # it to a private temporary file, removes it, and never prints it.
+      - name: Sign SHA256SUMS (when the signing key secret is set)
+        env:
+          REXEN_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [ -z "$REXEN_SIGNING_KEY" ]; then
+            echo "::notice::No RELEASE_SIGNING_KEY secret: SHA256SUMS is not signed here. Sign it offline with packaging/sign-release.sh (packaging/release-signing/README.md)."
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends minisign
+          src/packaging/sign-release.sh --version "$VERSION" dist
       - uses: actions/upload-artifact@v7
         with:
           name: rexen-center-${{ needs.version.outputs.version }}
@@ -178,6 +212,13 @@ jobs:
         with:
           name: rexen-center-${{ needs.version.outputs.version }}
           path: dist
+      # What is published is what was checksummed: the updater verifies
+      # each download against this file and refuses one it does not match.
+      - name: Verify the packages against SHA256SUMS
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS
+      # Unsigned, the release is created as a draft: the app would refuse
+      # to install it, so it is published once it is signed offline.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -185,7 +226,13 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          draft=()
+          if [ ! -f dist/SHA256SUMS.minisig ]; then
+            draft=(--draft)
+            echo "::warning::SHA256SUMS is not signed: $TAG is created as a draft. Sign it with packaging/sign-release.sh, upload SHA256SUMS.minisig and publish the draft (packaging/release-signing/README.md)."
+          fi
           gh release create "$TAG" dist/* \
             --verify-tag \
+            "${draft[@]}" \
             --title "ReXen Center $VERSION" \
             --generate-notes

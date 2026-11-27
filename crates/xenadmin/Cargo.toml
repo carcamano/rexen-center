@@ -28,6 +28,7 @@ xapi = { workspace = true }
 xen-core = { workspace = true }
 xen-mcp = { workspace = true }
 xen-rrd = { workspace = true }
+xen-update = { workspace = true }
 xen-vnc = { workspace = true }
 
 # macOS: the menus in the system's menu bar (AppKit's NSMenu through muda;
@@ -45,6 +46,7 @@ egui_kittest = { version = "0.37", features = ["eframe"] }
 flate2 = { workspace = true }
 serde_json = { workspace = true }
 xapi-mock = { workspace = true }
+xen-update = { workspace = true, features = ["testing"] }
 xen-vnc = { workspace = true, features = ["testing"] }
 
 [features]

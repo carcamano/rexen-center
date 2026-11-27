@@ -119,6 +119,7 @@ enum Action {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MenuCommand {
     About,
+    CheckForUpdates,
     Settings,
     Quit,
     Connect,
@@ -272,6 +273,9 @@ pub struct XenAdminApp {
     native_menu_selection: Option<Selection>,
     /// macOS: the toolbar in the title bar (`None`: in a row of the window).
     unified_title_bar: Option<UnifiedTitleBar>,
+    /// Check for Updates…, the update button and the Software Update
+    /// dialog.
+    update: crate::update_ui::UpdateUi,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -336,6 +340,7 @@ impl XenAdminApp {
             native_menu: None,
             native_menu_selection: None,
             unified_title_bar: None,
+            update: crate::update_ui::UpdateUi::default(),
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
@@ -346,6 +351,13 @@ impl XenAdminApp {
     /// Draws the window's own title bar (the window has no system frame).
     pub fn with_window_frame(mut self, frame: Option<WindowFrame>) -> Self {
         self.window_frame = frame;
+        self
+    }
+
+    /// Checks for updates and offers them (`main`; the tests' windows have
+    /// none unless they add it).
+    pub fn with_updates(mut self, update: crate::update_ui::UpdateUi) -> Self {
+        self.update = update;
         self
     }
 
@@ -878,6 +890,17 @@ impl XenAdminApp {
         });
         ui.menu_button(s.menu_help, |ui| {
             if ui
+                .add_enabled(
+                    self.update.enabled(),
+                    Button::new(crate::update_strings::update_strings().menu_check),
+                )
+                .clicked()
+            {
+                self.update.check_now();
+                ui.close();
+            }
+            ui.separator();
+            if ui
                 .button(format!("{} {}", s.menu_about, branding::PRODUCT_NAME))
                 .clicked()
             {
@@ -890,10 +913,11 @@ impl XenAdminApp {
     // ---- macOS menu bar ---------------------------------------------------
 
     /// The menu bar as macOS shows it (Apple's Human Interface Guidelines):
-    /// the application menu (About, Settings…, Services, Hide, Quit), then
-    /// the window's menus with Edit after File and Window before Help.
-    /// Tools > Options is the application menu's Settings… and Help >
-    /// About its About.
+    /// the application menu (About, Check for Updates…, Settings…,
+    /// Services, Hide, Quit), then the window's menus with Edit after File
+    /// and Window before Help. Tools > Options is the application menu's
+    /// Settings…, and Help > About and Help > Check for Updates… are its
+    /// first items, where macOS apps put them.
     fn native_menus(&mut self, ctx: &Context, state: &AppState) -> Vec<Menu<MenuCommand>> {
         let s = strings();
         let product = branding::PRODUCT_NAME;
@@ -913,6 +937,11 @@ impl XenAdminApp {
             Role::App,
             vec![
                 Item::command(named(s.mac_about), true, MenuCommand::About),
+                Item::command(
+                    crate::update_strings::update_strings().menu_check,
+                    self.update.enabled(),
+                    MenuCommand::CheckForUpdates,
+                ),
                 Item::Separator,
                 Item::command(s.mac_settings, true, MenuCommand::Settings)
                     .shortcut(command(Key::Comma)),
@@ -1173,6 +1202,7 @@ impl XenAdminApp {
         use egui::ViewportCommand;
         match command {
             MenuCommand::About => self.about.open = true,
+            MenuCommand::CheckForUpdates => self.update.check_now(),
             MenuCommand::Settings => self.options_open = true,
             MenuCommand::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             MenuCommand::Connect => self.actions.push(Action::OpenConnect {
@@ -1239,6 +1269,7 @@ impl XenAdminApp {
             }
             ui.separator();
             self.selection_buttons(ui, state);
+            self.update.toolbar_button(ui);
         });
     }
 
@@ -2546,6 +2577,9 @@ impl XenAdminApp {
                 crate::dev_ui::external_tools_options(ui, &mut preferences.external_tools);
                 ui.add_space(8.0);
                 ui.separator();
+                crate::update_ui::options(ui, &mut preferences.check_for_updates);
+                ui.add_space(8.0);
+                ui.separator();
                 match &state.config {
                     Some(paths) => {
                         let mode = match paths.location {
@@ -2671,6 +2705,8 @@ impl eframe::App for XenAdminApp {
         self.tree_cache
             .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
+        self.update
+            .frame(&ctx, state.settings.preferences.check_for_updates);
         self.native_menu_commands(&ctx, &state);
         self.apply_appearance(&ctx, &state.settings.preferences);
         style_dialogs(&ctx, self.window_frame.as_ref());
@@ -2721,6 +2757,8 @@ impl eframe::App for XenAdminApp {
         self.certificate_window(&ctx);
         self.options_window(&ctx, &state);
         self.about.show(&ctx);
+        self.update.window(&ctx);
+        self.errors.append(&mut self.update.errors);
         self.alerts
             .window(&ctx, &state, &mut self.ops, &self.backend);
         perfmon_ui::window(
@@ -3051,6 +3089,8 @@ mod tests {
     // macOS: the menus in the system's menu bar (through a fake one) and
     // the toolbar in the title bar (`app/tests/menu_bar.rs`).
     mod menu_bar;
+    // Updates against a fake release server (`app/tests/updates.rs`).
+    mod updates;
     // The README screenshots, from the mock (`app/tests/screenshots.rs`;
     // feature `readme-screenshots`).
     #[cfg(feature = "readme-screenshots")]

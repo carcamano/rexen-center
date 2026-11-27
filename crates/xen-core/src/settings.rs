@@ -153,6 +153,9 @@ pub struct Preferences {
     /// Options > Language: a shipped language's tag (`en`), or empty to
     /// follow the system's language (F14b).
     pub language: String,
+    /// Options > Updates: look for a newer release on GitHub shortly after
+    /// the start, at most once a day (this console's own).
+    pub check_for_updates: bool,
 }
 
 /// The colour theme (this console's own; the original had none).
@@ -207,6 +210,7 @@ impl Default for Preferences {
             external_tools: ExternalTools::default(),
             theme: ThemeSetting::System,
             language: String::new(),
+            check_for_updates: true,
         }
     }
 }
@@ -395,6 +399,7 @@ mod tests {
         settings.preferences.save_passwords = false;
         settings.preferences.theme = ThemeSetting::Dark;
         settings.preferences.language = "pt-BR".into();
+        settings.preferences.check_for_updates = false;
         settings.upsert_server(SavedServer {
             address: "10.0.0.1".into(),
             username: "root".into(),
@@ -410,6 +415,7 @@ mod tests {
         assert!(text.contains("[[server]]"), "{text}");
         assert!(text.contains("theme = \"dark\""), "{text}");
         assert!(text.contains("language = \"pt-BR\""), "{text}");
+        assert!(text.contains("check_for_updates = false"), "{text}");
         let loaded = load_settings(&paths).unwrap();
         assert_eq!(loaded, settings);
         assert_eq!(loaded.servers.len(), 1);
@@ -432,6 +438,8 @@ mod tests {
         // Files from before F14b follow the system's theme and language.
         assert_eq!(s.preferences.theme, ThemeSetting::System);
         assert_eq!(s.preferences.language, "");
+        // Files from before the updates check for them.
+        assert!(s.preferences.check_for_updates);
         fs::write(paths.settings_file(), "not = [toml").unwrap();
         assert!(matches!(
             load_settings(&paths),

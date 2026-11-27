@@ -1,5 +1,5 @@
 <!--
-  The download links below name the release version (v0.1.1); update them
+  The download links below name the release version (v0.2.0); update them
   together with the workspace version in Cargo.toml at each release.
   Screenshots: docs/screenshots/, rendered from the mock server (see
   "Development and tests").
@@ -79,27 +79,33 @@
 
 ## Download
 
-Version **0.1.1** — [all releases](https://github.com/carcamano/rexen-center/releases) · [release notes](https://github.com/carcamano/rexen-center/releases/tag/v0.1.1) ·
-[`SHA256SUMS`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/SHA256SUMS)
+Version **0.2.0** — [all releases](https://github.com/carcamano/rexen-center/releases) · [release notes](https://github.com/carcamano/rexen-center/releases/tag/v0.2.0) ·
+[`SHA256SUMS`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/SHA256SUMS) ·
+[`SHA256SUMS.minisig`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/SHA256SUMS.minisig)
 
 | Platform | File | Kind |
 |---|---|---|
-| 🍎 macOS 11+ — Apple Silicon | [`rexen-center-0.1.1-macos-arm64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-macos-arm64.dmg) | disk image |
-| 🍎 macOS 11+ — Intel | [`rexen-center-0.1.1-macos-x86_64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-macos-x86_64.dmg) | disk image |
-| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.1.1-windows-x64.msi`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-windows-x64.msi) | installer |
-| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.1.1-windows-x64.zip`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-windows-x64.zip) | portable |
-| 🐧 Debian 12+, Ubuntu 22.04+ — x86_64 | [`rexen-center_0.1.1-1_amd64.deb`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center_0.1.1-1_amd64.deb) | package |
-| 🐧 Fedora — x86_64 | [`rexen-center-0.1.1-1.x86_64.rpm`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-1.x86_64.rpm) | package |
-| 🐧 Other Linux — x86_64, glibc 2.35+ | [`rexen-center-0.1.1-linux-x86_64.tar.gz`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-linux-x86_64.tar.gz) | archive |
+| 🍎 macOS 11+ — Apple Silicon | [`rexen-center-0.2.0-macos-arm64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-macos-arm64.dmg) | disk image |
+| 🍎 macOS 11+ — Intel | [`rexen-center-0.2.0-macos-x86_64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-macos-x86_64.dmg) | disk image |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.0-windows-x64.msi`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-windows-x64.msi) | installer |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.0-windows-x64.zip`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-windows-x64.zip) | portable |
+| 🐧 Debian 12+, Ubuntu 22.04+ — x86_64 | [`rexen-center_0.2.0-1_amd64.deb`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center_0.2.0-1_amd64.deb) | package |
+| 🐧 Fedora — x86_64 | [`rexen-center-0.2.0-1.x86_64.rpm`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-1.x86_64.rpm) | package |
+| 🐧 Other Linux — x86_64, glibc 2.35+ | [`rexen-center-0.2.0-linux-x86_64.tar.gz`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-linux-x86_64.tar.gz) | archive |
 
 The packages are built by GitHub Actions from the tagged source
 ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Check them with
 `sha256sum -c SHA256SUMS --ignore-missing` on Linux or
-`shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS.
+`shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS. Since 0.2.0, releases also
+publish `SHA256SUMS.minisig`, the release key's [minisign](https://jedisct1.github.io/minisign/)
+signature of the checksum file:
+`minisign -V -m SHA256SUMS -P RWTJqnKdXYiTS8U7nG6cjVGIH6sRYUZ09F+rVLOHHTzUmtAjTz3Oqc9k`
+(the key is also in [`packaging/release-signing/`](packaging/release-signing/)).
 
 > [!IMPORTANT]
-> The packages are **not signed or notarized**, so macOS and Windows warn before the
-> first start. The steps below get past the warning.
+> The packages are **not code-signed or notarized**, so macOS and Windows warn before the
+> first start (the minisign signature above is for checking downloads, not for the
+> operating system). The steps below get past the warning.
 
 ## Install
 
@@ -137,7 +143,7 @@ SmartScreen may say **"Windows protected your PC"**: click **More info**, then
 <summary><b>🐧 Debian and Ubuntu</b> — the <code>.deb</code> package</summary>
 
 ```sh
-sudo apt install ./rexen-center_0.1.1-1_amd64.deb
+sudo apt install ./rexen-center_0.2.0-1_amd64.deb
 ```
 
 apt pulls in the libraries it needs. Remove it with `sudo apt remove rexen-center`.
@@ -148,7 +154,7 @@ apt pulls in the libraries it needs. Remove it with `sudo apt remove rexen-cente
 <summary><b>🐧 Fedora</b> — the <code>.rpm</code> package</summary>
 
 ```sh
-sudo dnf install ./rexen-center-0.1.1-1.x86_64.rpm
+sudo dnf install ./rexen-center-0.2.0-1.x86_64.rpm
 ```
 
 Remove it with `sudo dnf remove rexen-center`.
@@ -159,8 +165,8 @@ Remove it with `sudo dnf remove rexen-center`.
 <summary><b>🐧 Other Linux</b> — the <code>.tar.gz</code> archive</summary>
 
 ```sh
-tar xzf rexen-center-0.1.1-linux-x86_64.tar.gz
-rexen-center-0.1.1/bin/rexencenter
+tar xzf rexen-center-0.2.0-linux-x86_64.tar.gz
+rexen-center-0.2.0/bin/rexencenter
 ```
 
 Copy `share/` to `~/.local/share` for the menu entry and icon. It needs glibc 2.35 or
@@ -171,6 +177,71 @@ newer, OpenGL (or EGL) and xkbcommon, and an X11 or Wayland session.
 On Linux, "Remember password" stores passwords through the Secret Service (GNOME
 Keyring, KWallet), and the file dialogs use the XDG desktop portal
 (`xdg-desktop-portal` with a GTK or KDE backend); both come with the usual desktops.
+
+## Updates
+
+ReXen Center looks for a newer release on GitHub about ten seconds after it starts,
+at most once a day. When there is one, an **Update to _version_** button appears at
+the top of the window (in the title bar on macOS); it opens the release notes, with
+**Skip This Version** (not offered again by the daily check), **Later** (until the
+next check) and the install button. **Help › Check for Updates…** (on macOS
+**ReXen Center › Check for Updates…**) checks at once and says when you are up to
+date or why the check failed; the daily check fails silently. Only stable releases
+newer than the running one are offered, never a pre-release or an older version.
+
+It finds out how it was installed and updates the same way:
+
+| Installed from | What the update does |
+|---|---|
+| macOS `.dmg` (Apple Silicon or Intel) | downloads the disk image for this Mac, copies the new app out of it and, on **Restart Now**, closes your server connections as Quit does, replaces the app where it is and starts the new one |
+| Windows `.zip` (portable) | downloads the zip and replaces `rexencenter.exe`, `LICENSE` and `README.md` in place on **Restart Now**; the `portable` marker and the `settings/` folder are kept |
+| Linux `.tar.gz` | likewise, file by file, keeping anything else in the folder |
+| Windows `.msi` | downloads the new installer and, on **Quit and Install**, quits and hands it to Windows Installer (which asks for consent itself) |
+| Linux `.deb` / `.rpm` | downloads the package and shows the exact command to install it (`sudo apt install …`, `sudo dnf install …`), with **Copy Command** and **Open with Software Installer**: it never gains root rights by itself |
+| anything else (a build from source, an AppImage, a renamed executable, an app macOS runs from a temporary copy because it was never moved out of Downloads) | opens the release page |
+
+An in-place update keeps the old copy until the new version has opened its window.
+If the new version exits or does not open within a minute, it is stopped, the old
+files are put back, the old version starts again and tells you why the update was
+undone. Updating in place needs write access to the folder the app is in: an app in
+`/Applications` installed by an administrator cannot be updated by a standard user
+(the dialog says so and links to the release page). On macOS the new copy may ask
+again for access to the saved passwords in the keychain, as after a manual update.
+
+**Integrity.** Each release publishes `SHA256SUMS` with the checksum of every
+package, and `SHA256SUMS.minisig`, a [minisign](https://jedisct1.github.io/minisign/)
+(Ed25519) signature of that file made with the project's release key. The app has
+the release key's public half built in. The check fetches both files and verifies
+the signature; the download goes to a private temporary folder and is checked
+against that signed checksum file. A release without the checksum file or the
+signature, whose signature is not valid or was made with a key the app does not
+know, without an entry for the package, or whose package does not match is not
+installed: the dialog says why and offers only the release page.
+
+What the signature guarantees: the package is the one the holder of the release key
+signed for that release. Someone who can change the release page (a stolen GitHub
+account or token, a compromised download path) cannot make the app install
+something else, because they cannot sign it. What it does not: it is **not the
+operating system's code signing** — the packages are still not code-signed or
+notarized, so macOS Gatekeeper and Windows SmartScreen warn exactly as before
+(see [Install](#install)), and installing by hand is not checked unless you run
+`minisign` yourself. It does not protect against a stolen release key (that is
+what the key's rotation is for, see
+[`packaging/release-signing/README.md`](packaging/release-signing/README.md)), and
+it does not make a release safe to run: it only says who published it.
+
+**Privacy and networks.** A check is one anonymous `GET` of
+`api.github.com/repos/carcamano/rexen-center/releases/latest` with the user agent
+`rexen-center-updater`: no version, identifier, token or cookie is sent. Downloads
+come from GitHub over HTTPS (redirects to anything else are refused), through the
+proxy set in `HTTPS_PROXY` / `NO_PROXY` or, on macOS and Windows, the system's
+proxy settings, and are checked against the system's certificate authorities. On
+isolated management networks turn off **Options › Updates › Check for updates
+automatically**; Check for Updates… still works when asked. The last check and a
+skipped version are kept in `update.toml` in the configuration folder.
+`REXENCENTER_UPDATE_API` points the updater at another server (`https://`, or
+`http://` on the local machine only), for testing; what it serves must still be
+signed with the built-in release key.
 
 ## Features
 
@@ -929,10 +1000,11 @@ The configuration folder is, in order of preference:
    macOS, `%APPDATA%\rexen-center\config` on Windows,
    `$XDG_CONFIG_HOME/rexen-center` on Linux.
 
-It holds `settings.toml` (preferences, including `theme` and `language`,
-and the saved servers),
+It holds `settings.toml` (preferences, including `theme`, `language` and
+`check_for_updates`, and the saved servers),
 `known_servers.toml` (the trusted certificate fingerprint of each
-`host:port`) and `logs/` (one file per day, the last 7 kept). Tools > Options
+`host:port`), `update.toml` (the last update check and a skipped version,
+see [Updates](#updates)) and `logs/` (one file per day, the last 7 kept). Tools > Options
 shows where it is.
 
 Passwords are never written to these files: with "Remember password" they go
@@ -1030,7 +1102,7 @@ Each platform has a script under `packaging/` that builds a release binary
 (`cargo build --release --locked`) and packs it with the icon
 (`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
 README; the Windows `.ico` is embedded in the executable). Packages are not
-signed or notarized. The output folder defaults to `target/dist`.
+code-signed or notarized. The output folder defaults to `target/dist`.
 
 | Platform | Command | Result |
 |---|---|---|
@@ -1044,7 +1116,26 @@ x86_64 on Ubuntu 22.04 (so the Linux binary needs glibc 2.35 or newer).
 Pushing a tag `v<version>` that matches the workspace version in
 `Cargo.toml` publishes the packages and their `SHA256SUMS` as a GitHub
 Release; a push to the `release-prep` branch or a manual run only keeps
-them as the run's artifacts. `.github/workflows/ci.yml` checks formatting,
+them as the run's artifacts.
+
+The updater installs only a release whose `SHA256SUMS` is signed with the
+release key (`SHA256SUMS.minisig`). With the repository secret
+`RELEASE_SIGNING_KEY` the workflow signs it; without it the tag makes a
+**draft** release, which the owner signs offline and then publishes:
+
+```sh
+gh release download v<version> --repo carcamano/rexen-center -D release-v<version>
+packaging/sign-release.sh --key <path to the secret key> release-v<version>
+cargo run -p xen-update --example verify-release -- release-v<version>   # the app's own check
+gh release upload v<version> release-v<version>/SHA256SUMS.minisig --repo carcamano/rexen-center
+gh release edit v<version> --draft=false --repo carcamano/rexen-center
+```
+
+`packaging/sign-release.sh` checks that `SHA256SUMS` lists every file of the
+release and matches it before signing (minisign's legacy mode, `-l`, the one
+the app accepts), then checks the signature against the app's public keys in
+`packaging/release-signing/`. That folder's README describes the key, its
+backup and its rotation. `.github/workflows/ci.yml` checks formatting,
 clippy and the tests on Linux for every pull request and push to `main`.
 
 Windows release builds have no console window, so the command-line modes
@@ -1315,6 +1406,27 @@ end to end:
   settings; a locked keyring; and the product's name and subtitle in the
   window title, the About box, the home page, `--help` and the MCP server's
   `serverInfo`;
+- the updates (`crates/xen-update`, and `crates/xenadmin/src/app/tests/updates.rs`
+  in the window), against a fake release server on the local machine, never
+  the real one: version order (never a downgrade or a pre-release), the
+  install method of each platform's layout from a fake probe (so the macOS,
+  Windows and Linux rules all run everywhere), the package for each method and
+  architecture, `SHA256SUMS` parsing and the refusal of a mismatch, a missing
+  file or a missing entry, the release signature (files written by the real
+  `minisign` accepted in its legacy mode, its pre-hashed mode refused with what
+  to do; a missing signature, another key, a changed checksum file, signature
+  or trusted comment refused; a list of trusted keys for rotation; the tests'
+  key never trusted by a real build), the daily throttle and the skipped version, a
+  check that sends no identifying header, the download's progress and cancel,
+  the unpacking of zips and tarballs (paths outside the package and links
+  refused), the in-place swap that keeps the `portable` marker and `settings/`
+  and rolls back, a new version that reports its start, one that exits and
+  one that hangs (both rolled back and the old one started again), the
+  macOS bundle out of a real `hdiutil` disk image (on macOS), and in the
+  window the button, the release notes, Later, Skip This Version, Check for
+  Updates…, the Options setting, Restart Now closing the window as Quit
+  does, and an unsigned or badly signed release offering only its page with
+  the reason;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -1554,13 +1666,14 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xen-mcp` | The MCP server (`rexencenter --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
+| `crates/xen-update` | The updates: the GitHub release check and download (reqwest over rustls, the system's certificate authorities and proxy), semantic version comparison, how the running copy was installed (`method`: a platform-neutral core over a probe of the system), the package for that method and architecture, the SHA-256 check against `SHA256SUMS` and the release key's minisign signature of it (`signature`), the daily throttle and skipped version (`update.toml`), the in-place swap with rollback and the installer hand-over (`apply`), the flow the window drives (`updater`), and a fake release server for tests (feature `testing`). |
 | `crates/xenadmin` | The egui/eframe desktop app, built as the `rexencenter` program; its message catalogue's English export and translation guide are in `locales/`. |
 | `packaging/` | The release package scripts and the icon: SVG sources, the eight concepts, rendered sizes and the renderer (not a crate). |
 | `.github/workflows/` | CI (format, clippy, tests on Linux) and the release builds for macOS, Windows and Linux. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 | `docs/screenshots/` | The README's screenshots, rendered from the mock server (see "Development and tests"). |
 
-`xapi`, `xen-rrd`, `xen-vnc`, `xen-core` and `xen-mcp` do not depend on egui. The app runs a tokio runtime on
+`xapi`, `xen-rrd`, `xen-vnc`, `xen-core`, `xen-mcp` and `xen-update` do not depend on egui. The app runs a tokio runtime on
 background threads and keeps eframe on the main thread. It sends `Command`s to
 the backend over an mpsc channel and reads an immutable `Arc<AppState>`
 snapshot each frame (every connection, the operation history and the
