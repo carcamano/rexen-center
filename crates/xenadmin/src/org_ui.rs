@@ -22,6 +22,7 @@ use xen_core::{ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionV
 
 use crate::app::Selection;
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::icons::{self, HostState};
 use crate::ops_ui::OpsUi;
@@ -1033,13 +1034,11 @@ impl OrgUi {
                     };
                     ui.horizontal(|ui| {
                         let l = ui.label(s.file_label);
-                        ui.add(
-                            TextEdit::singleline(path)
-                                .desired_width(300.0)
-                                .hint_text("search.xensearch"),
-                        )
+                        crate::file_dialog::path_row(ui, path, pick, |e| {
+                            e.hint_text("search.xensearch")
+                        })
+                        .edit
                         .labelled_by(l.id);
-                        crate::file_dialog::browse_button(ui, path, pick);
                     });
                     if let Some(m) = message {
                         ui.colored_label(ui.visuals().warn_fg_color, m.as_str());
@@ -1084,7 +1083,7 @@ impl OrgUi {
                 }
             }
             ui.separator();
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 let label = match dialog {
                     OrgDialog::SaveSearch { .. } => s.save_button,
                     OrgDialog::RenameFolder { .. } | OrgDialog::RenameTag { .. } => s.rename,
@@ -1094,10 +1093,13 @@ impl OrgUi {
                     | OrgDialog::DeleteCustomField { .. } => s.delete,
                     _ => s.ok,
                 };
-                if ui.add_enabled(can, Button::new(label)).clicked() {
+                if row
+                    .add_enabled(ButtonRole::Primary, can, Button::new(label))
+                    .clicked()
+                {
                     ok = true;
                 }
-                if ui.button(s.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                     close = true;
                 }
             });
@@ -1947,10 +1949,12 @@ impl VmPropertiesDialog {
                 });
             });
             ui.separator();
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 let can = !self.name.trim().is_empty() && self.editor.valid();
-                ok = ui.add_enabled(can, Button::new(s.ok)).clicked();
-                cancel = ui.button(s.cancel).clicked();
+                ok = row
+                    .add_enabled(ButtonRole::Primary, can, Button::new(s.ok))
+                    .clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         // The page's dialogs, above it.

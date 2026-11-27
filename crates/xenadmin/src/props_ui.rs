@@ -26,6 +26,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::ops_ui::OpsUi;
 use crate::perfmon_ui::{self, PerfmonDialog};
@@ -617,9 +618,9 @@ impl PropertiesDialog {
                 ui.colored_label(ui.visuals().error_fg_color, p);
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ok = ui.button(s.ok).clicked();
-                cancel = ui.button(s.cancel).clicked();
+            dialog_buttons(ui, |row| {
+                ok = row.button(ButtonRole::Primary, s.ok).clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if cancel {

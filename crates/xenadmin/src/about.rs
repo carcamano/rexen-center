@@ -9,6 +9,7 @@ use egui::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{fill, strings};
 use crate::window_frame::dialog_window;
 
@@ -108,9 +109,13 @@ impl About {
                     ui.add_space(4.0);
                     ui.separator();
                     ui.add_space(6.0);
-                    close = ui
-                        .add(egui::Button::new(s.close).min_size(egui::vec2(104.0, 28.0)))
-                        .clicked();
+                    close = dialog_buttons(ui, |row| {
+                        row.add(
+                            ButtonRole::Cancel,
+                            egui::Button::new(s.close).min_size(egui::vec2(104.0, 28.0)),
+                        )
+                        .clicked()
+                    });
                     ui.add_space(4.0);
                 });
             });
@@ -229,8 +234,9 @@ mod tests {
     }
 
     /// The content, the credits and the licence are all there, in order,
-    /// centred on one vertical axis, at the dialog's fixed width and inside
-    /// the window, in the light and the dark theme.
+    /// centred on one vertical axis (Close at the bottom right), at the
+    /// dialog's fixed width and inside the window, in the light and the
+    /// dark theme.
     #[test]
     fn content_is_centred_in_both_themes() {
         for theme in [egui::Theme::Light, egui::Theme::Dark] {
@@ -273,17 +279,27 @@ mod tests {
                 (axis - screen.center().x).abs() < 2.0,
                 "{theme:?}: the window is centred"
             );
+            let close = *rects.last().expect("Close");
             for (label, rect) in content().iter().zip(&rects) {
-                assert!(
-                    (rect.center().x - axis).abs() < 1.0,
-                    "{theme:?}: {label:?} is centred ({} vs {axis})",
-                    rect.center().x
-                );
+                // Close is a dialog button: at the bottom right.
+                if *rect != close {
+                    assert!(
+                        (rect.center().x - axis).abs() < 1.0,
+                        "{theme:?}: {label:?} is centred ({} vs {axis})",
+                        rect.center().x
+                    );
+                }
                 assert!(
                     screen.contains_rect(*rect),
                     "{theme:?}: {label:?} is on screen"
                 );
             }
+            // At the right edge of the content, inside the window's margin.
+            let right = axis + WIDTH / 2.0;
+            assert!(
+                close.left() > axis && close.right() <= right && close.right() > right - 25.0,
+                "{theme:?}: Close at the right ({close:?}, the dialog ends at {right})"
+            );
             for pair in rects.windows(2) {
                 assert!(
                     pair[0].bottom() <= pair[1].top() + 0.5,

@@ -30,6 +30,7 @@ mod branding;
 mod cli;
 mod console_keys;
 mod console_view;
+mod controls;
 mod cpm_strings;
 mod dev_strings;
 mod dev_ui;

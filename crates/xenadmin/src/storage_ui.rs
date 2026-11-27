@@ -19,6 +19,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::new_sr::{NewSrWizard, WizardOutcome};
 use crate::ops_ui::{Entry, OpsUi};
@@ -439,9 +440,15 @@ fn repair_window(
             });
         });
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        dialog_buttons(ui, |row| {
+            if running {
+                row.add_leading(egui::Spinner::new());
+            }
             let can = broken && !rows.is_empty() && !running && conn.status.is_connected();
-            if ui.add_enabled(can, Button::new(s.repair_button)).clicked() {
+            if row
+                .add_enabled(ButtonRole::Primary, can, Button::new(s.repair_button))
+                .clicked()
+            {
                 d.started = true;
                 ops.dispatch(
                     conn,
@@ -453,11 +460,8 @@ fn repair_window(
                 );
             }
             let label = if d.started { s.close } else { s.cancel };
-            if ui.button(label).clicked() {
+            if row.button(ButtonRole::Cancel, label).clicked() {
                 close = true;
-            }
-            if running {
-                ui.spinner();
             }
         });
     });
@@ -558,9 +562,10 @@ fn properties_window(
             });
         });
         ui.separator();
-        ui.horizontal(|ui| {
-            if ui
+        dialog_buttons(ui, |row| {
+            if row
                 .add_enabled(
+                    ButtonRole::Primary,
                     !d.name.trim().is_empty() && d.org.valid(),
                     Button::new(s.ok),
                 )
@@ -569,7 +574,7 @@ fn properties_window(
                 save = true;
                 close = true;
             }
-            if ui.button(s.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                 close = true;
             }
         });

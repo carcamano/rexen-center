@@ -19,6 +19,7 @@ use xen_core::objects::{self, LinkStatus, NetworkLinkStatus};
 use xen_core::{ActionRequest, AppState, ConnectionId, ConnectionModel, ConnectionView};
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::net_strings::net_strings;
 use crate::tab_strings::tab_strings;
@@ -752,19 +753,21 @@ impl NewNetworkWizard {
                     match question {
                         BondCheck::Error(text) => {
                             ui.colored_label(ui.visuals().error_fg_color, text);
-                            if ui.button(n.ok).clicked() {
-                                self.question = None;
-                            }
+                            dialog_buttons(ui, |row| {
+                                if row.button(ButtonRole::Primary, n.ok).clicked() {
+                                    self.question = None;
+                                }
+                            });
                         }
                         BondCheck::Warn(text, yes) => {
                             ui.colored_label(ui.visuals().warn_fg_color, text);
-                            ui.horizontal(|ui| {
-                                if ui.button(yes).clicked()
+                            dialog_buttons(ui, |row| {
+                                if row.button(ButtonRole::Primary, yes).clicked()
                                     && let Some(r) = self.confirm_bond(&model)
                                 {
                                     outcome = WizardOutcome::Finish(self.connection, r);
                                 }
-                                if ui.button(n.cancel).clicked() {
+                                if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                                     self.question = None;
                                 }
                             });
@@ -773,23 +776,31 @@ impl NewNetworkWizard {
                     }
                     return;
                 }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(self.page != Page::Type, Button::new(n.previous))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Back,
+                            self.page != Page::Type,
+                            Button::new(n.previous),
+                        )
                         .clicked()
                     {
                         self.previous();
                     }
                     let last = self.pages().last() == Some(&self.page);
                     let label = if last { n.finish } else { n.next };
-                    if ui
-                        .add_enabled(self.page_ok(&model), Button::new(label))
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            self.page_ok(&model),
+                            Button::new(label),
+                        )
                         .clicked()
                         && let Some(r) = self.next(&model, show_hidden)
                     {
                         outcome = WizardOutcome::Finish(self.connection, r);
                     }
-                    if ui.button(n.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                         outcome = WizardOutcome::Cancelled;
                     }
                 });

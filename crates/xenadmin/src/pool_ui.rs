@@ -30,6 +30,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_strings::pool_strings;
@@ -1136,7 +1137,9 @@ impl PoolUi {
             ui.set_max_width(440.0);
             ui.label(text);
             ui.add_space(8.0);
-            ok = ui.button(pool_strings().ok).clicked();
+            dialog_buttons(ui, |row| {
+                ok = row.button(ButtonRole::Primary, pool_strings().ok).clicked();
+            });
         });
         if ok {
             self.notices.pop_front();
@@ -1172,11 +1175,15 @@ impl PoolUi {
                             ui.end_row();
                         });
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ok = ui
-                            .add_enabled(!p.username.trim().is_empty(), Button::new(h.ok))
+                    dialog_buttons(ui, |row| {
+                        ok = row
+                            .add_enabled(
+                                ButtonRole::Primary,
+                                !p.username.trim().is_empty(),
+                                Button::new(h.ok),
+                            )
                             .clicked();
-                        cancel = ui.button(h.cancel).clicked();
+                        cancel = row.button(ButtonRole::Cancel, h.cancel).clicked();
                     });
                 });
                 if cancel {
@@ -1240,9 +1247,9 @@ impl PoolUi {
             ui.set_max_width(460.0);
             ui.label(&q.text);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                yes = ui.button(&q.yes).clicked();
-                no = ui.button(s.no).clicked();
+            dialog_buttons(ui, |row| {
+                yes = row.button(ButtonRole::Primary, &q.yes).clicked();
+                no = row.button(ButtonRole::Cancel, s.no).clicked();
             });
         });
         if yes {
@@ -1323,13 +1330,17 @@ impl PoolUi {
             }
             ui.add_space(8.0);
             let invalid = d.invalid(state);
-            ui.horizontal(|ui| {
-                let mut r = ui.add_enabled(invalid.is_none(), Button::new(s.create_pool));
+            dialog_buttons(ui, |row| {
+                let mut r = row.add_enabled(
+                    ButtonRole::Primary,
+                    invalid.is_none(),
+                    Button::new(s.create_pool),
+                );
                 if let Some(why) = invalid {
                     r = r.on_disabled_hover_text(why);
                 }
                 create = r.clicked();
-                cancel = ui.button(s.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if add_new {
@@ -1437,16 +1448,18 @@ impl PoolUi {
                 ui.label(RichText::new(s.password_rotate_hint).weak());
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
+                if d.pending.is_some() {
+                    row.add_leading(egui::Spinner::new());
+                }
                 let ready = !d.current.is_empty()
                     && !d.new.is_empty()
                     && !d.confirm.is_empty()
                     && d.pending.is_none();
-                ok = ui.add_enabled(ready, Button::new(s.ok)).clicked();
-                cancel = ui.button(s.cancel).clicked();
-                if d.pending.is_some() {
-                    ui.spinner();
-                }
+                ok = row
+                    .add_enabled(ButtonRole::Primary, ready, Button::new(s.ok))
+                    .clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if cancel {
@@ -1515,9 +1528,9 @@ impl PoolUi {
                 maintenance = ui.link(s.dom0_enter_maintenance).clicked();
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ok = ui.button(s.ok).clicked();
-                cancel = ui.button(s.cancel).clicked();
+            dialog_buttons(ui, |row| {
+                ok = row.button(ButtonRole::Primary, s.ok).clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if maintenance {
@@ -1576,32 +1589,20 @@ impl PoolUi {
                 }
             };
             ui.label(s.install_key);
-            ui.horizontal(|ui| {
-                ui.add(
-                    TextEdit::singleline(&mut d.key)
-                        .desired_width(400.0)
-                        .hint_text(s.path_hint),
-                );
-                crate::file_dialog::browse_button(
-                    ui,
-                    &mut d.key,
-                    crate::file_dialog::Pick::Open(crate::file_dialog::key_filters()),
-                );
-            });
+            crate::file_dialog::path_row(
+                ui,
+                &mut d.key,
+                crate::file_dialog::Pick::Open(crate::file_dialog::key_filters()),
+                |e| e.hint_text(s.path_hint),
+            );
             error(ui, &d.errors.0);
             ui.label(s.install_cert);
-            ui.horizontal(|ui| {
-                ui.add(
-                    TextEdit::singleline(&mut d.certificate)
-                        .desired_width(400.0)
-                        .hint_text(s.path_hint),
-                );
-                crate::file_dialog::browse_button(
-                    ui,
-                    &mut d.certificate,
-                    crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
-                );
-            });
+            crate::file_dialog::path_row(
+                ui,
+                &mut d.certificate,
+                crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
+                |e| e.hint_text(s.path_hint),
+            );
             error(ui, &d.errors.1);
             ui.label(s.install_chain);
             let mut remove = None;
@@ -1616,26 +1617,32 @@ impl PoolUi {
             if let Some(i) = remove {
                 d.chain.remove(i);
             }
-            ui.horizontal(|ui| {
-                ui.add(TextEdit::singleline(&mut d.chain_entry).desired_width(320.0));
-                crate::file_dialog::browse_button(
-                    ui,
-                    &mut d.chain_entry,
-                    crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
-                );
-                if ui.button(s.install_add).clicked() && !d.chain_entry.trim().is_empty() {
-                    d.chain.push(d.chain_entry.trim().to_owned());
-                    d.chain_entry.clear();
-                }
-            });
+            // The entry's Browse... lines up with the key's and the
+            // certificate's; Add goes under it.
+            crate::file_dialog::path_row(
+                ui,
+                &mut d.chain_entry,
+                crate::file_dialog::Pick::Open(crate::file_dialog::certificate_filters()),
+                |e| e.hint_text(s.path_hint),
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if ui.button(s.install_add).clicked() && !d.chain_entry.trim().is_empty() {
+                        d.chain.push(d.chain_entry.trim().to_owned());
+                        d.chain_entry.clear();
+                    }
+                },
+            );
             error(ui, &d.errors.2);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 let ready = !d.key.trim().is_empty() && !d.certificate.trim().is_empty();
-                install = ui
-                    .add_enabled(ready, Button::new(s.install_button))
+                install = row
+                    .add_enabled(ButtonRole::Primary, ready, Button::new(s.install_button))
                     .clicked();
-                cancel = ui.button(s.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if cancel {
@@ -1702,34 +1709,31 @@ impl PoolUi {
                     ("ext", BACKUP_EXTENSION),
                 ],
             ));
-            ui.horizontal(|ui| {
-                ui.add(
-                    TextEdit::singleline(&mut d.path)
-                        .desired_width(360.0)
-                        .hint_text(s.path_hint),
-                );
-                let filters = crate::file_dialog::backup_filters();
-                let pick = if d.restore {
-                    crate::file_dialog::Pick::Open(filters)
-                } else {
-                    crate::file_dialog::Pick::Save(filters)
-                };
-                crate::file_dialog::browse_button(ui, &mut d.path, pick);
-            });
+            let filters = crate::file_dialog::backup_filters();
+            let pick = if d.restore {
+                crate::file_dialog::Pick::Open(filters)
+            } else {
+                crate::file_dialog::Pick::Save(filters)
+            };
+            crate::file_dialog::path_row(ui, &mut d.path, pick, |e| e.hint_text(s.path_hint));
             if let Some(e) = &d.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 let label = if d.restore {
                     s.restore_button
                 } else {
                     s.backup_button
                 };
-                go = ui
-                    .add_enabled(!d.path.trim().is_empty(), Button::new(label))
+                go = row
+                    .add_enabled(
+                        ButtonRole::Primary,
+                        !d.path.trim().is_empty(),
+                        Button::new(label),
+                    )
                     .clicked();
-                cancel = ui.button(s.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         if cancel {

@@ -695,6 +695,13 @@ questions and messages. Open an area to see what works:
   behind it is dimmed and takes no input, but its title bar still moves it.
   The dialogs stay inside the main window, so on Wayland they stay centred
   on it. Elsewhere they keep egui's look;
+- **dialog buttons and tabs** (this console's own): the dialogs' buttons
+  sit at the bottom right in the platform's order, the main action at the
+  right end with Cancel before it on macOS, GNOME and the other Linux
+  desktops, and the main action before Cancel on Windows and KDE Plasma.
+  Path fields fill their row so their Browse... buttons line up at the
+  right. The detail tabs are a segmented control centred on the pane's top
+  line, as in a macOS tab view, so they no longer look like buttons;
 - **macOS menu bar and unified title bar** (this console's own): on macOS
   the menus are in the system's menu bar, as Apple's Human Interface
   Guidelines ask, not in the window. The ReXen Center menu holds About

@@ -21,6 +21,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::ha_strings::{ha_strings, role_description, subject_key};
 use crate::i18n::{self, fill};
 use crate::ops_strings::ops_strings;
@@ -665,9 +666,9 @@ impl AdUi {
             ui.set_max_width(460.0);
             ui.label(&q.text);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let y = ui.button(o.yes);
-                let n = ui.button(o.no);
+            dialog_buttons(ui, |row| {
+                let y = row.button(ButtonRole::Primary, o.yes);
+                let n = row.button(ButtonRole::Cancel, o.no);
                 if q.no_default {
                     n.request_focus();
                 }
@@ -734,14 +735,18 @@ impl AdUi {
             } else {
                 !p.username.trim().is_empty()
             };
-            ui.horizontal(|ui| {
-                ok = ui
-                    .add_enabled(ready, Button::new(if p.join { h.ok } else { h.disable }))
+            dialog_buttons(ui, |row| {
+                ok = row
+                    .add_enabled(
+                        ButtonRole::Primary,
+                        ready,
+                        Button::new(if p.join { h.ok } else { h.disable }),
+                    )
                     .clicked();
                 if !p.join {
-                    ignore = ui.button(h.ignore).clicked();
+                    ignore = row.button(ButtonRole::Other, h.ignore).clicked();
                 }
-                cancel = ui.button(h.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, h.cancel).clicked();
             });
         });
         if cancel {
@@ -849,17 +854,20 @@ impl AdUi {
                 });
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 if d.after.is_none() {
-                    grant = ui
+                    grant = row
                         .add_enabled(
+                            ButtonRole::Primary,
                             !ad::split_names(&d.names).is_empty(),
                             Button::new(h.grant_access),
                         )
                         .clicked();
                 }
                 let done = op.is_some_and(|o| !o.is_running());
-                close = ui.button(if done { h.close } else { h.cancel }).clicked();
+                close = row
+                    .button(ButtonRole::Cancel, if done { h.close } else { h.cancel })
+                    .clicked();
             });
         });
         if grant {
@@ -963,9 +971,11 @@ impl AdUi {
                 ui.colored_label(ui.visuals().warn_fg_color, h.roles_admin_advice);
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                save = ui.add_enabled(changed, Button::new(h.roles_save)).clicked();
-                cancel = ui.button(h.cancel).clicked();
+            dialog_buttons(ui, |row| {
+                save = row
+                    .add_enabled(ButtonRole::Primary, changed, Button::new(h.roles_save))
+                    .clicked();
+                cancel = row.button(ButtonRole::Cancel, h.cancel).clicked();
             });
         });
         if cancel {

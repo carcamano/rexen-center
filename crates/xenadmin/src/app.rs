@@ -20,6 +20,7 @@ use xen_core::{
 use crate::alerts_view::{AlertAction, AlertsView};
 use crate::branding;
 use crate::console_view::{ConsoleKey, Consoles, TabAction};
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
@@ -510,23 +511,14 @@ impl XenAdminApp {
         } else {
             p.alerts_title.to_owned()
         };
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.notifications == Notifications::Alerts, alerts_title)
-                .clicked()
-            {
-                self.notifications = Notifications::Alerts;
-            }
-            if ui
-                .selectable_label(
-                    self.notifications == Notifications::Events,
-                    strings().events_title,
-                )
-                .clicked()
-            {
-                self.notifications = Notifications::Events;
-            }
-        });
+        crate::controls::segmented(
+            ui,
+            &mut self.notifications,
+            [
+                (Notifications::Alerts, alerts_title),
+                (Notifications::Events, strings().events_title.to_owned()),
+            ],
+        );
         match self.notifications {
             Notifications::Events => events::show(ui, state, &self.backend),
             Notifications::Alerts => {
@@ -2046,20 +2038,14 @@ impl XenAdminApp {
                 _ => {}
             }
         });
-        ui.separator();
+        ui.add_space(6.0);
 
         let tabs = tabs::tabs_for(model, subject);
         if !tabs.contains(&self.tab) {
             self.tab = Tab::General;
         }
-        ui.horizontal(|ui| {
-            for tab in &tabs {
-                if ui.selectable_label(self.tab == *tab, tab.title()).clicked() {
-                    self.tab = *tab;
-                }
-            }
-        });
-        ui.separator();
+        crate::controls::tab_view(ui, &mut self.tab, tabs.iter().map(|t| (*t, t.title())));
+        ui.add_space(4.0);
         if self.tab == Tab::Performance {
             let key = match subject {
                 Subject::Vm(r, _) => (conn.id, xen_core::PerfTarget::Vm(r.clone())),
@@ -2433,16 +2419,16 @@ impl XenAdminApp {
                         ui.end_row();
                     });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready = !self.connect.server.trim().is_empty()
                         && !self.connect.username.trim().is_empty();
-                    if ui
-                        .add_enabled(ready, Button::new(s.connect_button))
+                    if row
+                        .add_enabled(ButtonRole::Primary, ready, Button::new(s.connect_button))
                         .clicked()
                     {
                         submit = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });
@@ -2503,11 +2489,11 @@ impl XenAdminApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new(s.cert_advice).weak());
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(s.cert_trust).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, s.cert_trust).clicked() {
                         decision = Some(true);
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         decision = Some(false);
                     }
                 });
@@ -2547,6 +2533,7 @@ impl XenAdminApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .default_width(460.0)
             .show(ctx, |ui| {
                 ui.checkbox(&mut preferences.save_passwords, s.options_save_passwords);
@@ -2591,9 +2578,11 @@ impl XenAdminApp {
                     }
                 }
                 ui.add_space(8.0);
-                if ui.button(s.close).clicked() {
-                    close = true;
-                }
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Cancel, s.close).clicked() {
+                        close = true;
+                    }
+                });
             });
         if preferences != state.settings.preferences {
             self.backend

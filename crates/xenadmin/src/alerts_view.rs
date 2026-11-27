@@ -16,6 +16,7 @@ use xen_core::{
     ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionModel, PerfmonObjectRef,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::locale::{MESSAGE_BODIES, MESSAGE_NAMES, TableInfo};
 use crate::ops_ui::OpsUi;
@@ -473,12 +474,15 @@ impl AlertsView {
                     p.alerts_confirm_selected
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let yes = ui.button(if confirm.all {
-                        p.alerts_confirm_yes_all
-                    } else {
-                        p.alerts_confirm_yes
-                    });
+                dialog_buttons(ui, |row| {
+                    let yes = row.button(
+                        ButtonRole::Primary,
+                        if confirm.all {
+                            p.alerts_confirm_yes_all
+                        } else {
+                            p.alerts_confirm_yes
+                        },
+                    );
                     if confirm.focus {
                         yes.request_focus();
                         confirm.focus = false;
@@ -486,7 +490,10 @@ impl AlertsView {
                     if yes.clicked() {
                         answer = Some(true);
                     }
-                    if ui.button(p.alerts_confirm_no).clicked() {
+                    if row
+                        .button(ButtonRole::Cancel, p.alerts_confirm_no)
+                        .clicked()
+                    {
                         answer = Some(false);
                     }
                 });

@@ -46,6 +46,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
@@ -175,12 +176,14 @@ pub(crate) fn nav(
 ) -> (bool, bool, bool) {
     let n = crate::net_strings::net_strings();
     let mut out = (false, false, false);
-    ui.horizontal(|ui| {
-        out.0 = ui
-            .add_enabled(can_previous, Button::new(n.previous))
+    dialog_buttons(ui, |row| {
+        out.0 = row
+            .add_enabled(ButtonRole::Back, can_previous, Button::new(n.previous))
             .clicked();
-        out.1 = ui.add_enabled(can_next, Button::new(next)).clicked();
-        out.2 = ui.button(n.cancel).clicked();
+        out.1 = row
+            .add_enabled(ButtonRole::Primary, can_next, Button::new(next))
+            .clicked();
+        out.2 = row.button(ButtonRole::Cancel, n.cancel).clicked();
     });
     out
 }
@@ -451,19 +454,14 @@ impl ExportWizard {
                     .labelled_by(l.id);
                 ui.end_row();
                 let l = ui.label(x.label_location);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        TextEdit::singleline(&mut self.folder)
-                            .desired_width(340.0)
-                            .hint_text(x.location_hint),
-                    )
-                    .labelled_by(l.id);
-                    crate::file_dialog::browse_button(
-                        ui,
-                        &mut self.folder,
-                        crate::file_dialog::Pick::Folder,
-                    );
-                });
+                crate::file_dialog::path_row(
+                    ui,
+                    &mut self.folder,
+                    crate::file_dialog::Pick::Folder,
+                    |e| e.hint_text(x.location_hint),
+                )
+                .edit
+                .labelled_by(l.id);
                 ui.end_row();
                 ui.label(x.label_format);
                 let o = crate::ovf_strings::ovf_strings();
@@ -792,14 +790,17 @@ impl ExportFileDialog {
                 ui.set_max_width(460.0);
                 ui.label(text);
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(x.continue_export).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, x.continue_export).clicked() {
                         answer = Some(0);
                     }
-                    if ui.button(x.choose_destination).clicked() {
+                    if row
+                        .button(ButtonRole::Other, x.choose_destination)
+                        .clicked()
+                    {
                         answer = Some(1);
                     }
-                    if ui.button(n.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                         answer = Some(2);
                     }
                 });
@@ -820,23 +821,26 @@ impl ExportFileDialog {
             ui.set_max_width(520.0);
             ui.label(RichText::new(&record.name_label).strong());
             let l = ui.label(x.file_name);
-            ui.horizontal(|ui| {
-                ui.add(TextEdit::singleline(&mut self.path).desired_width(400.0))
-                    .labelled_by(l.id);
-                crate::file_dialog::browse_button(
-                    ui,
-                    &mut self.path,
-                    crate::file_dialog::Pick::Save(crate::file_dialog::xva_filters()),
-                );
-            });
+            crate::file_dialog::path_row(
+                ui,
+                &mut self.path,
+                crate::file_dialog::Pick::Save(crate::file_dialog::xva_filters()),
+                |e| e,
+            )
+            .edit
+            .labelled_by(l.id);
             ui.checkbox(&mut self.verify, x.verify);
             error_label(ui, &self.error);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                go = ui
-                    .add_enabled(!self.path.trim().is_empty(), Button::new(x.export_button))
+            dialog_buttons(ui, |row| {
+                go = row
+                    .add_enabled(
+                        ButtonRole::Primary,
+                        !self.path.trim().is_empty(),
+                        Button::new(x.export_button),
+                    )
                     .clicked();
-                cancel = ui.button(n.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, n.cancel).clicked();
             });
         });
         if cancel {
@@ -1161,24 +1165,14 @@ impl ImportWizard {
         ui.add_space(8.0);
         ui.add_enabled_ui(self.uncompress.is_none(), |ui| {
             let l = ui.label(x.label_filename);
-            let changed = ui
-                .horizontal(|ui| {
-                    let typed = ui
-                        .add(
-                            TextEdit::singleline(&mut self.path)
-                                .desired_width(480.0)
-                                .hint_text(x.path_hint),
-                        )
-                        .labelled_by(l.id)
-                        .changed();
-                    let browsed = crate::file_dialog::browse_button(
-                        ui,
-                        &mut self.path,
-                        crate::file_dialog::Pick::Open(crate::file_dialog::import_filters()),
-                    );
-                    typed || browsed
-                })
-                .inner;
+            let row = crate::file_dialog::path_row(
+                ui,
+                &mut self.path,
+                crate::file_dialog::Pick::Open(crate::file_dialog::import_filters()),
+                |e| e.hint_text(x.path_hint),
+            );
+            let changed = row.changed();
+            row.edit.labelled_by(l.id);
             if changed {
                 self.error = None;
                 self.capacity = None;

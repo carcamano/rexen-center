@@ -501,3 +501,75 @@ fn dialog_screenshots() {
 
     std::fs::write(dir.join("dialogs.tsv"), rects).expect("write dialogs.tsv");
 }
+
+/// Tools > Options and a live host's tabs in egui's look and GNOME's and
+/// KDE Plasma's, light: for checking the tabs and the alignment of the
+/// dialogs' rows and buttons by eye. Besides the PNGs it writes
+/// `alignment.tsv`: each file and the Options dialog's rectangle in pixels.
+///
+/// ```text
+/// REXEN_SCREENSHOTS_DIR=/some/dir cargo test -p xenadmin \
+///   --features readme-screenshots alignment_screenshots -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "writes alignment screenshots to REXEN_SCREENSHOTS_DIR (mock server only)"]
+fn alignment_screenshots() {
+    use std::fmt::Write as _;
+
+    use crate::window_frame::Flavor;
+    let dir =
+        PathBuf::from(std::env::var("REXEN_SCREENSHOTS_DIR").expect("set REXEN_SCREENSHOTS_DIR"));
+    std::fs::create_dir_all(&dir).expect("the screenshot folder");
+    let runtime = runtime();
+    let server = runtime.block_on(MockServer::start(false));
+    let s = strings();
+    let t = tab_strings();
+    let looks = [
+        ("egui", None),
+        ("gnome", Some(WindowFrame::new(Flavor::Gnome))),
+        ("kde", Some(WindowFrame::new(Flavor::Kde))),
+    ];
+    let mut rects = String::new();
+    for (look, frame) in looks {
+        let mut h = framed_screenshot_harness(&runtime, frame);
+        set_theme(&mut h, ThemeSetting::Light);
+        connect_through_dialog(&mut h, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut h, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+                && first_conn(h).is_some_and(|c| c.status.is_connected())
+        });
+        let conn = first_conn(&h).unwrap().id;
+
+        // A live host: its many tabs.
+        select(
+            &mut h,
+            Selection::Host(conn, Ref::new("OpaqueRef:host-0001")),
+        );
+        tab(&mut h, t.tab_general);
+        shoot(&mut h, &dir, &format!("host-{look}-light.png"));
+
+        // Tools > Options.
+        h.get_by_label(s.menu_tools).click();
+        step_until(&mut h, "tools menu", |h| {
+            h.query_by_label(s.menu_options).is_some()
+        });
+        h.get_by_label(s.menu_options).click();
+        step_until(&mut h, "options", |h| {
+            h.query_by_label(s.options_restore).is_some()
+        });
+        let name = format!("options-{look}-light.png");
+        shoot(&mut h, &dir, &name);
+        let r = h.get_by_label(s.options_title).rect().expand(24.0);
+        let px = |v: f32| (v * SCALE).round().max(0.0);
+        writeln!(
+            rects,
+            "{name}\t{}\t{}\t{}\t{}",
+            px(r.left()),
+            px(r.top()),
+            px(r.width()),
+            px(r.height())
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.join("alignment.tsv"), rects).expect("write alignment.tsv");
+}

@@ -28,6 +28,7 @@ use xen_core::{
     ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionModel, ConnectionView,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
@@ -801,9 +802,12 @@ impl VAppProperties {
                     });
                 });
                 ui.separator();
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let valid = !self.name.trim().is_empty() && self.warning.is_none();
-                    if ui.add_enabled(valid, Button::new(s.ok)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Primary, valid, Button::new(s.ok))
+                        .clicked()
+                    {
                         self.order.set_vms(&conn.model, &self.vms.selected);
                         let changes = self.changes(&conn.model);
                         if changes.is_empty() {
@@ -822,7 +826,7 @@ impl VAppProperties {
                             outcome = Ok(Some(self.save(&conn.model)));
                         }
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         outcome = Err(());
                     }
                 });
@@ -1057,9 +1061,11 @@ impl ManageVApps {
                 });
             }
             ui.separator();
-            if ui.button(s.button_close).clicked() {
-                close = true;
-            }
+            dialog_buttons(ui, |row| {
+                if row.button(ButtonRole::Cancel, s.button_close).clicked() {
+                    close = true;
+                }
+            });
         });
         if close {
             return Err(());

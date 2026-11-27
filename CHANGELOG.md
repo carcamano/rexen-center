@@ -41,6 +41,20 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   space moves the window and a double-click zooms or minimizes it as System
   Settings say. `REXENCENTER_TITLE_BAR=system` keeps the system's title bar.
   Linux and Windows are unchanged.
+- **Dialog buttons at the bottom right**: every dialog's and wizard's buttons
+  (OK, Cancel, Yes, No, Previous, Next, Finish…) sit at the dialog's bottom
+  right instead of the left, in the platform's order: Cancel and then the
+  main action at the right end on macOS, GNOME and the other Linux desktops,
+  as Apple's and GNOME's guidelines ask; the main action and then Cancel on
+  Windows and KDE Plasma (a forced `REXENCENTER_TITLE_BAR` look brings its
+  desktop's order). Path fields fill their row with the Browse... button at
+  its right end, so those buttons line up with each other and with the
+  dialog's (Tools > Options > External Tools among others).
+- **Tabs that look like tabs**: the detail tabs (General, Memory, Storage…)
+  are drawn as macOS draws a tab view: a segmented control centred on the
+  line at the top of the pane, the selected tab raised, instead of buttons
+  like the toolbar's. The Alerts and Events switch uses the same segmented
+  control.
 
 ## 0.1.1 — 2026-11-27
 

@@ -24,6 +24,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill, strings};
 use crate::ops_strings::ops_strings;
 use crate::window_frame::dialog_window;
@@ -1396,9 +1397,9 @@ impl OpsUi {
                 ui.set_max_width(440.0);
                 ui.label(&dialog.question.text);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let yes = ui.button(dialog.question.yes);
-                    let no = ui.button(o.no);
+                dialog_buttons(ui, |row| {
+                    let yes = row.button(ButtonRole::Primary, dialog.question.yes);
+                    let no = row.button(ButtonRole::Cancel, o.no);
                     if std::mem::take(&mut dialog.focus) {
                         if dialog.question.no_default {
                             no.request_focus();
@@ -1409,7 +1410,7 @@ impl OpsUi {
                     if yes.clicked() {
                         answer = Some(true);
                     }
-                    if no.clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                    if no.clicked() || row.ui().input(|i| i.key_pressed(Key::Escape)) {
                         answer = Some(false);
                     }
                 });
@@ -1507,16 +1508,20 @@ impl OpsUi {
                     });
                 }
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready =
                         !busy && !dialog.username.trim().is_empty() && !dialog.password.is_empty();
-                    if ui
-                        .add_enabled(ready, Button::new(o.elevation_authorize))
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            ready,
+                            Button::new(o.elevation_authorize),
+                        )
                         .clicked()
                     {
                         submit = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });
@@ -1655,20 +1660,21 @@ impl OpsUi {
                     });
                 }
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready = matches!(&dialog.result, Some(Ok(b)) if b.is_empty())
                         && conn.status.is_connected()
                         && (!dialog.coordinator
                             || (dialog.new_coordinator.is_some()
                                 && xen_core::pool::new_coordinator_problem(&conn.model).is_none()));
-                    if ui
-                        .add_enabled(ready, Button::new(o.evacuate_button))
+                    if row
+                        .add_enabled(ButtonRole::Primary, ready, Button::new(o.evacuate_button))
                         .clicked()
                     {
                         evacuate = true;
                     }
-                    if ui
+                    if row
                         .add_enabled(
+                            ButtonRole::Other,
                             dialog.pending.is_none(),
                             Button::new(o.evacuate_check_again),
                         )
@@ -1676,7 +1682,7 @@ impl OpsUi {
                     {
                         check_again = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });

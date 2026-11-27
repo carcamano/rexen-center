@@ -12,6 +12,7 @@ use xen_core::{
     ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionView, PerfmonObjectRef,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::ops_ui::OpsUi;
 use crate::perf_strings::perf_strings;
@@ -200,14 +201,18 @@ pub fn window(
             ui.add_space(4.0);
             ui.label(RichText::new(summary(&d.form)).weak());
             ui.separator();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(d.form.is_valid(), egui::Button::new(p.pm_ok))
+            dialog_buttons(ui, |row| {
+                if row
+                    .add_enabled(
+                        ButtonRole::Primary,
+                        d.form.is_valid(),
+                        egui::Button::new(p.pm_ok),
+                    )
                     .clicked()
                 {
                     save = true;
                 }
-                if ui.button(p.pm_cancel).clicked() {
+                if row.button(ButtonRole::Cancel, p.pm_cancel).clicked() {
                     close = true;
                 }
             });
