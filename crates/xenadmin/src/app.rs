@@ -12,6 +12,7 @@ use xapi::{Host, HostRecord, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
 use xen_core::console::ConsoleTarget;
 use xen_core::model::{self, ConnectionModel, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm};
 use xen_core::objects::{self, VmKind};
+use xen_core::search_eval::ObjKey;
 use xen_core::{
     AppState, BackendHandle, CertificatePrompt, Command, ConfigLocation, ConnectionError,
     ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
@@ -1439,21 +1440,11 @@ impl XenAdminApp {
                 );
             }
             response.context_menu(|ui| {
-                if conn.status.is_connected() {
-                    // `Helpers.PoolHasEnabledHosts`.
-                    let host_ok = conn
-                        .model
-                        .hosts
-                        .values()
-                        .any(|h| h.enabled && objects::host_is_live(&conn.model, h));
-                    let mut entries = vec![
-                        provision_ui::new_vm_entry(conn, None),
-                        storage_ui::new_sr_entry(conn),
-                        crate::xva_ui::import_entry(conn, None),
-                        crate::xva_ui::export_entry(state, conn, &[], host_ok),
-                        Entry::Separator,
-                    ];
-                    entries.extend(pool_ui::pool_entries(state, conn));
+                if conn.status.is_connected()
+                    && let Some((pool, _)) = conn.model.pool()
+                {
+                    let object = ObjKey::Pool(conn.id, pool.clone());
+                    let entries = ops_ui::object_entries(state, conn, &object);
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                     ui.separator();
                 }
@@ -1528,9 +1519,10 @@ impl XenAdminApp {
             ui.add_space(ui.spacing().indent);
             icons::sr(ui, sr.icon);
             let response = self.tree_label(ui, Selection::Sr(conn.id, sr.sr_ref.clone()), &sr.name);
-            if let Some(record) = conn.model.srs.get(&sr.sr_ref) {
+            if conn.model.srs.contains_key(&sr.sr_ref) {
                 response.context_menu(|ui| {
-                    let entries = storage_ui::sr_entries(conn, &sr.sr_ref, record);
+                    let object = ObjKey::Sr(conn.id, sr.sr_ref.clone());
+                    let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                 });
             }
@@ -1764,19 +1756,8 @@ impl XenAdminApp {
     fn vm_context_menu(&mut self, response: &egui::Response, conn: &ConnectionView, vm: &TreeVm) {
         if let Some(record) = conn.model.vms.get(&vm.vm_ref) {
             response.context_menu(|ui| {
-                let entries = if model::is_guest(record) {
-                    let mut e = ops_ui::vm_entries(conn, &vm.vm_ref, record);
-                    e.extend(provision_ui::vm_entries(conn, &vm.vm_ref, record));
-                    e.push(crate::xva_ui::export_entry(
-                        &self.backend.state(),
-                        conn,
-                        std::slice::from_ref(&vm.vm_ref),
-                        false,
-                    ));
-                    e
-                } else {
-                    provision_ui::template_entries(conn, &vm.vm_ref, record)
-                };
+                let object = ObjKey::Vm(conn.id, vm.vm_ref.clone());
+                let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                 self.ops.menu(
                     ui,
                     conn,
@@ -1805,24 +1786,10 @@ impl XenAdminApp {
         conn: &ConnectionView,
         host: &Ref<Host>,
     ) {
-        if let Some(record) = conn.model.hosts.get(host) {
+        if conn.model.hosts.contains_key(host) {
             response.context_menu(|ui| {
-                let state = self.backend.state();
-                let host_ok = record.enabled && objects::host_is_live(&conn.model, record);
-                let mut entries = vec![
-                    provision_ui::new_vm_entry(conn, Some(host.clone())),
-                    storage_ui::new_sr_entry(conn),
-                    crate::xva_ui::import_entry(conn, Some(host.clone())),
-                    crate::xva_ui::export_entry(&state, conn, &[], host_ok),
-                    Entry::Separator,
-                ];
-                entries.extend(ops_ui::host_entries(conn, host, record));
-                entries.extend(pool_ui::host_entries(
-                    &self.backend.state(),
-                    conn,
-                    host,
-                    record,
-                ));
+                let object = ObjKey::Host(conn.id, host.clone());
+                let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                 self.ops.menu(ui, conn, None, entries, true, &self.backend);
             });
         }

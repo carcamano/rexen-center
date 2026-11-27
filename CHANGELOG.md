@@ -27,6 +27,13 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   navigators). The Alerts and Events area puts its actions (Dismiss
   Selected, Dismiss All, Clear Finished) at the right end of its tab row
   instead of a row of their own.
+- **Context menus in the organization views**: right-clicking a pool, a
+  server, a VM, a template or an SR in Objects, the organization views or a
+  saved search offers the same operations as in the Infrastructure tree,
+  after the view's own (Remove from Folder, Untag) and before Properties.
+  Both trees build them in one place (`ops_ui::object_entries`). Rows with
+  nothing to offer (the type groups, disks, networks) no longer open an
+  empty menu.
 - **Dialogs without a line over their buttons**: as on macOS and GNOME,
   space separates a dialog's buttons from its contents.
 - **Properties page lists**: the pages of the Properties dialogs (pool,

@@ -362,6 +362,50 @@ pub fn dnd(
 }
 
 /// The objects under a group node (for Untag).
+/// Whether a row of an organization view has organization items in its
+/// context menu: Remove from Folder or Untag (objects), the folder's and
+/// the tag's own (folders, tags).
+fn org_items(
+    n: &Node,
+    parent_folder: Option<&str>,
+    parent_group: Option<&GroupTag>,
+    in_org_view: bool,
+) -> bool {
+    match &n.item {
+        NodeItem::Object(ObjKey::Folder(_)) => true,
+        NodeItem::Object(o) => {
+            in_org_view
+                && o.org_object().is_some()
+                && (parent_folder.is_some_and(|f| f != "/")
+                    || tag_of_parent(parent_group).is_some())
+        }
+        NodeItem::Group(tag) => tag_of_parent(Some(tag)).is_some(),
+    }
+}
+
+/// Whether a row has a context menu at all: none, rather than an empty
+/// one, on the type groups, disks and networks.
+fn has_context_menu(
+    state: &AppState,
+    n: &Node,
+    parent_folder: Option<&str>,
+    parent_group: Option<&GroupTag>,
+    in_org_view: bool,
+) -> bool {
+    if org_items(n, parent_folder, parent_group, in_org_view) {
+        return true;
+    }
+    match &n.item {
+        NodeItem::Object(
+            o @ (ObjKey::Pool(..) | ObjKey::Host(..) | ObjKey::Vm(..) | ObjKey::Sr(..)),
+        ) => o
+            .connection()
+            .and_then(|c| state.connection(c))
+            .is_some_and(|c| c.status.is_connected()),
+        _ => false,
+    }
+}
+
 fn tag_of_parent(parent: Option<&GroupTag>) -> Option<String> {
     match parent {
         Some(GroupTag {
@@ -643,19 +687,21 @@ impl OrgUi {
                 backend,
                 &mut me.drop_hint,
             );
-            r.context_menu(|ui| {
-                me.context_menu(
-                    ui,
-                    state,
-                    w,
-                    n,
-                    parent_folder,
-                    parent_group,
-                    in_org_view,
-                    ops,
-                    backend,
-                )
-            });
+            if has_context_menu(state, n, parent_folder, parent_group, in_org_view) {
+                r.context_menu(|ui| {
+                    me.context_menu(
+                        ui,
+                        state,
+                        w,
+                        n,
+                        parent_folder,
+                        parent_group,
+                        in_org_view,
+                        ops,
+                        backend,
+                    )
+                });
+            }
         };
         if n.children.is_empty() {
             ui.horizontal(|ui| {
@@ -770,13 +816,33 @@ impl OrgUi {
                     );
                     ui.close();
                 }
-                if let ObjKey::Vm(c, vm) = o
-                    && ui.button(s.properties).clicked()
-                {
-                    if let Some(conn) = state.connection(*c) {
-                        self.vm_properties = VmPropertiesDialog::open(conn, vm.clone());
+                // The object's own operations, as in the Infrastructure
+                // tree, under the organization ones.
+                let mut drawn = org_items(n, parent_folder, parent_group, in_org_view);
+                if let Some(conn) = o.connection().and_then(|c| state.connection(c)) {
+                    let entries = crate::ops_ui::object_entries(state, conn, o);
+                    if !entries.is_empty() {
+                        if drawn {
+                            ui.separator();
+                        }
+                        let vm = match o {
+                            ObjKey::Vm(_, r) => conn.model.vms.get(r).map(|rec| (r, &**rec)),
+                            _ => None,
+                        };
+                        ops.menu(ui, conn, vm, entries, true, backend);
+                        drawn = true;
                     }
-                    ui.close();
+                }
+                if let ObjKey::Vm(c, vm) = o {
+                    if drawn {
+                        ui.separator();
+                    }
+                    if ui.button(s.properties).clicked() {
+                        if let Some(conn) = state.connection(*c) {
+                            self.vm_properties = VmPropertiesDialog::open(conn, vm.clone());
+                        }
+                        ui.close();
+                    }
                 }
             }
             NodeItem::Group(tag) => {

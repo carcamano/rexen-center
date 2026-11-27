@@ -617,6 +617,14 @@ fn alignment_screenshots() {
         });
         record(&mut h, &sr_title, format!("sr-props-{look}-light.png"));
         press(&mut h, s.cancel);
+
+        // A server's context menu in the Objects view.
+        click_first(&mut h, crate::org_strings::org_strings().nav_objects);
+        settle(&mut h);
+        right_click(&mut h, "xcp-host-01");
+        shoot(&mut h, &dir, &format!("objects-menu-{look}-light.png"));
+        h.key_press(egui::Key::Escape);
+        settle(&mut h);
     }
     std::fs::write(dir.join("alignment.tsv"), rects).expect("write alignment.tsv");
 }
