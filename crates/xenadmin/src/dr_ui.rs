@@ -45,6 +45,7 @@ use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
+use crate::window_frame::dialog_window;
 use crate::xva_ui::page_list;
 
 /// Precheck ids of this module.
@@ -1665,7 +1666,7 @@ impl DrWizard {
             Some(Err(())) => self.iscsi = None,
             _ => {}
         }
-        egui::Window::new(self.title(&pool))
+        dialog_window(self.title(&pool))
             .id(egui::Id::unique("dr-wizard"))
             .collapsible(false)
             .resizable(false)

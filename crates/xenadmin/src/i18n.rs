@@ -42,6 +42,9 @@ string_table! {
     window_maximize = "Maximize",
     window_restore = "Restore",
     window_close = "Close",
+    /// The close button of the dialogs on GNOME and KDE Plasma (this
+    /// console's own).
+    dialog_close = "Close Dialog",
 
     action_start = "Start",
     action_clean_shutdown = "Shut Down",

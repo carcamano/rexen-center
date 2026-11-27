@@ -25,6 +25,7 @@ use xen_core::{AppState, BackendHandle, Command, ConnectionId, ConnectionModel, 
 use crate::branding;
 use crate::i18n::{self, fill};
 use crate::sr_strings::sr_strings;
+use crate::window_frame::dialog_window;
 
 /// The wizard's pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,7 +671,7 @@ impl NewSrWizard {
         };
         let mut open = true;
         let mut cancelled = false;
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("new-sr-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -1263,7 +1264,7 @@ impl NewSrWizard {
         let mut reattach = false;
         let mut format = false;
         let mut cancel = false;
-        egui::Window::new(s.lvm_dialog_title)
+        dialog_window(s.lvm_dialog_title)
             .id(egui::Id::unique("new-sr-lun-choice"))
             .collapsible(false)
             .resizable(false)
@@ -1348,7 +1349,7 @@ impl NewSrWizard {
         };
         let mut yes = false;
         let mut no = false;
-        egui::Window::new(s.lvm_dialog_title)
+        dialog_window(s.lvm_dialog_title)
             .id(egui::Id::unique("new-sr-warning"))
             .collapsible(false)
             .resizable(false)

@@ -32,6 +32,7 @@ use crate::i18n::{self, fill};
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
+use crate::window_frame::dialog_window;
 
 /// `HAPage.HB_INITIALIZATION_DELAY`.
 const HEARTBEAT_DELAY: Duration = Duration::from_secs(30);
@@ -786,7 +787,7 @@ impl HaWizard {
         }
         let mut open = true;
         let mut outcome = Ok(None);
-        egui::Window::new(h.wizard_title)
+        dialog_window(h.wizard_title)
             .id(egui::Id::unique("ha-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -913,7 +914,7 @@ impl EditHaDialog {
         }
         let mut result = Ok(None);
         let mut open = true;
-        egui::Window::new(fill(h.edit_title, &[("pool", &pool_name)]))
+        dialog_window(fill(h.edit_title, &[("pool", &pool_name)]))
             .id(egui::Id::unique("ha-edit"))
             .collapsible(false)
             .resizable(false)

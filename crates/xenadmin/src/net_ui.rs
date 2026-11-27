@@ -31,6 +31,7 @@ use crate::net_strings::net_strings;
 use crate::new_network::{BondCheck, BondChoice, BondForm, NewNetworkWizard, WizardOutcome};
 use crate::ops_ui::{Confirmation, OpsUi};
 use crate::tabs::{self, Table};
+use crate::window_frame::{DialogWindow, dialog_window};
 
 /// The question asked before a networking request, if any (the
 /// original's `WarningDialog`s).
@@ -1283,8 +1284,8 @@ impl NetUi {
     }
 }
 
-fn window(title: String) -> egui::Window<'static> {
-    egui::Window::new(title)
+fn window(title: String) -> DialogWindow<'static> {
+    dialog_window(title)
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])

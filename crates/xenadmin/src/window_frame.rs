@@ -29,6 +29,11 @@
 //! macOS and other desktops keep the system's frame.
 //! `REXENCENTER_TITLE_BAR` overrides the choice: `system` keeps the system's
 //! frame, `gnome`, `kde` or `windows` force that look on any platform.
+//! The dialogs take the same look ([`dialog`]).
+
+mod dialog;
+
+pub use dialog::{DialogWindow, dialog_window, style_dialogs};
 
 use std::path::{Path, PathBuf};
 
@@ -383,6 +388,12 @@ struct Look {
 }
 
 impl Flavor {
+    /// Whether the system draws this look's window shadow, border and
+    /// rounded corners: Windows' own, on Windows.
+    fn system_draws_edges(self) -> bool {
+        self == Flavor::Windows && cfg!(windows)
+    }
+
     fn look(self) -> Look {
         match self {
             // libadwaita: a 46-point header bar, 24-point round buttons
@@ -444,12 +455,32 @@ fn window_state(ctx: &Context) -> WindowState {
     })
 }
 
+/// The window's corner radius now: none when maximized or full screen, or
+/// when the system rounds the corners.
+fn window_radius(flavor: Flavor, ctx: &Context) -> u8 {
+    let state = window_state(ctx);
+    if state.maximized || state.fullscreen || flavor.system_draws_edges() {
+        0
+    } else {
+        flavor.look().radius
+    }
+}
+
+/// The thin line around the window and the dialogs.
+fn outline_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_white_alpha(28)
+    } else {
+        Color32::from_black_alpha(48)
+    }
+}
+
 impl WindowFrame {
     /// Whether the system still draws the borderless window's shadow,
     /// border and rounded corners: on Windows (DWM, for winit's undecorated
     /// windows with their shadow), not on the Linux desktops.
     fn system_draws_edges(&self) -> bool {
-        self.flavor == Flavor::Windows && cfg!(windows)
+        self.flavor.system_draws_edges()
     }
 
     /// Whether the window needs a transparent background: the app rounds
@@ -458,15 +489,9 @@ impl WindowFrame {
         !self.system_draws_edges()
     }
 
-    /// The window's corner radius now: none when maximized or full screen,
-    /// or when the system rounds the corners.
+    /// The window's corner radius now: see [`window_radius`].
     fn radius(&self, ctx: &Context) -> u8 {
-        let state = window_state(ctx);
-        if state.maximized || state.fullscreen || self.system_draws_edges() {
-            0
-        } else {
-            self.flavor.look().radius
-        }
+        window_radius(self.flavor, ctx)
     }
 
     /// The frame of the panel at the window's top: the panel's fill, the
@@ -747,11 +772,7 @@ impl WindowFrame {
         let window = ctx.viewport_rect();
         if !self.system_draws_edges() {
             let radius = f32::from(self.radius(ctx));
-            let outline = if ctx.global_style().visuals.dark_mode {
-                Color32::from_white_alpha(28)
-            } else {
-                Color32::from_black_alpha(48)
-            };
+            let outline = outline_color(ctx.global_style().visuals.dark_mode);
             ctx.layer_painter(egui::LayerId::new(
                 Order::Foreground,
                 Id::unique("window-outline"),
