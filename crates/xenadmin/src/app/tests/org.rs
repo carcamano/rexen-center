@@ -73,13 +73,14 @@ fn navigation_views_build_their_trees() {
     let (_server, mut h) = org_window(&runtime);
     let s = org_strings();
 
-    // The buttons switch modes.
+    // The tabs and the More menu switch modes.
     press(&mut h, s.nav_objects);
     assert_eq!(h.state().org.mode, NavMode::View(OrgView::Objects));
     assert!(shows(&h, s.view_objects));
     assert!(shows(&h, s.type_vms) && shows(&h, s.type_servers) && shows(&h, s.type_networks));
     assert!(shows(&h, "web-01"));
-    press(&mut h, s.nav_organization);
+    press(&mut h, s.nav_more);
+    assert!(shows(&h, s.nav_organization) && shows(&h, s.nav_saved));
     press(&mut h, s.nav_tags);
     assert_eq!(h.state().org.mode, NavMode::View(OrgView::Tags));
     assert!(shows(&h, s.view_tags) && shows(&h, "prod") && shows(&h, "web"));
@@ -95,7 +96,7 @@ fn navigation_views_build_their_trees() {
     assert!(shows(&h, s.view_vapps));
 
     // A saved search's tree: VMs by Power State.
-    press(&mut h, s.nav_saved);
+    press(&mut h, s.nav_more);
     press(&mut h, s.search_vms_by_power_state);
     assert!(matches!(h.state().org.mode, NavMode::Saved(_)));
     assert!(shows(&h, "Running") && shows(&h, "Halted") && shows(&h, "web-01"));
@@ -213,9 +214,8 @@ fn search_tab_filters_groups_saves_exports_and_imports() {
     assert!(xml.contains("<PropertyGrouping property=\"power_state\" />"));
     assert!(xml.contains("<sort column=\"name\" ascending=\"yes\" />"));
     catch_up(&mut h);
-    // It is in the Saved Searches menu and mode (the navigation pane's
-    // button, not the Search tab's menu of the same name).
-    h.get_all_by_label(s.nav_saved).next().unwrap().click();
+    // It is in the navigation tabs' More menu, under Saved Searches.
+    h.get_all_by_label(s.nav_more).next().unwrap().click();
     settle(&mut h);
     assert!(shows(&h, "Ending in 01"));
     h.get_all_by_label("Ending in 01")
@@ -500,4 +500,48 @@ fn drag_and_drop_into_folders_onto_tags_and_onto_servers() {
         server.field("vm", WEB, "resident_on") == Some(json!(H2))
     });
     let _ = H1;
+}
+
+/// Right-clicking an object in an organization view offers its own
+/// operations, as in the Infrastructure tree, after the view's own items;
+/// a type group has no menu at all (not an empty one).
+#[test]
+fn objects_keep_their_context_menus_in_the_views() {
+    let runtime = runtime();
+    let (_server, mut h) = org_window(&runtime);
+    let s = org_strings();
+    let sr = crate::sr_strings::sr_strings();
+    let o = ops_strings();
+    press(&mut h, s.nav_objects);
+    assert!(!shows(&h, o.restart_toolstack));
+
+    // An SR: the ones it allows now (Detach is not, with running VMs on
+    // it), down to Properties.
+    let properties = |h: &Harness<'_, XenAdminApp>| h.query_all_by_label(sr.properties).count();
+    let before = properties(&h);
+    right_click(&mut h, "NFS VM storage");
+    assert_eq!(properties(&h), before + 1, "the SR's operations");
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert_eq!(properties(&h), before, "closed");
+
+    // A server: its operations.
+    right_click(&mut h, "xcp-host-01");
+    assert!(shows(&h, o.restart_toolstack), "the server's operations");
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+
+    // A type group: no menu.
+    right_click(&mut h, s.type_vdis);
+    assert_eq!(properties(&h), before);
+    assert!(!shows(&h, o.restart_toolstack));
+
+    // In Objects by Tag, a tagged VM: Untag, then its operations and
+    // Properties.
+    mode(&mut h, NavMode::View(OrgView::Tags));
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    right_click(&mut h, "db-01");
+    assert!(shows(&h, s.untag), "the view's item");
+    assert!(shows(&h, s.properties), "Properties");
 }

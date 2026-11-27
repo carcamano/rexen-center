@@ -16,6 +16,7 @@ use xen_core::provisioning::{
 };
 use xen_core::{AppState, ConnectionId, ConnectionModel, ConnectionView};
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::prov_strings::prov_strings;
 use crate::window_frame::dialog_window;
@@ -591,20 +592,28 @@ impl NewVmWizard {
                             });
                     });
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                dialog_buttons(ui, |row| {
                     let index = PAGES.iter().position(|x| *x == self.page).unwrap_or(0);
-                    if ui.add_enabled(index > 0, Button::new(p.back)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Back, index > 0, Button::new(p.back))
+                        .clicked()
+                    {
                         self.page = PAGES[index - 1];
                     }
                     let ok = self.page_ok(&model, self.page);
                     if self.page == Page::Finish {
-                        if ui.add_enabled(ok, Button::new(p.create_now)).clicked()
+                        if row
+                            .add_enabled(ButtonRole::Primary, ok, Button::new(p.create_now))
+                            .clicked()
                             && let Some(spec) = self.spec(&model)
                         {
                             outcome = WizardOutcome::Create(self.connection, Box::new(spec));
                         }
-                    } else if ui.add_enabled(ok, Button::new(p.next)).clicked() {
+                    } else if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(p.next))
+                        .clicked()
+                    {
                         if self.page == Page::Template && self.applied != self.template {
                             self.apply_template(&model, self.affinity.clone());
                         }
@@ -613,7 +622,7 @@ impl NewVmWizard {
                         }
                         self.page = PAGES[index + 1];
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         outcome = WizardOutcome::Cancelled;
                     }
                 });
@@ -1121,13 +1130,16 @@ impl NewVmWizard {
                     ui.end_row();
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ok = !form.disk.name.trim().is_empty() && !form.disk.sr.is_null();
-                    if ui.add_enabled(ok, Button::new(p.ok)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(p.ok))
+                        .clicked()
+                    {
                         save = true;
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1248,15 +1260,19 @@ impl NewVmWizard {
                 if !mac_ok {
                     ui.colored_label(ui.visuals().error_fg_color, p.invalid_mac);
                 }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(mac_ok && form.network.is_some(), Button::new(p.ok))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            mac_ok && form.network.is_some(),
+                            Button::new(p.ok),
+                        )
                         .clicked()
                     {
                         save = true;
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });

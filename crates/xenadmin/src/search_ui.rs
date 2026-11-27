@@ -1556,19 +1556,20 @@ impl SearchPanel {
             .id_salt("search-results")
             .auto_shrink(false)
             .show(ui, |ui| {
-                Grid::new("search-grid")
+                let mut headings_bottom = f32::NEG_INFINITY;
+                let grid = Grid::new("search-grid")
                     .striped(true)
                     .num_columns(columns.len())
                     .spacing([18.0, 4.0])
                     .show(ui, |ui| {
                         for c in &columns {
-                            let mut title = column_title(c);
-                            if let Some((sc, asc)) = &self.sort
-                                && sc == c
-                            {
-                                title.push_str(if *asc { " ^" } else { " v" });
-                            }
-                            let r = ui.button(RichText::new(title).strong());
+                            let title = column_title(c);
+                            let sort = match &self.sort {
+                                Some((sc, asc)) if sc == c => Some(*asc),
+                                _ => None,
+                            };
+                            let r = crate::controls::column_heading(ui, &title, sort);
+                            headings_bottom = headings_bottom.max(r.rect.bottom());
                             if r.clicked() {
                                 sort_by = Some(c.clone());
                             }
@@ -1621,6 +1622,11 @@ impl SearchPanel {
                                     for c in &columns {
                                         if c == "name" {
                                             ui.horizontal(|ui| {
+                                                // The column is as wide as
+                                                // its longest name: no
+                                                // wrapping inside it.
+                                                ui.style_mut().wrap_mode =
+                                                    Some(egui::TextWrapMode::Extend);
                                                 ui.add_space(*depth as f32 * 16.0);
                                                 ui.vertical(|ui| {
                                                     if ui.link(w.name(object)).clicked() {
@@ -1643,6 +1649,7 @@ impl SearchPanel {
                             }
                         }
                     });
+                crate::controls::paint_heading_rule(ui, grid.response.rect, headings_bottom);
             });
         if let Some(k) = toggle
             && !self.collapsed.remove(&k)

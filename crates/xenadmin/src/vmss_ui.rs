@@ -38,6 +38,7 @@ use xen_core::{
     Precheck, PrecheckResult,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
@@ -752,7 +753,7 @@ impl NewPolicyWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == NewPage::Finish;
                 let (previous, next, cancel) = nav(
                     ui,
@@ -909,21 +910,21 @@ impl PolicyProperties {
             &[("name", &self.original.name_label)],
         ))
         .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
+            let mut divider = 0.0;
+            let row = ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(150.0);
-                    for (tab, label) in [
-                        (PropTab::General, s.tab_general),
-                        (PropTab::Vms, s.page_vms),
-                        (PropTab::Type, s.page_type),
-                        (PropTab::Schedule, s.page_schedule),
-                    ] {
-                        if ui.selectable_label(self.tab == tab, label).clicked() {
-                            self.tab = tab;
-                        }
+                    let pages = [
+                        (PropTab::General, s.tab_general, ""),
+                        (PropTab::Vms, s.page_vms, ""),
+                        (PropTab::Type, s.page_type, ""),
+                        (PropTab::Schedule, s.page_schedule, ""),
+                    ];
+                    if let Some(tab) = crate::controls::page_list(ui, &self.tab, pages) {
+                        self.tab = tab;
                     }
                 });
-                ui.separator();
+                divider = crate::controls::divider_gap(ui);
                 ui.vertical(|ui| {
                     ui.set_min_width(600.0);
                     egui::ScrollArea::vertical()
@@ -949,6 +950,7 @@ impl PolicyProperties {
                         });
                 });
             });
+            crate::controls::paint_divider(ui, divider, row.response.rect);
             if let Some(text) = self.warning.clone() {
                 ui.colored_label(ui.visuals().warn_fg_color, text);
                 ui.horizontal(|ui| {
@@ -964,34 +966,37 @@ impl PolicyProperties {
                     }
                 });
             }
-            ui.separator();
-            ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
                 let valid = !self.name.trim().is_empty() && self.schedule.choice.valid();
-                if ui.add_enabled(valid, Button::new(s.ok)).clicked() {
+                if row
+                    .add_enabled(ButtonRole::Primary, valid, Button::new(s.ok))
+                    .clicked()
+                {
                     let changes = self.changes();
                     if changes.is_empty() {
                         outcome = Err(());
-                        return;
-                    }
-                    let warning = changes.members.as_ref().and_then(|members| {
-                        change_text(rules::change_warning(
-                            &conn.model,
-                            members,
-                            Some(&self.policy),
-                            &self.name,
-                        ))
-                    });
-                    match warning {
-                        Some(text) => self.warning = Some(text),
-                        None => {
-                            outcome = Ok(Some(ActionRequest::SetPolicy {
-                                policy: self.policy.clone(),
-                                changes: Box::new(changes),
-                            }));
+                    } else {
+                        let warning = changes.members.as_ref().and_then(|members| {
+                            change_text(rules::change_warning(
+                                &conn.model,
+                                members,
+                                Some(&self.policy),
+                                &self.name,
+                            ))
+                        });
+                        match warning {
+                            Some(text) => self.warning = Some(text),
+                            None => {
+                                outcome = Ok(Some(ActionRequest::SetPolicy {
+                                    policy: self.policy.clone(),
+                                    changes: Box::new(changes),
+                                }));
+                            }
                         }
                     }
                 }
-                if ui.button(s.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                     outcome = Err(());
                 }
             });
@@ -1337,10 +1342,12 @@ impl ManagePolicies {
                     }
                 });
             }
-            ui.separator();
-            if ui.button(s.button_close).clicked() {
-                close = true;
-            }
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
+                if row.button(ButtonRole::Cancel, s.button_close).clicked() {
+                    close = true;
+                }
+            });
         });
         if close {
             return Err(());

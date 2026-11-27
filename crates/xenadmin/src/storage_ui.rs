@@ -19,6 +19,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::new_sr::{NewSrWizard, WizardOutcome};
 use crate::ops_ui::{Entry, OpsUi};
@@ -439,9 +440,15 @@ fn repair_window(
             });
         });
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        dialog_buttons(ui, |row| {
+            if running {
+                row.add_leading(egui::Spinner::new());
+            }
             let can = broken && !rows.is_empty() && !running && conn.status.is_connected();
-            if ui.add_enabled(can, Button::new(s.repair_button)).clicked() {
+            if row
+                .add_enabled(ButtonRole::Primary, can, Button::new(s.repair_button))
+                .clicked()
+            {
                 d.started = true;
                 ops.dispatch(
                     conn,
@@ -453,11 +460,8 @@ fn repair_window(
                 );
             }
             let label = if d.started { s.close } else { s.cancel };
-            if ui.button(label).clicked() {
+            if row.button(ButtonRole::Cancel, label).clicked() {
                 close = true;
-            }
-            if running {
-                ui.spinner();
             }
         });
     });
@@ -480,7 +484,8 @@ fn properties_window(
     let mut save = false;
     window(&fill(s.properties_title, &[("name", &sr.name_label)])).show(ctx, |ui| {
         ui.set_min_width(560.0);
-        ui.horizontal_top(|ui| {
+        let mut divider = 0.0;
+        let row = ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(120.0);
                 let mut tabs = vec![
@@ -496,13 +501,12 @@ fn properties_window(
                 if d.read_caching.is_some() {
                     tabs.push((PropertiesTab::ReadCaching, s.tab_read_caching));
                 }
-                for (tab, label) in tabs {
-                    if ui.selectable_label(d.tab == tab, label).clicked() {
-                        d.tab = tab;
-                    }
+                let pages = tabs.into_iter().map(|(tab, label)| (tab, label, ""));
+                if let Some(tab) = crate::controls::page_list(ui, &d.tab, pages) {
+                    d.tab = tab;
                 }
             });
-            ui.separator();
+            divider = crate::controls::divider_gap(ui);
             ui.vertical(|ui| {
                 ui.set_min_width(400.0);
                 match d.tab {
@@ -557,10 +561,12 @@ fn properties_window(
                 }
             });
         });
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui
+        crate::controls::paint_divider(ui, divider, row.response.rect);
+        ui.add_space(8.0);
+        dialog_buttons(ui, |row| {
+            if row
                 .add_enabled(
+                    ButtonRole::Primary,
                     !d.name.trim().is_empty() && d.org.valid(),
                     Button::new(s.ok),
                 )
@@ -569,7 +575,7 @@ fn properties_window(
                 save = true;
                 close = true;
             }
-            if ui.button(s.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                 close = true;
             }
         });

@@ -501,3 +501,130 @@ fn dialog_screenshots() {
 
     std::fs::write(dir.join("dialogs.tsv"), rects).expect("write dialogs.tsv");
 }
+
+/// A live host's tabs, Tools > Options, the host's Search tab and a VM's
+/// and an SR's Properties, in egui's look and GNOME's and KDE Plasma's,
+/// light: for checking the tabs, the navigation pane, the column headings,
+/// the page lists and the dialogs' rows and buttons by eye. Besides the
+/// PNGs it writes `alignment.tsv`: each dialog's file and rectangle in
+/// pixels.
+///
+/// ```text
+/// REXEN_SCREENSHOTS_DIR=/some/dir cargo test -p xenadmin \
+///   --features readme-screenshots alignment_screenshots -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "writes alignment screenshots to REXEN_SCREENSHOTS_DIR (mock server only)"]
+fn alignment_screenshots() {
+    use std::fmt::Write as _;
+
+    use crate::window_frame::Flavor;
+    let dir =
+        PathBuf::from(std::env::var("REXEN_SCREENSHOTS_DIR").expect("set REXEN_SCREENSHOTS_DIR"));
+    std::fs::create_dir_all(&dir).expect("the screenshot folder");
+    let runtime = runtime();
+    let server = runtime.block_on(MockServer::start(false));
+    let s = strings();
+    let t = tab_strings();
+    let looks = [
+        ("egui", None),
+        ("gnome", Some(WindowFrame::new(Flavor::Gnome))),
+        ("kde", Some(WindowFrame::new(Flavor::Kde))),
+    ];
+    let mut rects = String::new();
+    for (look, frame) in looks {
+        let mut h = framed_screenshot_harness(&runtime, frame);
+        set_theme(&mut h, ThemeSetting::Light);
+        connect_through_dialog(&mut h, &server.address(), xapi_mock::PASSWORD);
+        step_until(&mut h, "tree", |h| {
+            h.query_by_label("Lab Pool").is_some()
+                && first_conn(h).is_some_and(|c| c.status.is_connected())
+        });
+        let conn = first_conn(&h).unwrap().id;
+
+        // A live host: its many tabs.
+        select(
+            &mut h,
+            Selection::Host(conn, Ref::new("OpaqueRef:host-0001")),
+        );
+        tab(&mut h, t.tab_general);
+        shoot(&mut h, &dir, &format!("host-{look}-light.png"));
+
+        // The navigation tabs' More menu, open.
+        let more = crate::org_strings::org_strings().nav_more;
+        click_first(&mut h, more);
+        settle(&mut h);
+        shoot(&mut h, &dir, &format!("more-{look}-light.png"));
+        click_first(&mut h, more);
+        settle(&mut h);
+
+        // Tools > Options.
+        h.get_by_label(s.menu_tools).click();
+        step_until(&mut h, "tools menu", |h| {
+            h.query_by_label(s.menu_options).is_some()
+        });
+        h.get_by_label(s.menu_options).click();
+        step_until(&mut h, "options", |h| {
+            h.query_by_label(s.options_restore).is_some()
+        });
+        let mut record = |h: &mut Harness<'_, XenAdminApp>, title: &str, name: String| {
+            shoot(h, &dir, &name);
+            let r = h.get_by_label(title).rect().expand(24.0);
+            let px = |v: f32| (v * SCALE).round().max(0.0);
+            writeln!(
+                rects,
+                "{name}\t{}\t{}\t{}\t{}",
+                px(r.left()),
+                px(r.top()),
+                px(r.width()),
+                px(r.height())
+            )
+            .unwrap();
+        };
+        record(&mut h, s.options_title, format!("options-{look}-light.png"));
+        press(&mut h, s.close);
+
+        // The host's Search tab: its column headings.
+        tab(&mut h, crate::org_strings::org_strings().tab_search);
+        step_until(&mut h, "search results", |h| {
+            h.query_by_label("xcp-host-02").is_some()
+        });
+        shoot(&mut h, &dir, &format!("search-{look}-light.png"));
+
+        // A VM's Properties: the page list with summaries.
+        click_first(&mut h, "web-01");
+        settle(&mut h);
+        click_first(&mut h, crate::org_strings::org_strings().properties);
+        let vm_title = fill(
+            crate::org_strings::org_strings().vm_properties_title,
+            &[("name", "web-01")],
+        );
+        step_until(&mut h, "VM properties", |h| {
+            h.query_by_label(&vm_title).is_some()
+        });
+        record(&mut h, &vm_title, format!("vm-props-{look}-light.png"));
+        press(&mut h, s.cancel);
+
+        // An SR's Properties, sized to its contents.
+        select(&mut h, Selection::Sr(conn, Ref::new("OpaqueRef:sr-nfs")));
+        click_first(&mut h, crate::sr_strings::sr_strings().properties);
+        let sr_title = fill(
+            crate::sr_strings::sr_strings().properties_title,
+            &[("name", "NFS VM storage")],
+        );
+        step_until(&mut h, "SR properties", |h| {
+            h.query_by_label(&sr_title).is_some()
+        });
+        record(&mut h, &sr_title, format!("sr-props-{look}-light.png"));
+        press(&mut h, s.cancel);
+
+        // A server's context menu in the Objects view.
+        click_first(&mut h, crate::org_strings::org_strings().nav_objects);
+        settle(&mut h);
+        right_click(&mut h, "xcp-host-01");
+        shoot(&mut h, &dir, &format!("objects-menu-{look}-light.png"));
+        h.key_press(egui::Key::Escape);
+        settle(&mut h);
+    }
+    std::fs::write(dir.join("alignment.tsv"), rects).expect("write alignment.tsv");
+}

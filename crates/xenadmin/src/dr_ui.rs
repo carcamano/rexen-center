@@ -40,6 +40,7 @@ use xen_core::{
     Precheck, PrecheckResult, VmAction,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::dr_strings::dr_strings;
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
@@ -209,10 +210,13 @@ impl ConfigureDialog {
                     );
                 }
             }
-            ui.separator();
-            ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
                 let ok_enabled = self.pending.is_none() && note != ConfigureNote::TooMany;
-                if ui.add_enabled(ok_enabled, Button::new(s.ok)).clicked() {
+                if row
+                    .add_enabled(ButtonRole::Primary, ok_enabled, Button::new(s.ok))
+                    .clicked()
+                {
                     let enable: Vec<Ref<Sr>> = self
                         .rows
                         .iter()
@@ -231,7 +235,7 @@ impl ConfigureDialog {
                         Ok(Some(ActionRequest::ConfigureDr { enable, disable }))
                     };
                 }
-                if ui.button(s.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                     outcome = Err(());
                 }
             });
@@ -455,16 +459,16 @@ impl IscsiDialog {
             if let Some(e) = &self.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
-            ui.separator();
-            ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
                 let config = self.device_config();
-                if ui
-                    .add_enabled(config.is_some(), Button::new(s.ok))
+                if row
+                    .add_enabled(ButtonRole::Primary, config.is_some(), Button::new(s.ok))
                     .clicked()
                 {
                     outcome = Ok(config);
                 }
-                if ui.button(s.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                     outcome = Err(());
                 }
             });
@@ -1690,14 +1694,17 @@ impl DrWizard {
                         }
                     });
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                dialog_buttons(ui, |row| {
                     let first = index == 0;
                     let can_back = !first
                         && !self.busy()
                         && self.cleanup.is_none()
                         && !matches!(self.page, Page::Recover | Page::Report);
-                    if ui.add_enabled(can_back, Button::new(s.back)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Back, can_back, Button::new(s.back))
+                        .clicked()
+                    {
                         self.error = None;
                         self.page = pages[index - 1];
                     }
@@ -1708,7 +1715,10 @@ impl DrWizard {
                         _ => s.next,
                     };
                     let can_next = self.page_ok() && self.cleanup.is_none();
-                    if ui.add_enabled(can_next, Button::new(next_label)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Primary, can_next, Button::new(next_label))
+                        .clicked()
+                    {
                         self.error = None;
                         self.next(&conn, state, backend, next_id);
                         if self.page == Page::Report
@@ -1719,7 +1729,10 @@ impl DrWizard {
                         }
                     }
                     let can_cancel = self.page != Page::Report && self.cleanup.is_none();
-                    if ui.add_enabled(can_cancel, Button::new(s.cancel)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Cancel, can_cancel, Button::new(s.cancel))
+                        .clicked()
+                    {
                         outcome = WizardOutcome::Cancel;
                     }
                 });

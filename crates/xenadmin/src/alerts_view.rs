@@ -16,6 +16,7 @@ use xen_core::{
     ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionModel, PerfmonObjectRef,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::locale::{MESSAGE_BODIES, MESSAGE_NAMES, TableInfo};
 use crate::ops_ui::OpsUi;
@@ -333,6 +334,42 @@ impl AlertsView {
     }
 
     /// Draws the view.
+    /// Dismiss Selected and Dismiss All, at the right end of the
+    /// notifications area's tab row: `ui` lays out right to left, so the
+    /// buttons are added from the right.
+    pub fn actions(&mut self, ui: &mut Ui, state: &AppState) {
+        let p = perf_strings();
+        let all = all_alerts(state);
+        let present: HashSet<(ConnectionId, Ref<Message>)> =
+            all.iter().map(|(c, a)| (*c, a.message.clone())).collect();
+        self.selected.retain(|k| present.contains(k));
+        if ui
+            .add_enabled(!all.is_empty(), egui::Button::new(p.alerts_dismiss_all))
+            .clicked()
+        {
+            let targets = group(all.iter().map(|(c, a)| (*c, a.message.clone())));
+            self.confirm = Some(Confirm {
+                all: true,
+                targets,
+                focus: true,
+            });
+        }
+        if ui
+            .add_enabled(
+                !self.selected.is_empty(),
+                egui::Button::new(p.alerts_dismiss_selected),
+            )
+            .clicked()
+        {
+            let targets = group(self.selected.iter().cloned());
+            self.confirm = Some(Confirm {
+                all: false,
+                targets,
+                focus: true,
+            });
+        }
+    }
+
     pub fn show(&mut self, ui: &mut Ui, state: &AppState) -> Option<AlertAction> {
         let p = perf_strings();
         let all = all_alerts(state);
@@ -341,34 +378,6 @@ impl AlertsView {
             all.iter().map(|(c, a)| (*c, a.message.clone())).collect();
         self.selected.retain(|k| present.contains(k));
         let mut action = None;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    !self.selected.is_empty(),
-                    egui::Button::new(p.alerts_dismiss_selected),
-                )
-                .clicked()
-            {
-                let targets = group(self.selected.iter().cloned());
-                self.confirm = Some(Confirm {
-                    all: false,
-                    targets,
-                    focus: true,
-                });
-            }
-            if ui
-                .add_enabled(!all.is_empty(), egui::Button::new(p.alerts_dismiss_all))
-                .clicked()
-            {
-                let targets = group(all.iter().map(|(c, a)| (*c, a.message.clone())));
-                self.confirm = Some(Confirm {
-                    all: true,
-                    targets,
-                    focus: true,
-                });
-            }
-        });
-        ui.separator();
         ScrollArea::vertical()
             .auto_shrink(false)
             .id_salt("alerts-scroll")
@@ -473,12 +482,15 @@ impl AlertsView {
                     p.alerts_confirm_selected
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let yes = ui.button(if confirm.all {
-                        p.alerts_confirm_yes_all
-                    } else {
-                        p.alerts_confirm_yes
-                    });
+                dialog_buttons(ui, |row| {
+                    let yes = row.button(
+                        ButtonRole::Primary,
+                        if confirm.all {
+                            p.alerts_confirm_yes_all
+                        } else {
+                            p.alerts_confirm_yes
+                        },
+                    );
                     if confirm.focus {
                         yes.request_focus();
                         confirm.focus = false;
@@ -486,7 +498,10 @@ impl AlertsView {
                     if yes.clicked() {
                         answer = Some(true);
                     }
-                    if ui.button(p.alerts_confirm_no).clicked() {
+                    if row
+                        .button(ButtonRole::Cancel, p.alerts_confirm_no)
+                        .clicked()
+                    {
                         answer = Some(false);
                     }
                 });

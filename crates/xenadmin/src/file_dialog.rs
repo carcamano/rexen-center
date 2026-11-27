@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::Ui;
+use egui::{Align, Layout, Response, TextEdit, Ui, vec2};
 
 use crate::i18n::strings;
 
@@ -52,6 +52,45 @@ pub fn browse_button_labelled(ui: &mut Ui, label: &str, field: &mut String, pick
             true
         }
         None => false,
+    }
+}
+
+/// A path field and its [`browse_button`] on one row: the button at the
+/// row's right end and the field filling the rest, so that the buttons of
+/// stacked rows, and the dialog's own buttons under them, line up at the
+/// right. `edit` sets up the field (a hint, a font).
+pub fn path_row(
+    ui: &mut Ui,
+    field: &mut String,
+    pick: Pick,
+    edit: impl FnOnce(TextEdit<'_>) -> TextEdit<'_>,
+) -> PathRow {
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), height),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            let browsed = browse_button(ui, field, pick);
+            let width = ui.available_width();
+            let edit = ui.add(edit(TextEdit::singleline(field)).desired_width(width));
+            PathRow { edit, browsed }
+        },
+    )
+    .inner
+}
+
+/// What a [`path_row`] did.
+pub struct PathRow {
+    /// The field's response (to label it, or to see whether it was typed in).
+    pub edit: Response,
+    /// A path was chosen with the Browse... button.
+    pub browsed: bool,
+}
+
+impl PathRow {
+    /// The path was typed or chosen.
+    pub fn changed(&self) -> bool {
+        self.edit.changed() || self.browsed
     }
 }
 

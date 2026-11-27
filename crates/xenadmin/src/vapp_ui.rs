@@ -28,6 +28,7 @@ use xen_core::{
     ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionModel, ConnectionView,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
@@ -607,7 +608,7 @@ impl NewVAppWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == NewPage::Finish;
                 let (previous, next, cancel) = nav(
                     ui,
@@ -744,23 +745,23 @@ impl VAppProperties {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.horizontal_top(|ui| {
+                let mut divider = 0.0;
+                let row = ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(150.0);
-                        for (tab, label) in [
-                            (PropTab::General, s.page_general),
-                            (PropTab::Vms, s.page_vms),
-                            (PropTab::Order, s.page_order),
-                        ] {
-                            if ui.selectable_label(self.tab == tab, label).clicked() {
-                                if tab == PropTab::Order {
-                                    self.order.set_vms(&conn.model, &self.vms.selected);
-                                }
-                                self.tab = tab;
+                        let pages = [
+                            (PropTab::General, s.page_general, ""),
+                            (PropTab::Vms, s.page_vms, ""),
+                            (PropTab::Order, s.page_order, ""),
+                        ];
+                        if let Some(tab) = crate::controls::page_list(ui, &self.tab, pages) {
+                            if tab == PropTab::Order {
+                                self.order.set_vms(&conn.model, &self.vms.selected);
                             }
+                            self.tab = tab;
                         }
                     });
-                    ui.separator();
+                    divider = crate::controls::divider_gap(ui);
                     ui.vertical(|ui| {
                         ui.set_min_width(580.0);
                         egui::ScrollArea::vertical()
@@ -800,10 +801,14 @@ impl VAppProperties {
                         }
                     });
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
+                crate::controls::paint_divider(ui, divider, row.response.rect);
+                ui.add_space(8.0);
+                dialog_buttons(ui, |row| {
                     let valid = !self.name.trim().is_empty() && self.warning.is_none();
-                    if ui.add_enabled(valid, Button::new(s.ok)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Primary, valid, Button::new(s.ok))
+                        .clicked()
+                    {
                         self.order.set_vms(&conn.model, &self.vms.selected);
                         let changes = self.changes(&conn.model);
                         if changes.is_empty() {
@@ -822,7 +827,7 @@ impl VAppProperties {
                             outcome = Ok(Some(self.save(&conn.model)));
                         }
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         outcome = Err(());
                     }
                 });
@@ -1056,10 +1061,12 @@ impl ManageVApps {
                     }
                 });
             }
-            ui.separator();
-            if ui.button(s.button_close).clicked() {
-                close = true;
-            }
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
+                if row.button(ButtonRole::Cancel, s.button_close).clicked() {
+                    close = true;
+                }
+            });
         });
         if close {
             return Err(());

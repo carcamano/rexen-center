@@ -12,6 +12,7 @@ use xapi::{Host, HostRecord, Pool, Ref, Sr, Vm, VmPowerState, VmRecord};
 use xen_core::console::ConsoleTarget;
 use xen_core::model::{self, ConnectionModel, TreeHost, TreeOptions, TreePool, TreeSr, TreeVm};
 use xen_core::objects::{self, VmKind};
+use xen_core::search_eval::ObjKey;
 use xen_core::{
     AppState, BackendHandle, CertificatePrompt, Command, ConfigLocation, ConnectionError,
     ConnectionId, ConnectionStatus, ConnectionView, Notification, Preferences, SavedServer,
@@ -20,6 +21,7 @@ use xen_core::{
 use crate::alerts_view::{AlertAction, AlertsView};
 use crate::branding;
 use crate::console_view::{ConsoleKey, Consoles, TabAction};
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::events;
 use crate::i18n::{self, fill, strings};
 use crate::icons::{self, HostState};
@@ -522,23 +524,26 @@ impl XenAdminApp {
         } else {
             p.alerts_title.to_owned()
         };
+        // One row: the two views at the left, the shown one's actions at
+        // the right (as a panel's tabs and tools in VS Code or vSphere).
         ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.notifications == Notifications::Alerts, alerts_title)
-                .clicked()
-            {
-                self.notifications = Notifications::Alerts;
-            }
-            if ui
-                .selectable_label(
-                    self.notifications == Notifications::Events,
-                    strings().events_title,
-                )
-                .clicked()
-            {
-                self.notifications = Notifications::Events;
-            }
+            crate::controls::segmented(
+                ui,
+                &mut self.notifications,
+                [
+                    (Notifications::Alerts, alerts_title),
+                    (Notifications::Events, strings().events_title.to_owned()),
+                ],
+            );
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match self.notifications {
+                    Notifications::Alerts => self.alerts.actions(ui, state),
+                    Notifications::Events => events::actions(ui, state, &self.backend),
+                },
+            );
         });
+        ui.separator();
         match self.notifications {
             Notifications::Events => events::show(ui, state, &self.backend),
             Notifications::Alerts => {
@@ -1328,14 +1333,12 @@ impl XenAdminApp {
     fn tree(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
         let t = tab_strings();
-        Panel::bottom("nav-buttons").show(ui, |ui| {
-            if self.org.nav_buttons(ui, state) {
-                self.selection = None;
-                self.org.imported = None;
-            }
-        });
         ui.add_space(4.0);
-        ui.strong(s.tree_heading);
+        if self.org.nav_tabs(ui, state) {
+            self.selection = None;
+            self.org.imported = None;
+        }
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             let label = ui.label(RichText::new(t.tree_filter_label).weak());
             let clear = !self.tree_filter.is_empty();
@@ -1437,21 +1440,11 @@ impl XenAdminApp {
                 );
             }
             response.context_menu(|ui| {
-                if conn.status.is_connected() {
-                    // `Helpers.PoolHasEnabledHosts`.
-                    let host_ok = conn
-                        .model
-                        .hosts
-                        .values()
-                        .any(|h| h.enabled && objects::host_is_live(&conn.model, h));
-                    let mut entries = vec![
-                        provision_ui::new_vm_entry(conn, None),
-                        storage_ui::new_sr_entry(conn),
-                        crate::xva_ui::import_entry(conn, None),
-                        crate::xva_ui::export_entry(state, conn, &[], host_ok),
-                        Entry::Separator,
-                    ];
-                    entries.extend(pool_ui::pool_entries(state, conn));
+                if conn.status.is_connected()
+                    && let Some((pool, _)) = conn.model.pool()
+                {
+                    let object = ObjKey::Pool(conn.id, pool.clone());
+                    let entries = ops_ui::object_entries(state, conn, &object);
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                     ui.separator();
                 }
@@ -1526,9 +1519,10 @@ impl XenAdminApp {
             ui.add_space(ui.spacing().indent);
             icons::sr(ui, sr.icon);
             let response = self.tree_label(ui, Selection::Sr(conn.id, sr.sr_ref.clone()), &sr.name);
-            if let Some(record) = conn.model.srs.get(&sr.sr_ref) {
+            if conn.model.srs.contains_key(&sr.sr_ref) {
                 response.context_menu(|ui| {
-                    let entries = storage_ui::sr_entries(conn, &sr.sr_ref, record);
+                    let object = ObjKey::Sr(conn.id, sr.sr_ref.clone());
+                    let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                     self.ops.menu(ui, conn, None, entries, true, &self.backend);
                 });
             }
@@ -1762,19 +1756,8 @@ impl XenAdminApp {
     fn vm_context_menu(&mut self, response: &egui::Response, conn: &ConnectionView, vm: &TreeVm) {
         if let Some(record) = conn.model.vms.get(&vm.vm_ref) {
             response.context_menu(|ui| {
-                let entries = if model::is_guest(record) {
-                    let mut e = ops_ui::vm_entries(conn, &vm.vm_ref, record);
-                    e.extend(provision_ui::vm_entries(conn, &vm.vm_ref, record));
-                    e.push(crate::xva_ui::export_entry(
-                        &self.backend.state(),
-                        conn,
-                        std::slice::from_ref(&vm.vm_ref),
-                        false,
-                    ));
-                    e
-                } else {
-                    provision_ui::template_entries(conn, &vm.vm_ref, record)
-                };
+                let object = ObjKey::Vm(conn.id, vm.vm_ref.clone());
+                let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                 self.ops.menu(
                     ui,
                     conn,
@@ -1803,24 +1786,10 @@ impl XenAdminApp {
         conn: &ConnectionView,
         host: &Ref<Host>,
     ) {
-        if let Some(record) = conn.model.hosts.get(host) {
+        if conn.model.hosts.contains_key(host) {
             response.context_menu(|ui| {
-                let state = self.backend.state();
-                let host_ok = record.enabled && objects::host_is_live(&conn.model, record);
-                let mut entries = vec![
-                    provision_ui::new_vm_entry(conn, Some(host.clone())),
-                    storage_ui::new_sr_entry(conn),
-                    crate::xva_ui::import_entry(conn, Some(host.clone())),
-                    crate::xva_ui::export_entry(&state, conn, &[], host_ok),
-                    Entry::Separator,
-                ];
-                entries.extend(ops_ui::host_entries(conn, host, record));
-                entries.extend(pool_ui::host_entries(
-                    &self.backend.state(),
-                    conn,
-                    host,
-                    record,
-                ));
+                let object = ObjKey::Host(conn.id, host.clone());
+                let entries = ops_ui::object_entries(&self.backend.state(), conn, &object);
                 self.ops.menu(ui, conn, None, entries, true, &self.backend);
             });
         }
@@ -2077,20 +2046,14 @@ impl XenAdminApp {
                 _ => {}
             }
         });
-        ui.separator();
+        ui.add_space(6.0);
 
         let tabs = tabs::tabs_for(model, subject);
         if !tabs.contains(&self.tab) {
             self.tab = Tab::General;
         }
-        ui.horizontal(|ui| {
-            for tab in &tabs {
-                if ui.selectable_label(self.tab == *tab, tab.title()).clicked() {
-                    self.tab = *tab;
-                }
-            }
-        });
-        ui.separator();
+        crate::controls::tab_view(ui, &mut self.tab, tabs.iter().map(|t| (*t, t.title())));
+        ui.add_space(4.0);
         if self.tab == Tab::Performance {
             let key = match subject {
                 Subject::Vm(r, _) => (conn.id, xen_core::PerfTarget::Vm(r.clone())),
@@ -2464,16 +2427,16 @@ impl XenAdminApp {
                         ui.end_row();
                     });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready = !self.connect.server.trim().is_empty()
                         && !self.connect.username.trim().is_empty();
-                    if ui
-                        .add_enabled(ready, Button::new(s.connect_button))
+                    if row
+                        .add_enabled(ButtonRole::Primary, ready, Button::new(s.connect_button))
                         .clicked()
                     {
                         submit = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });
@@ -2534,11 +2497,11 @@ impl XenAdminApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new(s.cert_advice).weak());
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(s.cert_trust).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, s.cert_trust).clicked() {
                         decision = Some(true);
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         decision = Some(false);
                     }
                 });
@@ -2578,6 +2541,7 @@ impl XenAdminApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .default_width(460.0)
             .show(ctx, |ui| {
                 ui.checkbox(&mut preferences.save_passwords, s.options_save_passwords);
@@ -2625,9 +2589,11 @@ impl XenAdminApp {
                     }
                 }
                 ui.add_space(8.0);
-                if ui.button(s.close).clicked() {
-                    close = true;
-                }
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Cancel, s.close).clicked() {
+                        close = true;
+                    }
+                });
             });
         if preferences != state.settings.preferences {
             self.backend

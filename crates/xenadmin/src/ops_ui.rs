@@ -24,6 +24,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill, strings};
 use crate::ops_strings::ops_strings;
 use crate::window_frame::dialog_window;
@@ -129,6 +130,79 @@ pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec
         },
     ])
     .collect()
+}
+
+/// The operations a tree row's context menu offers for `object`, the same
+/// in the Infrastructure tree and in the organization views and saved
+/// searches (`ContextMenuBuilder`): a pool's and a server's New VM, New
+/// SR, Import and Export then their own operations, a guest's operations,
+/// a template's or snapshot's, an SR's. Empty for the other objects.
+pub fn object_entries(
+    state: &AppState,
+    conn: &ConnectionView,
+    object: &xen_core::search_eval::ObjKey,
+) -> Vec<Entry> {
+    use xen_core::search_eval::ObjKey;
+    match object {
+        ObjKey::Pool(..) => {
+            // `Helpers.PoolHasEnabledHosts`.
+            let host_ok = conn
+                .model
+                .hosts
+                .values()
+                .any(|h| h.enabled && xen_core::objects::host_is_live(&conn.model, h));
+            let mut entries = vec![
+                crate::provision_ui::new_vm_entry(conn, None),
+                crate::storage_ui::new_sr_entry(conn),
+                crate::xva_ui::import_entry(conn, None),
+                crate::xva_ui::export_entry(state, conn, &[], host_ok),
+                Entry::Separator,
+            ];
+            entries.extend(crate::pool_ui::pool_entries(state, conn));
+            entries
+        }
+        ObjKey::Host(_, host) => {
+            let Some(record) = conn.model.hosts.get(host) else {
+                return Vec::new();
+            };
+            let host_ok = record.enabled && xen_core::objects::host_is_live(&conn.model, record);
+            let mut entries = vec![
+                crate::provision_ui::new_vm_entry(conn, Some(host.clone())),
+                crate::storage_ui::new_sr_entry(conn),
+                crate::xva_ui::import_entry(conn, Some(host.clone())),
+                crate::xva_ui::export_entry(state, conn, &[], host_ok),
+                Entry::Separator,
+            ];
+            entries.extend(host_entries(conn, host, record));
+            entries.extend(crate::pool_ui::host_entries(state, conn, host, record));
+            entries
+        }
+        ObjKey::Vm(_, vm) => {
+            let Some(record) = conn.model.vms.get(vm) else {
+                return Vec::new();
+            };
+            if xen_core::model::is_guest(record) {
+                let mut entries = vm_entries(conn, vm, record);
+                entries.extend(crate::provision_ui::vm_entries(conn, vm, record));
+                entries.push(crate::xva_ui::export_entry(
+                    state,
+                    conn,
+                    std::slice::from_ref(vm),
+                    false,
+                ));
+                entries
+            } else {
+                crate::provision_ui::template_entries(conn, vm, record)
+            }
+        }
+        ObjKey::Sr(_, sr) => conn
+            .model
+            .srs
+            .get(sr)
+            .map(|record| crate::storage_ui::sr_entries(conn, sr, record))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// The menu of a host (`SingleAliveHostInPool` / `DeadHosts`).
@@ -1396,9 +1470,9 @@ impl OpsUi {
                 ui.set_max_width(440.0);
                 ui.label(&dialog.question.text);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let yes = ui.button(dialog.question.yes);
-                    let no = ui.button(o.no);
+                dialog_buttons(ui, |row| {
+                    let yes = row.button(ButtonRole::Primary, dialog.question.yes);
+                    let no = row.button(ButtonRole::Cancel, o.no);
                     if std::mem::take(&mut dialog.focus) {
                         if dialog.question.no_default {
                             no.request_focus();
@@ -1409,7 +1483,7 @@ impl OpsUi {
                     if yes.clicked() {
                         answer = Some(true);
                     }
-                    if no.clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                    if no.clicked() || row.ui().input(|i| i.key_pressed(Key::Escape)) {
                         answer = Some(false);
                     }
                 });
@@ -1507,16 +1581,20 @@ impl OpsUi {
                     });
                 }
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready =
                         !busy && !dialog.username.trim().is_empty() && !dialog.password.is_empty();
-                    if ui
-                        .add_enabled(ready, Button::new(o.elevation_authorize))
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            ready,
+                            Button::new(o.elevation_authorize),
+                        )
                         .clicked()
                     {
                         submit = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });
@@ -1655,20 +1733,21 @@ impl OpsUi {
                     });
                 }
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ready = matches!(&dialog.result, Some(Ok(b)) if b.is_empty())
                         && conn.status.is_connected()
                         && (!dialog.coordinator
                             || (dialog.new_coordinator.is_some()
                                 && xen_core::pool::new_coordinator_problem(&conn.model).is_none()));
-                    if ui
-                        .add_enabled(ready, Button::new(o.evacuate_button))
+                    if row
+                        .add_enabled(ButtonRole::Primary, ready, Button::new(o.evacuate_button))
                         .clicked()
                     {
                         evacuate = true;
                     }
-                    if ui
+                    if row
                         .add_enabled(
+                            ButtonRole::Other,
                             dialog.pending.is_none(),
                             Button::new(o.evacuate_check_again),
                         )
@@ -1676,7 +1755,7 @@ impl OpsUi {
                     {
                         check_again = true;
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancel = true;
                     }
                 });

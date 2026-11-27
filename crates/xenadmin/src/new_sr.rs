@@ -23,6 +23,7 @@ use xen_core::storage::{self, DeviceConfig, IqnInfo, LocalFs, LunInfo, NewSrSpec
 use xen_core::{AppState, BackendHandle, Command, ConnectionId, ConnectionModel, ConnectionView};
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::{self, fill};
 use crate::sr_strings::sr_strings;
 use crate::window_frame::dialog_window;
@@ -705,8 +706,12 @@ impl NewSrWizard {
                             });
                     });
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                dialog_buttons(ui, |row| {
+                    // The probes' spinner, at the row's left end.
+                    if self.probing() {
+                        row.add_leading(egui::Spinner::new());
+                    }
                     let index = PAGES.iter().position(|x| *x == self.page).unwrap_or(0);
                     // Reattaching: the type is the SR's, the name page is
                     // the first (`NewSrWizardNamePage.EnablePrevious`).
@@ -715,8 +720,9 @@ impl NewSrWizard {
                     } else {
                         Page::Type
                     };
-                    if ui
+                    if row
                         .add_enabled(
+                            ButtonRole::Back,
                             self.page != first && !self.probing(),
                             Button::new(s.previous),
                         )
@@ -726,17 +732,20 @@ impl NewSrWizard {
                     }
                     let ok = self.page_ok(&model, self.page);
                     if self.page == Page::Location {
-                        if ui.add_enabled(ok, Button::new(s.finish)).clicked() {
+                        if row
+                            .add_enabled(ButtonRole::Primary, ok, Button::new(s.finish))
+                            .clicked()
+                        {
                             self.start_finish(&model, backend, next_id);
                         }
-                    } else if ui.add_enabled(ok, Button::new(s.next)).clicked() {
+                    } else if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(s.next))
+                        .clicked()
+                    {
                         self.page = PAGES[index + 1];
                     }
-                    if ui.button(s.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                         cancelled = true;
-                    }
-                    if self.probing() {
-                        ui.spinner();
                     }
                 });
             });
@@ -1325,9 +1334,11 @@ impl NewSrWizard {
                 };
                 ui.label(RichText::new(warning).weak());
                 ui.add_space(6.0);
-                if ui.button(s.cancel).clicked() {
-                    cancel = true;
-                }
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Cancel, s.cancel).clicked() {
+                        cancel = true;
+                    }
+                });
             });
         if reattach {
             self.selected_uuid = choice.found.as_ref().map(|f| f.uuid.clone());
@@ -1358,11 +1369,11 @@ impl NewSrWizard {
                 ui.set_max_width(460.0);
                 ui.label(&warning.text);
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(s.yes).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, s.yes).clicked() {
                         yes = true;
                     }
-                    if ui.button(s.no).clicked() {
+                    if row.button(ButtonRole::Cancel, s.no).clicked() {
                         no = true;
                     }
                 });

@@ -18,6 +18,7 @@ use xen_update::updater::{Offer, Phase, PostExit, ReadyKind, Untrusted, Updater}
 use xen_update::{Arch, InstallMethod, UnknownReason, apply};
 
 use crate::branding;
+use crate::controls::{ButtonRole, DialogButtons, dialog_buttons};
 use crate::i18n::fill;
 use crate::update_strings::update_strings;
 use crate::window_frame::dialog_window;
@@ -175,14 +176,14 @@ impl UpdateUi {
                     ui.spinner();
                     ui.label(u.checking);
                 });
-                buttons(ui, |ui| ui.button(u.close).clicked())
+                buttons(ui, |row| row.button(ButtonRole::Cancel, u.close).clicked())
             }
             Phase::UpToDate => {
                 ui.label(fill(
                     u.up_to_date,
                     &[("product", product), ("version", &running)],
                 ));
-                buttons(ui, |ui| ui.button(u.close).clicked())
+                buttons(ui, |row| row.button(ButtonRole::Cancel, u.close).clicked())
             }
             Phase::Failed {
                 message,
@@ -192,7 +193,7 @@ impl UpdateUi {
                     ui.visuals().error_fg_color,
                     fill(u.check_failed, &[("error", message)]),
                 );
-                buttons(ui, |ui| ui.button(u.close).clicked())
+                buttons(ui, |row| row.button(ButtonRole::Cancel, u.close).clicked())
             }
             Phase::Available(offer)
             | Phase::Failed {
@@ -207,7 +208,7 @@ impl UpdateUi {
                     );
                 }
                 ui.add_space(8.0);
-                buttons(ui, |ui| {
+                buttons(ui, |row| {
                     let mut close = false;
                     if offer.installable() {
                         let label = match updater.method() {
@@ -215,17 +216,23 @@ impl UpdateUi {
                             InstallMethod::LinuxDeb | InstallMethod::LinuxRpm => u.install_package,
                             _ => u.install_restart,
                         };
-                        if ui.button(RichText::new(label).strong()).clicked() {
+                        if row
+                            .button(ButtonRole::Primary, RichText::new(label).strong())
+                            .clicked()
+                        {
                             updater.install();
                         }
-                    } else if ui.button(RichText::new(u.release_page).strong()).clicked() {
+                    } else if row
+                        .button(ButtonRole::Primary, RichText::new(u.release_page).strong())
+                        .clicked()
+                    {
                         open_page(offer.page());
                     }
-                    if ui.button(u.later).clicked() {
+                    if row.button(ButtonRole::Cancel, u.later).clicked() {
                         updater.later();
                         close = true;
                     }
-                    if ui.button(u.skip).clicked() {
+                    if row.button(ButtonRole::Other, u.skip).clicked() {
                         updater.skip();
                         close = true;
                     }
@@ -248,8 +255,8 @@ impl UpdateUi {
                     _ => (0.0, done_text),
                 };
                 ui.add(ProgressBar::new(fraction).text(text).animate(true));
-                buttons(ui, |ui| {
-                    if ui.button(u.cancel).clicked() {
+                buttons(ui, |row| {
+                    if row.button(ButtonRole::Cancel, u.cancel).clicked() {
                         updater.cancel();
                     }
                     false
@@ -260,8 +267,8 @@ impl UpdateUi {
                     ui.spinner();
                     ui.label(u.preparing);
                 });
-                buttons(ui, |ui| {
-                    if ui.button(u.cancel).clicked() {
+                buttons(ui, |row| {
+                    if row.button(ButtonRole::Cancel, u.cancel).clicked() {
                         updater.cancel();
                     }
                     false
@@ -347,11 +354,15 @@ impl UpdateUi {
                     (u.ready_installer, u.quit_install)
                 };
                 ui.label(fill(text, &[("product", product)]));
-                buttons(ui, |ui| {
-                    if ui.button(RichText::new(action).strong()).clicked() {
-                        self.complete_on_exit(ui.ctx(), updater);
+                buttons(ui, |row| {
+                    if row
+                        .button(ButtonRole::Primary, RichText::new(action).strong())
+                        .clicked()
+                    {
+                        let ctx = row.ui().ctx().clone();
+                        self.complete_on_exit(&ctx, updater);
                     }
-                    if ui.button(u.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, u.cancel).clicked() {
                         updater.cancel();
                         return true;
                     }
@@ -369,17 +380,17 @@ impl UpdateUi {
                 );
                 ui.add_space(4.0);
                 ui.label(RichText::new(fill(u.package_restart, &[("product", product)])).weak());
-                buttons(ui, |ui| {
-                    if ui.button(u.copy_command).clicked() {
-                        ui.ctx().copy_text(command.clone());
+                buttons(ui, |row| {
+                    if row.button(ButtonRole::Other, u.copy_command).clicked() {
+                        row.ui().ctx().copy_text(command.clone());
                     }
-                    if ui.button(u.open_installer).clicked()
+                    if row.button(ButtonRole::Primary, u.open_installer).clicked()
                         && let Err(e) = apply::open_external(package.as_os_str())
                     {
                         self.errors
                             .push(fill(u.failed, &[("error", &e.to_string())]));
                     }
-                    ui.button(u.close).clicked()
+                    row.button(ButtonRole::Cancel, u.close).clicked()
                 })
             }
         }
@@ -398,11 +409,11 @@ impl UpdateUi {
     }
 }
 
-/// The row of buttons at the dialog's bottom, the main one first, as in
-/// the window's other dialogs; returns what `add` returns.
-fn buttons(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> bool) -> bool {
+/// The row of buttons at the dialog's bottom right, in the platform's
+/// order (see [`dialog_buttons`]); returns what `add` returns.
+fn buttons(ui: &mut Ui, add: impl FnOnce(&mut DialogButtons<'_>) -> bool) -> bool {
     ui.add_space(6.0);
-    ui.horizontal(add).inner
+    dialog_buttons(ui, add)
 }
 
 fn size(bytes: u64) -> String {

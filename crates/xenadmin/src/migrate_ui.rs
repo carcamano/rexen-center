@@ -38,6 +38,7 @@ use xen_core::{
     PrecheckResult, VmAction,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::cpm_strings::cpm_strings;
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
@@ -1584,7 +1585,7 @@ impl MigrateWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = index + 1 == pages.len();
                 let (previous, next, cancel) = nav(
                     ui,
@@ -1715,12 +1716,13 @@ impl MoveDialog {
         window(c.move_dialog_title.to_owned()).show(ctx, |ui| {
             ui.label(fill(c.move_dialog_intro, &[("vm", &vm.name_label)]));
             crate::provision_ui::sr_combo(ui, "move-vm-sr", &srs, &mut self.sr);
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 let home = objects::vm_home(&conn.model, vm)
                     .cloned()
                     .or_else(|| conn.model.pool().map(|(_, p)| p.master.clone()));
-                if ui
+                if row
                     .add_enabled(
+                        ButtonRole::Primary,
                         self.sr.is_some() && home.is_some(),
                         Button::new(c.move_button),
                     )
@@ -1737,7 +1739,7 @@ impl MoveDialog {
                         storage,
                     }));
                 }
-                if ui.button(p.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                     outcome = Err(());
                 }
             });

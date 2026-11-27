@@ -19,6 +19,17 @@ fn no_progress(ui: &mut Ui) {
     ui.allocate_space(egui::vec2(PROGRESS_WIDTH, 0.0));
 }
 
+/// Clear Finished, at the right end of the notifications area's tab row.
+pub fn actions(ui: &mut Ui, state: &AppState, backend: &BackendHandle) {
+    let finished = state.operations.iter().any(|o| !o.is_running());
+    if ui
+        .add_enabled(finished, egui::Button::new(strings().events_clear))
+        .clicked()
+    {
+        backend.send(Command::ClearFinishedOperations);
+    }
+}
+
 /// Draws the panel. Returns whether something is still moving (so the
 /// caller keeps repainting the relative times and progress).
 pub fn show(ui: &mut Ui, state: &AppState, backend: &BackendHandle) -> bool {
@@ -41,18 +52,8 @@ pub fn show(ui: &mut Ui, state: &AppState, backend: &BackendHandle) -> bool {
             .then_with(|| a.1.cmp(b.1))
     });
 
-    // The title is the notifications area's tab (see `XenAdminApp`).
-    ui.horizontal(|ui| {
-        let finished = state.operations.iter().any(|o| !o.is_running());
-        if ui
-            .add_enabled(finished, egui::Button::new(s.events_clear))
-            .clicked()
-        {
-            backend.send(Command::ClearFinishedOperations);
-        }
-    });
-    ui.separator();
-
+    // The title and Clear Finished are on the notifications area's tab row
+    // (see `XenAdminApp` and [`actions`]).
     let mut moving = false;
     ScrollArea::vertical()
         .auto_shrink(false)

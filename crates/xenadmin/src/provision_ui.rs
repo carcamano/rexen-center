@@ -25,6 +25,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::new_vm::NewVmWizard;
 use crate::ops_ui::{Entry, OpsUi};
@@ -1369,12 +1370,12 @@ fn show_dialog(
                 ui.set_max_width(460.0);
                 ui.label(&c.text);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(&c.yes).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, &c.yes).clicked() {
                         request = Some(c.request.clone());
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1409,10 +1410,10 @@ fn show_dialog(
                     ui.label(RichText::new(p.snapshot_memory_needs_running).weak());
                 }
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ok = !d.name.trim().is_empty() && (d.disks_ok || d.memory_ok);
-                    if ui
-                        .add_enabled(ok, Button::new(p.take_snapshot_ok))
+                    if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(p.take_snapshot_ok))
                         .clicked()
                     {
                         request = Some(match &d.then_revert {
@@ -1432,7 +1433,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1447,8 +1448,8 @@ fn show_dialog(
                     ui.checkbox(&mut d.take_first, p.revert_new_snapshot);
                 }
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(p.yes).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, p.yes).clicked() {
                         close = true;
                         if d.take_first && d.can_snapshot {
                             if let Some(vm) = m.vms.get(&d.vm) {
@@ -1465,7 +1466,7 @@ fn show_dialog(
                             });
                         }
                     }
-                    if ui.button(p.no).clicked() {
+                    if row.button(ButtonRole::Cancel, p.no).clicked() {
                         close = true;
                     }
                 });
@@ -1477,9 +1478,13 @@ fn show_dialog(
                 ui.add(TextEdit::singleline(&mut d.name).desired_width(380.0))
                     .labelled_by(label.id);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!d.name.trim().is_empty(), Button::new(p.ok))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            !d.name.trim().is_empty(),
+                            Button::new(p.ok),
+                        )
                         .clicked()
                     {
                         request = Some(ActionRequest::TemplateFromSnapshot {
@@ -1489,7 +1494,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1552,9 +1557,12 @@ fn show_dialog(
                 );
                 ui.add_enabled_ui(d.full, |ui| sr_combo(ui, "copy-sr", &srs, &mut d.sr));
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ok = !d.name.trim().is_empty() && (!d.full || d.sr.is_some());
-                    if ui.add_enabled(ok, Button::new(p.copy_button)).clicked() {
+                    if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(p.copy_button))
+                        .clicked()
+                    {
                         let mode = match (&d.full, &d.sr) {
                             (true, Some(sr)) => CopyMode::Copy(sr.clone()),
                             _ => CopyMode::Clone,
@@ -1567,7 +1575,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1606,8 +1614,8 @@ fn show_dialog(
                 ui.add_space(6.0);
                 ui.label(RichText::new(p.delete_footer).weak());
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(p.delete_button).clicked() {
+                dialog_buttons(ui, |row| {
+                    if row.button(ButtonRole::Primary, p.delete_button).clicked() {
                         request = Some(ActionRequest::DeleteVm {
                             vm: d.vm.clone(),
                             disks: d
@@ -1625,7 +1633,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1678,9 +1686,11 @@ fn show_dialog(
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                dialog_buttons(ui, |row| {
                     let ok = error.is_none() && d.sr.is_some() && !d.name.trim().is_empty();
-                    if ui.add_enabled(ok, Button::new(p.create)).clicked()
+                    if row
+                        .add_enabled(ButtonRole::Primary, ok, Button::new(p.create))
+                        .clicked()
                         && let Some(sr) = &d.sr
                     {
                         request = Some(ActionRequest::NewDisk {
@@ -1694,7 +1704,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1742,9 +1752,13 @@ fn show_dialog(
                     ui.checkbox(&mut d.read_only, p.attach_read_only)
                 });
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(d.vdi.is_some(), Button::new(p.attach_button))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            d.vdi.is_some(),
+                            Button::new(p.attach_button),
+                        )
                         .clicked()
                         && let Some(vdi) = &d.vdi
                     {
@@ -1755,7 +1769,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1795,9 +1809,13 @@ fn show_dialog(
                     ui.colored_label(ui.visuals().error_fg_color, p.not_enough_space);
                 }
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(d.allowed && changed && room, Button::new(p.ok))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            d.allowed && changed && room,
+                            Button::new(p.ok),
+                        )
                         .clicked()
                     {
                         request = Some(ActionRequest::ResizeDisk {
@@ -1806,7 +1824,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });
@@ -1826,9 +1844,13 @@ fn show_dialog(
                 }
                 sr_combo(ui, "move-sr", &targets, &mut d.sr);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(d.sr.is_some(), Button::new(p.move_button))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            d.sr.is_some(),
+                            Button::new(p.move_button),
+                        )
                         .clicked()
                         && let Some(sr) = &d.sr
                     {
@@ -1838,7 +1860,7 @@ fn show_dialog(
                         });
                         close = true;
                     }
-                    if ui.button(p.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, p.cancel).clicked() {
                         close = true;
                     }
                 });

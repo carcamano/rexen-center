@@ -52,7 +52,6 @@ window_zoom = "Zoom"
 window_bring_all_to_front = "Bring All to Front"
 action_start = "Start"
 action_clean_shutdown = "Shut Down"
-tree_heading = "Infrastructure"
 tree_empty = "Not connected. Use File > Connect… to add a server."
 # `{platform}`: the welcome page under the product name (this
 # console's own; the original's home page was a web page).
@@ -3338,6 +3337,9 @@ nav_infrastructure = "Infrastructure"
 nav_objects = "Objects"
 nav_organization = "Organization Views"
 nav_saved = "Saved Searches"
+# The navigation tabs' last segment: the organization views and the
+# saved searches (this console's own).
+nav_more = "More"
 nav_tags = "Objects by Tag"
 nav_folders = "Objects by Folder"
 nav_fields = "Objects by Custom Field"

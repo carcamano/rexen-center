@@ -51,14 +51,19 @@ fn look_id() -> Id {
     Id::unique("rexen-dialog-look")
 }
 
-/// Makes the dialogs take `frame`'s look, or egui's with `None`. The app
-/// calls it every frame, before it shows any dialog.
+/// Makes the dialogs take `frame`'s look, or egui's with `None`, and their
+/// buttons that desktop's order (the platform's with `None`). The app calls
+/// it every frame, before it shows any dialog.
 pub fn style_dialogs(ctx: &Context, frame: Option<&WindowFrame>) {
     let look = frame.map(|f| DialogLook {
         flavor: f.flavor,
         close_left: f.layout.left.contains(&Control::Close),
     });
     ctx.data_mut(|d| d.insert_temp(look_id(), look));
+    crate::controls::set_button_order(
+        ctx,
+        crate::controls::ButtonOrder::for_flavor(frame.map(|f| f.flavor)),
+    );
 }
 
 fn dialog_look(ctx: &Context) -> Option<DialogLook> {

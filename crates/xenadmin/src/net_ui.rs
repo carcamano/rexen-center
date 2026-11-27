@@ -26,6 +26,7 @@ use xen_core::{
 };
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::net_strings::net_strings;
 use crate::new_network::{BondCheck, BondChoice, BondForm, NewNetworkWizard, WizardOutcome};
@@ -1314,12 +1315,12 @@ fn vif_window(
         if let Some(vm) = d.duplicate.clone() {
             ui.label(RichText::new(n.duplicate_mac_title).strong());
             ui.label(fill(n.duplicate_mac, &[("mac", &d.mac), ("vm", &vm)]));
-            ui.horizontal(|ui| {
-                if ui.button(n.yes).clicked() {
+            dialog_buttons(ui, |row| {
+                if row.button(ButtonRole::Primary, n.yes).clicked() {
                     d.duplicate = None;
                     accept = Some(true);
                 }
-                if ui.button(n.no).clicked() {
+                if row.button(ButtonRole::Cancel, n.no).clicked() {
                     d.duplicate = None;
                 }
             });
@@ -1389,13 +1390,16 @@ fn vif_window(
         if let Err(Some(text)) = valid {
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
-        ui.separator();
-        ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        dialog_buttons(ui, |row| {
             let ok = if d.existing.is_some() { n.ok } else { n.add };
-            if ui.add_enabled(valid.is_ok(), Button::new(ok)).clicked() {
+            if row
+                .add_enabled(ButtonRole::Primary, valid.is_ok(), Button::new(ok))
+                .clicked()
+            {
                 accept = Some(false);
             }
-            if ui.button(n.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                 close = true;
             }
         });
@@ -1434,19 +1438,19 @@ fn properties_window(
     ))
     .show(ctx, |ui| {
         ui.set_min_width(600.0);
-        ui.horizontal_top(|ui| {
+        let mut divider = 0.0;
+        let row = ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(140.0);
-                for (tab, label) in [
-                    (PropertiesTab::General, n.tab_general),
-                    (PropertiesTab::Settings, n.tab_network_settings),
-                ] {
-                    if ui.selectable_label(d.tab == tab, label).clicked() {
-                        d.tab = tab;
-                    }
+                let pages = [
+                    (PropertiesTab::General, n.tab_general, ""),
+                    (PropertiesTab::Settings, n.tab_network_settings, ""),
+                ];
+                if let Some(tab) = crate::controls::page_list(ui, &d.tab, pages) {
+                    d.tab = tab;
                 }
             });
-            ui.separator();
+            divider = crate::controls::divider_gap(ui);
             ui.vertical(|ui| {
                 ui.set_min_width(420.0);
                 match d.tab {
@@ -1478,16 +1482,21 @@ fn properties_window(
                 }
             });
         });
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!d.name.trim().is_empty(), Button::new(n.ok))
+        crate::controls::paint_divider(ui, divider, row.response.rect);
+        ui.add_space(8.0);
+        dialog_buttons(ui, |row| {
+            if row
+                .add_enabled(
+                    ButtonRole::Primary,
+                    !d.name.trim().is_empty(),
+                    Button::new(n.ok),
+                )
                 .clicked()
             {
                 save = true;
                 close = true;
             }
-            if ui.button(n.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                 close = true;
             }
         });
@@ -1641,11 +1650,11 @@ fn ip_window(
                 ui.visuals().warn_fg_color,
                 fill(text, &[("console", branding::PRODUCT_NAME)]),
             );
-            ui.horizontal(|ui| {
-                if ui.button(n.ok).clicked() {
+            dialog_buttons(ui, |row| {
+                if row.button(ButtonRole::Primary, n.ok).clicked() {
                     accept = Some(true);
                 }
-                if ui.button(n.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                     d.warning = None;
                 }
             });
@@ -1700,12 +1709,15 @@ fn ip_window(
                 ip_page(ui, m, d, show_hidden);
             });
         });
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.add_enabled(d.valid(m), Button::new(n.ok)).clicked() {
+        ui.add_space(8.0);
+        dialog_buttons(ui, |row| {
+            if row
+                .add_enabled(ButtonRole::Primary, d.valid(m), Button::new(n.ok))
+                .clicked()
+            {
                 accept = Some(false);
             }
-            if ui.button(n.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                 close = true;
             }
         });
@@ -1874,18 +1886,20 @@ fn bond_window(
             match q {
                 BondCheck::Error(text) => {
                     ui.colored_label(ui.visuals().error_fg_color, text);
-                    if ui.button(n.ok).clicked() {
-                        *question = None;
-                    }
+                    dialog_buttons(ui, |row| {
+                        if row.button(ButtonRole::Primary, n.ok).clicked() {
+                            *question = None;
+                        }
+                    });
                 }
                 BondCheck::Warn(text, yes) => {
                     ui.colored_label(ui.visuals().warn_fg_color, text);
-                    ui.horizontal(|ui| {
-                        if ui.button(yes).clicked() {
+                    dialog_buttons(ui, |row| {
+                        if row.button(ButtonRole::Primary, yes).clicked() {
                             *question = None;
                             create = true;
                         }
-                        if ui.button(n.cancel).clicked() {
+                        if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                             *question = None;
                         }
                     });
@@ -1895,10 +1909,10 @@ fn bond_window(
             return;
         }
         form.ui(ui, m, "create-bond");
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(form.valid(m), Button::new(n.create))
+        ui.add_space(8.0);
+        dialog_buttons(ui, |row| {
+            if row
+                .add_enabled(ButtonRole::Primary, form.valid(m), Button::new(n.create))
                 .clicked()
             {
                 match form.check(m) {
@@ -1906,7 +1920,7 @@ fn bond_window(
                     other => *question = Some(other),
                 }
             }
-            if ui.button(n.cancel).clicked() {
+            if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                 close = true;
             }
         });

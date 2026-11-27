@@ -27,6 +27,7 @@ use xen_core::{
     PrecheckResult,
 };
 
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::ha_strings::{ha_strings, not_agile_reason, priority_name, vm_count};
 use crate::i18n::{self, fill};
 use crate::ops_ui::{Confirmation, Entry, OpsUi};
@@ -351,37 +352,6 @@ impl Priorities {
             Some(_) if current.len() > 1 && current.iter().all(Option::is_some) => h.mixed_levels,
             _ => "",
         };
-        ui.horizontal(|ui| {
-            ui.label(h.label_priority);
-            ui.add_enabled_ui(any, |ui| {
-                egui::ComboBox::from_id_salt("ha-priority")
-                    .selected_text(shown)
-                    .width(170.0)
-                    .show_ui(ui, |ui| {
-                        for p in RestartPriority::AVAILABLE {
-                            let blocked = p.is_restart() && non_agile.is_some();
-                            let r = ui.add_enabled(
-                                !blocked,
-                                egui::Button::selectable(false, priority_name(p)),
-                            );
-                            let r = match &non_agile {
-                                Some(code) if blocked => {
-                                    r.on_disabled_hover_text(not_agile_reason(code))
-                                }
-                                _ => r,
-                            };
-                            if r.clicked() {
-                                for i in &selected {
-                                    if self.rows[*i].priority != Some(p) {
-                                        self.rows[*i].priority = Some(p);
-                                        self.changes_made = true;
-                                    }
-                                }
-                            }
-                        }
-                    });
-            });
-        });
         let same = |f: fn(&Row) -> i64| -> Option<i64> {
             let mut values = selected.iter().map(|i| f(&self.rows[*i]));
             let first = values.next()?;
@@ -391,25 +361,61 @@ impl Priorities {
             same(|r| r.order).unwrap_or(0),
             same(|r| r.delay).unwrap_or(0),
         );
-        ui.horizontal(|ui| {
-            ui.label(h.label_start_order);
-            let o = ui.add_enabled(any, DragValue::new(&mut order).range(0..=i64::MAX));
-            ui.label(h.label_start_delay);
-            let d = ui.add_enabled(any, DragValue::new(&mut delay).range(0..=i64::MAX));
-            ui.label(h.seconds);
-            if o.changed() {
-                for i in &selected {
-                    self.rows[*i].order = order;
-                }
-                self.changes_made = true;
-            }
-            if d.changed() {
-                for i in &selected {
-                    self.rows[*i].delay = delay;
-                }
-                self.changes_made = true;
-            }
-        });
+        Grid::new("ha-selection-controls")
+            .num_columns(2)
+            .spacing([12.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(h.label_priority);
+                ui.add_enabled_ui(any, |ui| {
+                    egui::ComboBox::from_id_salt("ha-priority")
+                        .selected_text(shown)
+                        .width(170.0)
+                        .show_ui(ui, |ui| {
+                            for p in RestartPriority::AVAILABLE {
+                                let blocked = p.is_restart() && non_agile.is_some();
+                                let r = ui.add_enabled(
+                                    !blocked,
+                                    egui::Button::selectable(false, priority_name(p)),
+                                );
+                                let r = match &non_agile {
+                                    Some(code) if blocked => {
+                                        r.on_disabled_hover_text(not_agile_reason(code))
+                                    }
+                                    _ => r,
+                                };
+                                if r.clicked() {
+                                    for i in &selected {
+                                        if self.rows[*i].priority != Some(p) {
+                                            self.rows[*i].priority = Some(p);
+                                            self.changes_made = true;
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                });
+                ui.end_row();
+                ui.label(h.label_start_order);
+                ui.horizontal(|ui| {
+                    let o = ui.add_enabled(any, DragValue::new(&mut order).range(0..=i64::MAX));
+                    ui.label(h.label_start_delay);
+                    let d = ui.add_enabled(any, DragValue::new(&mut delay).range(0..=i64::MAX));
+                    ui.label(h.seconds);
+                    if o.changed() {
+                        for i in &selected {
+                            self.rows[*i].order = order;
+                        }
+                        self.changes_made = true;
+                    }
+                    if d.changed() {
+                        for i in &selected {
+                            self.rows[*i].delay = delay;
+                        }
+                        self.changes_made = true;
+                    }
+                });
+                ui.end_row();
+            });
     }
 
     /// `HaNtolIndicator` and the status line of `AssignPriorities`.
@@ -844,17 +850,22 @@ impl HaWizard {
                             });
                     });
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(self.page != Page::Intro, Button::new(n.previous))
+                ui.add_space(8.0);
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Back,
+                            self.page != Page::Intro,
+                            Button::new(n.previous),
+                        )
                         .clicked()
                     {
                         self.previous();
                     }
                     let last = self.page == Page::Finish;
-                    if ui
+                    if row
                         .add_enabled(
+                            ButtonRole::Primary,
                             self.page_ok(),
                             Button::new(if last { n.finish } else { n.next }),
                         )
@@ -863,7 +874,7 @@ impl HaWizard {
                     {
                         outcome = Ok(Some(r));
                     }
-                    if ui.button(n.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, n.cancel).clicked() {
                         outcome = Err(());
                     }
                 });
@@ -932,20 +943,30 @@ impl EditHaDialog {
                 ui.separator();
                 if self.ask_zero {
                     ui.label(h.ntol_zero_query);
-                    ui.horizontal(|ui| {
-                        if ui.button(crate::ops_strings::ops_strings().yes).clicked() {
+                    dialog_buttons(ui, |row| {
+                        if row
+                            .button(ButtonRole::Primary, crate::ops_strings::ops_strings().yes)
+                            .clicked()
+                        {
                             self.ask_zero = false;
                             result = Ok(self.save(conn));
                         }
-                        if ui.button(crate::ops_strings::ops_strings().no).clicked() {
+                        if row
+                            .button(ButtonRole::Cancel, crate::ops_strings::ops_strings().no)
+                            .clicked()
+                        {
                             self.ask_zero = false;
                         }
                     });
                     return;
                 }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!dead && self.priorities.ok(), Button::new(h.ok))
+                dialog_buttons(ui, |row| {
+                    if row
+                        .add_enabled(
+                            ButtonRole::Primary,
+                            !dead && self.priorities.ok(),
+                            Button::new(h.ok),
+                        )
                         .clicked()
                     {
                         if self.priorities.ntol == 0 {
@@ -954,7 +975,7 @@ impl EditHaDialog {
                             result = Ok(self.save(conn));
                         }
                     }
-                    if ui.button(h.cancel).clicked() {
+                    if row.button(ButtonRole::Cancel, h.cancel).clicked() {
                         result = Err(());
                     }
                 });
@@ -1121,7 +1142,9 @@ impl HaUi {
                 ui.set_max_width(440.0);
                 ui.label(text);
                 ui.add_space(8.0);
-                ok = ui.button(ha_strings().ok).clicked();
+                dialog_buttons(ui, |row| {
+                    ok = row.button(ButtonRole::Primary, ha_strings().ok).clicked();
+                });
             });
             if ok {
                 self.notices.pop_front();

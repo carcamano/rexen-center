@@ -5,6 +5,47 @@ All notable changes to ReXen Center. Versions follow the workspace version in
 
 ## Unreleased
 
+- **Dialog buttons at the bottom right**: every dialog's and wizard's buttons
+  (OK, Cancel, Yes, No, Previous, Next, Finish…) sit at the dialog's bottom
+  right instead of the left, in the platform's order: Cancel and then the
+  main action at the right end on macOS, GNOME and the other Linux desktops,
+  as Apple's and GNOME's guidelines ask; the main action and then Cancel on
+  Windows and KDE Plasma (a forced `REXENCENTER_TITLE_BAR` look brings its
+  desktop's order). Path fields fill their row with the Browse... button at
+  its right end, so those buttons line up with each other and with the
+  dialog's (Tools > Options > External Tools among others).
+- **Tabs that look like tabs**: the detail tabs (General, Memory, Storage…)
+  are drawn as macOS draws a tab view: a segmented control centred on the
+  line at the top of the pane, the selected tab raised, instead of buttons
+  like the toolbar's. The Alerts and Events switch uses the same segmented
+  control.
+- **Navigation tabs at the top of the tree**: the navigation pane under the
+  tree is gone. Infrastructure and Objects are tabs at the top of the tree,
+  where the "Infrastructure" heading was, followed by More, a menu of the
+  organization views (Objects by Tag, by Folder, by Custom Field, vApps) and
+  the saved searches, lit while one of them shows (as vSphere's and Xcode's
+  navigators). The Alerts and Events area puts its actions (Dismiss
+  Selected, Dismiss All, Clear Finished) at the right end of its tab row
+  instead of a row of their own.
+- **Context menus in the organization views**: right-clicking a pool, a
+  server, a VM, a template or an SR in Objects, the organization views or a
+  saved search offers the same operations as in the Infrastructure tree,
+  after the view's own (Remove from Folder, Untag) and before Properties.
+  Both trees build them in one place (`ops_ui::object_entries`). Rows with
+  nothing to offer (the type groups, disks, networks) no longer open an
+  empty menu.
+- **Dialogs without a line over their buttons**: as on macOS and GNOME,
+  space separates a dialog's buttons from its contents.
+- **Properties page lists**: the pages of the Properties dialogs (pool,
+  server, VM, SR, network, vApp, snapshot policy) are a sidebar list as in
+  macOS' System Settings: rows as wide as the list, the title over a dimmer
+  summary, the selected row filled. The line between the list and the page
+  is as tall as the page; the SR, network, vApp and policy dialogs no longer
+  grow to the screen's height (and get cut off) because of it.
+- **Table headings**: the Search tab's column headings are plain text over a
+  line, as in a macOS table, with a chevron on the sorted column, instead of
+  buttons; names no longer wrap inside the Name column.
+
 ## 0.2.0 — 2026-11-27
 
 Automatic updates with signed releases, and each desktop's own title bar,

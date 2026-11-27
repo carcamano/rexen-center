@@ -158,7 +158,7 @@ fn platform_flavor() -> Option<Flavor> {
 
 /// GNOME or KDE from `XDG_CURRENT_DESKTOP` (a colon-separated list, such as
 /// `ubuntu:GNOME`).
-fn flavor_of(desktops: &str) -> Option<Flavor> {
+pub(crate) fn flavor_of(desktops: &str) -> Option<Flavor> {
     desktops
         .split(':')
         .find_map(|d| match d.trim().to_ascii_uppercase().as_str() {

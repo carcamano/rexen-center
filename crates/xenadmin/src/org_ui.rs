@@ -22,6 +22,7 @@ use xen_core::{ActionRequest, AppState, BackendHandle, ConnectionId, ConnectionV
 
 use crate::app::Selection;
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::i18n::fill;
 use crate::icons::{self, HostState};
 use crate::ops_ui::OpsUi;
@@ -361,6 +362,50 @@ pub fn dnd(
 }
 
 /// The objects under a group node (for Untag).
+/// Whether a row of an organization view has organization items in its
+/// context menu: Remove from Folder or Untag (objects), the folder's and
+/// the tag's own (folders, tags).
+fn org_items(
+    n: &Node,
+    parent_folder: Option<&str>,
+    parent_group: Option<&GroupTag>,
+    in_org_view: bool,
+) -> bool {
+    match &n.item {
+        NodeItem::Object(ObjKey::Folder(_)) => true,
+        NodeItem::Object(o) => {
+            in_org_view
+                && o.org_object().is_some()
+                && (parent_folder.is_some_and(|f| f != "/")
+                    || tag_of_parent(parent_group).is_some())
+        }
+        NodeItem::Group(tag) => tag_of_parent(Some(tag)).is_some(),
+    }
+}
+
+/// Whether a row has a context menu at all: none, rather than an empty
+/// one, on the type groups, disks and networks.
+fn has_context_menu(
+    state: &AppState,
+    n: &Node,
+    parent_folder: Option<&str>,
+    parent_group: Option<&GroupTag>,
+    in_org_view: bool,
+) -> bool {
+    if org_items(n, parent_folder, parent_group, in_org_view) {
+        return true;
+    }
+    match &n.item {
+        NodeItem::Object(
+            o @ (ObjKey::Pool(..) | ObjKey::Host(..) | ObjKey::Vm(..) | ObjKey::Sr(..)),
+        ) => o
+            .connection()
+            .and_then(|c| state.connection(c))
+            .is_some_and(|c| c.status.is_connected()),
+        _ => false,
+    }
+}
+
 fn tag_of_parent(parent: Option<&GroupTag>) -> Option<String> {
     match parent {
         Some(GroupTag {
@@ -377,28 +422,31 @@ fn tag_of_parent(parent: Option<&GroupTag>) -> Option<String> {
 }
 
 impl OrgUi {
-    /// The navigation buttons (`NavigationPane`).
-    pub fn nav_buttons(&mut self, ui: &mut Ui, state: &AppState) -> bool {
+    /// The navigation tabs at the top of the tree (the original's
+    /// `NavigationPane`): Infrastructure and Objects, then More, a menu of
+    /// the organization views and the saved searches, lit while one of them
+    /// shows. Returns whether the mode changed.
+    pub fn nav_tabs(&mut self, ui: &mut Ui, state: &AppState) -> bool {
         let s = org_strings();
         let mut changed = false;
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .selectable_label(self.mode == NavMode::Infrastructure, s.nav_infrastructure)
-                .clicked()
-            {
-                self.mode = NavMode::Infrastructure;
-                changed = true;
-            }
-            if ui
-                .selectable_label(self.mode == NavMode::View(OrgView::Objects), s.nav_objects)
-                .clicked()
-            {
-                self.mode = NavMode::View(OrgView::Objects);
-                changed = true;
-            }
-            let org_on = matches!(self.mode, NavMode::View(v) if v != OrgView::Objects);
-            let org = ui.add(Button::new(s.nav_organization).selected(org_on));
-            egui::Popup::menu(&org).show(|ui| {
+        let more_on = matches!(&self.mode, NavMode::View(v) if *v != OrgView::Objects)
+            || matches!(self.mode, NavMode::Saved(_));
+        let mut chosen = None;
+        let current = self.mode.clone();
+        changed |= crate::controls::segmented_with_menu(
+            ui,
+            &mut self.mode,
+            [
+                (NavMode::Infrastructure, s.nav_infrastructure),
+                (NavMode::View(OrgView::Objects), s.nav_objects),
+            ],
+            s.nav_more,
+            more_on,
+            |ui| {
+                let heading = |ui: &mut Ui, text: &str| {
+                    ui.label(egui::RichText::new(text).small().weak());
+                };
+                heading(ui, s.nav_organization);
                 for (v, label) in [
                     (OrgView::Tags, s.nav_tags),
                     (OrgView::Folders, s.nav_folders),
@@ -406,32 +454,32 @@ impl OrgUi {
                     (OrgView::VApps, s.nav_vapps),
                 ] {
                     if ui
-                        .selectable_label(self.mode == NavMode::View(v), label)
+                        .selectable_label(current == NavMode::View(v), label)
                         .clicked()
                     {
-                        self.mode = NavMode::View(v);
-                        changed = true;
+                        chosen = Some(NavMode::View(v));
                         ui.close();
                     }
                 }
-            });
-            let saved_on = matches!(self.mode, NavMode::Saved(_));
-            let saved = ui.add(Button::new(s.nav_saved).selected(saved_on));
-            egui::Popup::menu(&saved).show(|ui| {
+                ui.separator();
+                heading(ui, s.nav_saved);
                 let w = world(state);
                 for (_, search) in search_ui::all_searches(&w) {
                     let uuid = search.uuid.clone().unwrap_or_default();
                     if ui
-                        .selectable_label(self.mode == NavMode::Saved(uuid.clone()), &search.name)
+                        .selectable_label(current == NavMode::Saved(uuid.clone()), &search.name)
                         .clicked()
                     {
-                        self.mode = NavMode::Saved(uuid);
-                        changed = true;
+                        chosen = Some(NavMode::Saved(uuid));
                         ui.close();
                     }
                 }
-            });
-        });
+            },
+        );
+        if let Some(mode) = chosen {
+            self.mode = mode;
+            changed = true;
+        }
         changed
     }
 
@@ -639,19 +687,21 @@ impl OrgUi {
                 backend,
                 &mut me.drop_hint,
             );
-            r.context_menu(|ui| {
-                me.context_menu(
-                    ui,
-                    state,
-                    w,
-                    n,
-                    parent_folder,
-                    parent_group,
-                    in_org_view,
-                    ops,
-                    backend,
-                )
-            });
+            if has_context_menu(state, n, parent_folder, parent_group, in_org_view) {
+                r.context_menu(|ui| {
+                    me.context_menu(
+                        ui,
+                        state,
+                        w,
+                        n,
+                        parent_folder,
+                        parent_group,
+                        in_org_view,
+                        ops,
+                        backend,
+                    )
+                });
+            }
         };
         if n.children.is_empty() {
             ui.horizontal(|ui| {
@@ -766,13 +816,33 @@ impl OrgUi {
                     );
                     ui.close();
                 }
-                if let ObjKey::Vm(c, vm) = o
-                    && ui.button(s.properties).clicked()
-                {
-                    if let Some(conn) = state.connection(*c) {
-                        self.vm_properties = VmPropertiesDialog::open(conn, vm.clone());
+                // The object's own operations, as in the Infrastructure
+                // tree, under the organization ones.
+                let mut drawn = org_items(n, parent_folder, parent_group, in_org_view);
+                if let Some(conn) = o.connection().and_then(|c| state.connection(c)) {
+                    let entries = crate::ops_ui::object_entries(state, conn, o);
+                    if !entries.is_empty() {
+                        if drawn {
+                            ui.separator();
+                        }
+                        let vm = match o {
+                            ObjKey::Vm(_, r) => conn.model.vms.get(r).map(|rec| (r, &**rec)),
+                            _ => None,
+                        };
+                        ops.menu(ui, conn, vm, entries, true, backend);
+                        drawn = true;
                     }
-                    ui.close();
+                }
+                if let ObjKey::Vm(c, vm) = o {
+                    if drawn {
+                        ui.separator();
+                    }
+                    if ui.button(s.properties).clicked() {
+                        if let Some(conn) = state.connection(*c) {
+                            self.vm_properties = VmPropertiesDialog::open(conn, vm.clone());
+                        }
+                        ui.close();
+                    }
                 }
             }
             NodeItem::Group(tag) => {
@@ -1033,13 +1103,11 @@ impl OrgUi {
                     };
                     ui.horizontal(|ui| {
                         let l = ui.label(s.file_label);
-                        ui.add(
-                            TextEdit::singleline(path)
-                                .desired_width(300.0)
-                                .hint_text("search.xensearch"),
-                        )
+                        crate::file_dialog::path_row(ui, path, pick, |e| {
+                            e.hint_text("search.xensearch")
+                        })
+                        .edit
                         .labelled_by(l.id);
-                        crate::file_dialog::browse_button(ui, path, pick);
                     });
                     if let Some(m) = message {
                         ui.colored_label(ui.visuals().warn_fg_color, m.as_str());
@@ -1083,8 +1151,8 @@ impl OrgUi {
                     ui.label(fill(s.delete_field_prompt, &[("name", &definition.name)]));
                 }
             }
-            ui.separator();
-            ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
                 let label = match dialog {
                     OrgDialog::SaveSearch { .. } => s.save_button,
                     OrgDialog::RenameFolder { .. } | OrgDialog::RenameTag { .. } => s.rename,
@@ -1094,10 +1162,13 @@ impl OrgUi {
                     | OrgDialog::DeleteCustomField { .. } => s.delete,
                     _ => s.ok,
                 };
-                if ui.add_enabled(can, Button::new(label)).clicked() {
+                if row
+                    .add_enabled(ButtonRole::Primary, can, Button::new(label))
+                    .clicked()
+                {
                     ok = true;
                 }
-                if ui.button(s.cancel).clicked() {
+                if row.button(ButtonRole::Cancel, s.cancel).clicked() {
                     close = true;
                 }
             });
@@ -1868,7 +1939,8 @@ impl VmPropertiesDialog {
         let (mut ok, mut cancel) = (false, false);
         window(fill(s.vm_properties_title, &[("name", &self.original.0)])).show(ctx, |ui| {
             ui.set_width(700.0);
-            ui.horizontal_top(|ui| {
+            let mut divider = 0.0;
+            let row = ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(170.0);
                     let d = crate::dev_strings::dev_strings();
@@ -1890,16 +1962,11 @@ impl VmPropertiesDialog {
                             crate::dev_ui::VmUsbPage::subtext(&vm_rec),
                         ));
                     }
-                    for (p, title, sub) in pages {
-                        if ui
-                            .selectable_label(self.page == p, format!("{title}\n{sub}"))
-                            .clicked()
-                        {
-                            self.page = p;
-                        }
+                    if let Some(p) = crate::controls::page_list(ui, &self.page, pages) {
+                        self.page = p;
                     }
                 });
-                ui.add_space(12.0);
+                divider = crate::controls::divider_gap(ui);
                 ui.vertical(|ui| {
                     ui.set_width(500.0);
                     ScrollArea::vertical()
@@ -1946,11 +2013,14 @@ impl VmPropertiesDialog {
                         });
                 });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
+            crate::controls::paint_divider(ui, divider, row.response.rect);
+            ui.add_space(8.0);
+            dialog_buttons(ui, |row| {
                 let can = !self.name.trim().is_empty() && self.editor.valid();
-                ok = ui.add_enabled(can, Button::new(s.ok)).clicked();
-                cancel = ui.button(s.cancel).clicked();
+                ok = row
+                    .add_enabled(ButtonRole::Primary, can, Button::new(s.ok))
+                    .clicked();
+                cancel = row.button(ButtonRole::Cancel, s.cancel).clicked();
             });
         });
         // The page's dialogs, above it.

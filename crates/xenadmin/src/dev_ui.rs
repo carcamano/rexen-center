@@ -31,6 +31,7 @@ use xen_core::settings::{ExternalTools, SshConsole};
 use xen_core::{ActionRequest, AppState, BackendHandle, Command, ConnectionId, ConnectionView};
 
 use crate::branding;
+use crate::controls::{ButtonRole, dialog_buttons};
 use crate::dev_strings::{self, dev_strings};
 use crate::i18n::fill;
 use crate::ops_ui::{Confirmation, OpsUi};
@@ -268,9 +269,9 @@ impl GpuConfigDialog {
                     }
                 });
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ok = ui.button(d.ok).clicked();
-                cancel = ui.button(d.cancel).clicked();
+            dialog_buttons(ui, |row| {
+                ok = row.button(ButtonRole::Primary, d.ok).clicked();
+                cancel = row.button(ButtonRole::Cancel, d.cancel).clicked();
             });
         });
         if ok {
@@ -566,11 +567,15 @@ impl VmGpuPage {
                     }
                 }
             });
-            ui.horizontal(|ui| {
-                ok = ui
-                    .add_enabled(add.selected.is_some(), Button::new(d.add_vgpu_add))
+            dialog_buttons(ui, |row| {
+                ok = row
+                    .add_enabled(
+                        ButtonRole::Primary,
+                        add.selected.is_some(),
+                        Button::new(d.add_vgpu_add),
+                    )
                     .clicked();
-                cancel = ui.button(d.cancel).clicked();
+                cancel = row.button(ButtonRole::Cancel, d.cancel).clicked();
             });
         });
         if ok && let Some(c) = add.selected.and_then(|i| add.choices.get(i)) {
@@ -790,9 +795,11 @@ impl VmUsbPage {
                 .selected
                 .as_ref()
                 .is_some_and(|p| list.iter().any(|(_, l)| l.contains(p)));
-            ui.horizontal(|ui| {
-                ok = ui.add_enabled(can, Button::new(d.usb_attach)).clicked();
-                cancel = ui.button(d.cancel).clicked();
+            dialog_buttons(ui, |row| {
+                ok = row
+                    .add_enabled(ButtonRole::Primary, can, Button::new(d.usb_attach))
+                    .clicked();
+                cancel = row.button(ButtonRole::Cancel, d.cancel).clicked();
             });
         });
         if ok && let Some(p) = a.selected.clone() {
@@ -929,8 +936,8 @@ impl VtpmDialog {
                     }
                 });
             });
-            ui.separator();
-            close = ui.button(d.close).clicked();
+            ui.add_space(8.0);
+            close = dialog_buttons(ui, |row| row.button(ButtonRole::Cancel, d.close).clicked());
         });
         close
     }
@@ -1026,9 +1033,9 @@ impl MemoryDialog {
                     ui.visuals().warn_fg_color,
                     dev_strings::memory_confirm_text(*c),
                 );
-                ui.horizontal(|ui| {
-                    yes = ui.button(d.yes).clicked();
-                    no = ui.button(d.no).clicked();
+                dialog_buttons(ui, |row| {
+                    yes = row.button(ButtonRole::Primary, d.yes).clicked();
+                    no = row.button(ButtonRole::Cancel, d.no).clicked();
                 });
             });
             if yes {
@@ -1069,9 +1076,12 @@ impl MemoryDialog {
                             vms.iter_mut().for_each(|v| v.1 = false);
                         }
                     });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.add_enabled(n > 0, Button::new(d.next)).clicked() {
+                    ui.add_space(8.0);
+                    dialog_buttons(ui, |row| {
+                        if row
+                            .add_enabled(ButtonRole::Primary, n > 0, Button::new(d.next))
+                            .clicked()
+                        {
                             let chosen: Vec<Ref<Vm>> = vms
                                 .iter()
                                 .filter(|(_, t)| *t)
@@ -1083,7 +1093,7 @@ impl MemoryDialog {
                             }
                             *page = 1;
                         }
-                        close |= ui.button(d.cancel).clicked();
+                        close |= row.button(ButtonRole::Cancel, d.cancel).clicked();
                     });
                     return;
                 }
@@ -1101,18 +1111,18 @@ impl MemoryDialog {
             if let Some(e) = self.edit.as_mut() {
                 memory_controls(ui, e);
             }
-            ui.separator();
+            ui.add_space(8.0);
             let mut apply = false;
-            ui.horizontal(|ui| {
+            dialog_buttons(ui, |row| {
                 if let Some((_, page)) = &mut self.wizard {
-                    if ui.button(d.back).clicked() {
+                    if row.button(ButtonRole::Back, d.back).clicked() {
                         *page = 0;
                     }
-                    apply = ui.button(d.finish).clicked();
+                    apply = row.button(ButtonRole::Primary, d.finish).clicked();
                 } else {
-                    apply = ui.button(d.ok).clicked();
+                    apply = row.button(ButtonRole::Primary, d.ok).clicked();
                 }
-                close |= ui.button(d.cancel).clicked();
+                close |= row.button(ButtonRole::Cancel, d.cancel).clicked();
             });
             if apply && self.apply(conn, ops, backend) {
                 close = true;
@@ -1219,53 +1229,39 @@ pub enum ConsoleRequest {
     EnableRdp,
 }
 
-/// Options > External Tools.
+/// Options > External Tools. The two groups fill the dialog's width and
+/// each path's Browse... button sits at the right end of its row, so the
+/// fields and the buttons line up.
 pub fn external_tools_options(ui: &mut Ui, t: &mut ExternalTools) {
+    use crate::file_dialog::{Pick, path_row};
     let d = dev_strings();
     ui.strong(d.tools_heading);
     ui.label(fill(d.tools_info, &[("console", branding::PRODUCT_NAME)]));
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(d.tools_ssh_group);
         ui.radio_value(&mut t.ssh_console, SshConsole::System, d.tools_system);
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut t.ssh_console, SshConsole::Putty, d.tools_putty);
-            let typed = ui
-                .add(egui::TextEdit::singleline(&mut t.putty_location).desired_width(300.0))
-                .changed();
-            let browsed = crate::file_dialog::browse_button(
-                ui,
-                &mut t.putty_location,
-                crate::file_dialog::Pick::Open(Vec::new()),
-            );
-            if typed || browsed {
-                t.ssh_console = SshConsole::Putty;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut t.ssh_console, SshConsole::OpenSsh, d.tools_openssh);
-            let typed = ui
-                .add(egui::TextEdit::singleline(&mut t.openssh_location).desired_width(300.0))
-                .changed();
-            let browsed = crate::file_dialog::browse_button(
-                ui,
-                &mut t.openssh_location,
-                crate::file_dialog::Pick::Open(Vec::new()),
-            );
-            if typed || browsed {
-                t.ssh_console = SshConsole::OpenSsh;
-            }
-        });
+        // The two programs' paths start together, after the longer name.
+        egui::Grid::new("options-ssh-console")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .show(ui, |ui| {
+                ui.radio_value(&mut t.ssh_console, SshConsole::Putty, d.tools_putty);
+                if path_row(ui, &mut t.putty_location, Pick::Open(Vec::new()), |e| e).changed() {
+                    t.ssh_console = SshConsole::Putty;
+                }
+                ui.end_row();
+                ui.radio_value(&mut t.ssh_console, SshConsole::OpenSsh, d.tools_openssh);
+                if path_row(ui, &mut t.openssh_location, Pick::Open(Vec::new()), |e| e).changed() {
+                    t.ssh_console = SshConsole::OpenSsh;
+                }
+                ui.end_row();
+            });
     });
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(d.tools_rdp_group);
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut t.rdp_client).desired_width(360.0));
-            crate::file_dialog::browse_button(
-                ui,
-                &mut t.rdp_client,
-                crate::file_dialog::Pick::Open(Vec::new()),
-            );
-        });
+        path_row(ui, &mut t.rdp_client, Pick::Open(Vec::new()), |e| e);
         ui.label(RichText::new(d.tools_rdp_hint).weak());
     });
 }
@@ -1686,9 +1682,9 @@ impl DevUi {
             let (mut configure, mut cancel) = (false, false);
             window(branding::PRODUCT_NAME.to_owned()).show(ctx, |ui| {
                 ui.colored_label(ui.visuals().warn_fg_color, problem);
-                ui.horizontal(|ui| {
-                    configure = ui.button(d.ssh_configure).clicked();
-                    cancel = ui.button(d.cancel).clicked();
+                dialog_buttons(ui, |row| {
+                    configure = row.button(ButtonRole::Primary, d.ssh_configure).clicked();
+                    cancel = row.button(ButtonRole::Cancel, d.cancel).clicked();
                 });
             });
             if configure {
