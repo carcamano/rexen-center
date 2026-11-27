@@ -516,13 +516,14 @@ XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --exampl
 ## Release packages
 
 Each platform has a script under `packaging/` that builds a release binary
-(`cargo build --release --locked`) and packs it with the generic icon
-(`packaging/icons/`, drawn by `make_icon.py`). Packages are not signed or
+(`cargo build --release --locked`) and packs it with the icon
+(`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
+README; the Windows `.ico` is embedded in the executable). Packages are not signed or
 notarized. The output folder defaults to `target/dist`.
 
 | Platform | Command | Result |
 |---|---|---|
-| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `sips`, `iconutil`, `hdiutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
 | Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` when `dpkg-deb` is present and an AppImage when `appimagetool` is present |
 | Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`) |
 
@@ -1195,7 +1196,7 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xen-mcp` | The MCP server (`rexencenter --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
 | `crates/xenadmin` | The egui/eframe desktop app, built as the `rexencenter` program; its message catalogue's English export and translation guide are in `locales/`. |
-| `packaging/` | The release package scripts and the generic icon (not a crate). |
+| `packaging/` | The release package scripts and the icon: SVG sources, the eight concepts, rendered sizes and the renderer (not a crate). |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
 `xapi`, `xen-rrd`, `xen-vnc`, `xen-core` and `xen-mcp` do not depend on egui. The app runs a tokio runtime on

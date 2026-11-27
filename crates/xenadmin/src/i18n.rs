@@ -85,6 +85,9 @@ string_table! {
     cert_trust = "Trust and Connect",
 
     about_title = "About",
+    /// Under the product name in the About window (the full subtitle,
+    /// `xen_core::branding::SUBTITLE`, is this line after the product name).
+    about_tagline = "XCP-ng Center, born again in Rust",
     /// `{version}`
     about_version = "Version {version}",
     /// `{platform}`

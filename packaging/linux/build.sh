@@ -35,8 +35,9 @@ trap 'rm -rf "$work"' EXIT
 tree="$work/tree"
 install -Dm755 "$bin" "$tree/usr/bin/$brand_bin"
 install -Dm644 "$root/packaging/linux/$name.desktop" "$tree/usr/share/applications/$name.desktop"
-install -Dm644 "$root/packaging/icons/icon-1024.png" "$tree/usr/share/icons/hicolor/1024x1024/apps/$name.png"
-install -Dm644 "$root/crates/xenadmin/assets/icon-256.png" "$tree/usr/share/icons/hicolor/256x256/apps/$name.png"
+for size in 16 24 32 48 64 128 256 512 1024; do
+    install -Dm644 "$root/packaging/icons/png/icon-$size.png" "$tree/usr/share/icons/hicolor/${size}x${size}/apps/$name.png"
+done
 install -Dm644 "$root/LICENSE" "$tree/usr/share/doc/$name/copyright"
 install -Dm644 "$root/README.md" "$tree/usr/share/doc/$name/README.md"
 
@@ -64,7 +65,7 @@ if command -v appimagetool >/dev/null 2>&1; then
     appdir="$work/$name.AppDir"
     cp -R "$tree" "$appdir"
     cp "$root/packaging/linux/$name.desktop" "$appdir/$name.desktop"
-    cp "$root/crates/xenadmin/assets/icon-256.png" "$appdir/$name.png"
+    cp "$root/packaging/icons/png/icon-256.png" "$appdir/$name.png"
     printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/usr/bin/%s" "$@"\n' "$brand_bin" > "$appdir/AppRun"
     chmod +x "$appdir/AppRun"
     ARCH=$arch appimagetool "$appdir" "$out/$name-$version-$arch.AppImage"

@@ -7,7 +7,7 @@
 # Environment: TARGET=<rust target triple> to cross-build for the other
 # architecture (e.g. x86_64-apple-darwin, after `rustup target add`).
 #
-# Needs only Xcode's command line tools (iconutil, sips, hdiutil). The
+# Needs only Xcode's command line tools (iconutil, hdiutil, plutil). The
 # bundle is not signed or notarized: Gatekeeper asks before the first start
 # (right-click > Open, or `xattr -dr com.apple.quarantine "ReXen Center.app"`).
 set -eu
@@ -32,13 +32,13 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Icon: every size iconutil wants, from the 1024 px master.
+# Icon: every size iconutil wants, rendered from the SVG source
+# (packaging/icons/render.sh; 16 px from the version drawn for small sizes).
 iconset="$work/$brand_id.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    sips -z $size $size "$root/packaging/icons/icon-1024.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
-    double=$((size * 2))
-    sips -z $double $double "$root/packaging/icons/icon-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+    cp "$root/packaging/icons/png/icon-$size.png" "$iconset/icon_${size}x${size}.png"
+    cp "$root/packaging/icons/png/icon-$((size * 2)).png" "$iconset/icon_${size}x${size}@2x.png"
 done
 
 app="$out/$brand_name.app"

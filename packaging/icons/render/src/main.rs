@@ -2,9 +2,12 @@
 //!
 //! ```text
 //! icon-render png   <in.svg> <size> <out.png>
-//! icon-render ico   <in.svg> <out.ico>
+//! icon-render ico   <out.ico> <in.png> ...
 //! icon-render sheet <out.png> <name>=<tile.svg>,<mark.svg> ...
 //! ```
+//!
+//! `ico` packs square PNGs (256 px at most) into a Windows icon as they are,
+//! so each size can come from the source drawn for it.
 //!
 //! `sheet` draws a contact sheet: each concept at 16, 32, 128 and 512 px (and
 //! the two small sizes magnified four times), as the rounded-square tile and
@@ -15,8 +18,6 @@ use std::process::ExitCode;
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 
-/// The sizes a Windows .ico carries.
-const ICO_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
 /// The sizes the contact sheet shows.
 const SHEET_SIZES: [u32; 4] = [16, 32, 128, 512];
 /// The magnification of the small sizes on the contact sheet.
@@ -36,12 +37,12 @@ fn main() -> ExitCode {
             .and_then(|size| {
                 std::fs::write(out, render_png(input, size)?).map_err(|e| e.to_string())
             }),
-        ["ico", input, out] => {
-            ico(input).and_then(|bytes| std::fs::write(out, bytes).map_err(|e| e.to_string()))
+        ["ico", out, pngs @ ..] if !pngs.is_empty() => {
+            ico(pngs).and_then(|bytes| std::fs::write(out, bytes).map_err(|e| e.to_string()))
         }
         ["sheet", out, concepts @ ..] if !concepts.is_empty() => sheet(out, concepts),
         _ => Err(
-            "usage: icon-render png <in.svg> <size> <out.png> | ico <in.svg> <out.ico> | \
+            "usage: icon-render png <in.svg> <size> <out.png> | ico <out.ico> <in.png> ... | \
                   sheet <out.png> <name>=<tile.svg>,<mark.svg> ..."
                 .to_owned(),
         ),
@@ -84,20 +85,36 @@ fn render_png(input: &str, size: u32) -> Result<Vec<u8>, String> {
     pixmap.encode_png().map_err(|e| e.to_string())
 }
 
+/// The width of a square PNG (from its header).
+fn png_size(path: &str, png: &[u8]) -> Result<u32, String> {
+    if png.len() < 24 || !png.starts_with(b"\x89PNG\r\n\x1a\n") || &png[12..16] != b"IHDR" {
+        return Err(format!("{path}: not a PNG"));
+    }
+    let word = |at: usize| u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]);
+    let (width, height) = (word(16), word(20));
+    if width != height || width == 0 || width > 256 {
+        return Err(format!(
+            "{path}: {width}x{height}, expected a square of 256 px at most"
+        ));
+    }
+    Ok(width)
+}
+
 /// A Windows icon whose images are PNGs (Windows Vista and later).
-fn ico(input: &str) -> Result<Vec<u8>, String> {
-    let images = ICO_SIZES
-        .iter()
-        .map(|&size| render_png(input, size))
-        .collect::<Result<Vec<_>, _>>()?;
+fn ico(inputs: &[&str]) -> Result<Vec<u8>, String> {
+    let mut images = Vec::new();
+    for input in inputs {
+        let png = std::fs::read(input).map_err(|e| format!("{input}: {e}"))?;
+        images.push((png_size(input, &png)?, png));
+    }
     let count = images.len() as u16;
     let mut out = Vec::new();
     out.extend_from_slice(&0u16.to_le_bytes()); // reserved
     out.extend_from_slice(&1u16.to_le_bytes()); // type: icon
     out.extend_from_slice(&count.to_le_bytes());
     let mut offset = 6 + 16 * u32::from(count);
-    for (&size, png) in ICO_SIZES.iter().zip(&images) {
-        let dim = if size >= 256 { 0 } else { size as u8 };
+    for (size, png) in &images {
+        let dim = if *size >= 256 { 0 } else { *size as u8 };
         out.extend_from_slice(&[dim, dim, 0, 0]); // width, height, palette, reserved
         out.extend_from_slice(&1u16.to_le_bytes()); // colour planes
         out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
@@ -105,7 +122,7 @@ fn ico(input: &str) -> Result<Vec<u8>, String> {
         out.extend_from_slice(&offset.to_le_bytes());
         offset += png.len() as u32;
     }
-    for png in &images {
+    for (_, png) in &images {
         out.extend_from_slice(png);
     }
     Ok(out)

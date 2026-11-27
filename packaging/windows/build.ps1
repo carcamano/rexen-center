@@ -6,6 +6,8 @@
 # Usage: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]
 #
 # Build needs: Rust with the MSVC toolchain (Visual Studio Build Tools).
+# The icon (packaging\icons\icon.ico) is embedded in rexencenter.exe by the
+# crate's build script, with the resource compiler of the Windows SDK.
 # The zip holds rexencenter.exe, LICENSE and README.md; unzip anywhere and run
 # rexencenter.exe. Put an empty file named "portable" next to it for portable
 # mode (settings and logs beside the executable). Not signed.

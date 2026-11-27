@@ -38,3 +38,7 @@ xen-vnc = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true
+
+# Embeds packaging/icons/icon.ico in the Windows executable (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

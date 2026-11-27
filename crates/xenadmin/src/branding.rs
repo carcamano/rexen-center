@@ -46,3 +46,43 @@ pub fn icon_image() -> egui::ColorImage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The packaged icons (`packaging/icons/`): every PNG decodes at its
+    /// size, the window icon is the 256 px one, and the Windows icon holds
+    /// 16 to 256 px.
+    #[test]
+    fn packaged_icons_load() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packaging/icons");
+        for size in [16, 24, 32, 48, 64, 128, 256, 512, 1024] {
+            let path = format!("{dir}/png/icon-{size}.png");
+            let bytes = std::fs::read(&path).expect(&path);
+            let icon = eframe::icon_data::from_png_bytes(&bytes).expect(&path);
+            assert_eq!((icon.width, icon.height), (size, size), "{path}");
+            if size == 256 {
+                assert_eq!(bytes, ICON_PNG, "assets/icon-256.png is the packaged one");
+            }
+        }
+        let ico = std::fs::read(format!("{dir}/icon.ico")).expect("icon.ico");
+        assert_eq!(ico[..4], [0, 0, 1, 0], "an icon file");
+        let count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+        let sizes: Vec<u32> = (0..count)
+            .map(|i| match ico[6 + 16 * i] {
+                0 => 256,
+                n => u32::from(n),
+            })
+            .collect();
+        assert_eq!(sizes, [16, 24, 32, 48, 64, 128, 256]);
+        for i in 0..count {
+            let entry = &ico[6 + 16 * i..6 + 16 * (i + 1)];
+            let len = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as usize;
+            let offset = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize;
+            let icon = eframe::icon_data::from_png_bytes(&ico[offset..offset + len])
+                .expect("an .ico image");
+            assert_eq!(icon.width, sizes[i]);
+        }
+    }
+}

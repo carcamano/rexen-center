@@ -2688,7 +2688,7 @@ mod tests {
         });
         assert_eq!(about_item, "About ReXen Center");
         harness.get_by_label(branding::PRODUCT_NAME);
-        harness.get_by_label("ReXen Center — XCP-ng Center, born again in Rust");
+        harness.get_by_label("XCP-ng Center, born again in Rust");
         harness.get_by_label(&crate::about::version_line());
         harness.get_by_label(s.about_disclaimer);
         harness.get_by_label(s.about_credits);

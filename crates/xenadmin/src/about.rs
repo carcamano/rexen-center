@@ -62,7 +62,7 @@ impl About {
                     ui.add_space(10.0);
                     ui.label(RichText::new(branding::PRODUCT_NAME).size(26.0).strong());
                     ui.add_space(2.0);
-                    ui.label(RichText::new(branding::SUBTITLE).italics().color(weak));
+                    ui.label(RichText::new(s.about_tagline).italics().color(weak));
                     ui.add_space(14.0);
                     ui.label(fill(
                         s.about_summary,
@@ -213,7 +213,7 @@ mod tests {
         vec![
             fill(s.about_icon, &[("product", branding::PRODUCT_NAME)]),
             branding::PRODUCT_NAME.to_owned(),
-            branding::SUBTITLE.to_owned(),
+            s.about_tagline.to_owned(),
             fill(s.about_summary, &[("platform", branding::PLATFORM_NAME)]),
             version_line(),
             s.about_disclaimer.to_owned(),
@@ -241,10 +241,13 @@ mod tests {
             );
             let s = strings();
             harness.get_by_label(&format!("{} {}", s.about_title, branding::PRODUCT_NAME));
+            // Under the name, the subtitle without the name again.
+            assert_eq!(s.about_tagline, "XCP-ng Center, born again in Rust");
             assert_eq!(
                 branding::SUBTITLE,
-                "ReXen Center — XCP-ng Center, born again in Rust"
+                format!("{} — {}", branding::PRODUCT_NAME, s.about_tagline)
             );
+            assert!(harness.query_by_label(branding::SUBTITLE).is_none());
             assert_eq!(
                 fill(s.about_summary, &[("platform", branding::PLATFORM_NAME)]),
                 "A desktop console for XCP-ng."

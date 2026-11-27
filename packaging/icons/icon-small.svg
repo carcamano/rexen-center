@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ReXen Center icon at 16 and 24 px (concept 7 simplified: thicker rim, chunkier gear, no porthole)</title>
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#36424F"/>
+      <stop offset="1" stop-color="#1B222B"/>
+    </linearGradient>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F58A4B"/>
+      <stop offset="1" stop-color="#DA5420"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dy="10" result="blur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.3"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C9BF5"/>
+      <stop offset="1" stop-color="#1E63C8"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFD36B"/>
+      <stop offset="1" stop-color="#F07A2E"/>
+    </linearGradient>
+    <clipPath id="lower-right"><path d="M0 1024 L1024 0 L1024 1024 Z"/></clipPath>
+    <clipPath id="upper-left"><path d="M0 0 L1024 0 L0 1024 Z"/></clipPath>
+  </defs>
+  <!-- macOS rounded square: 824 px on the 1024 px grid -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#base)" filter="url(#shadow)"/>
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="4"/>
+  <g clip-path="url(#lower-right)">
+    <path fill-rule="evenodd" fill="url(#rust)" d="M838.5 436.9 L909.1 449.1 L909.1 574.9 L838.5 587.1 L820.3 643.1 L870.2 694.5 L796.3 796.3 L732 764.7 L684.3 799.3 L694.5 870.2 L574.9 909.1 L541.4 845.7 L482.6 845.7 L449.1 909.1 L329.5 870.2 L339.7 799.3 L292 764.7 L227.7 796.3 L153.8 694.5 L203.7 643.1 L185.5 587.1 L114.9 574.9 L114.9 449.1 L185.5 436.9 L203.7 380.9 L153.8 329.5 L227.7 227.7 L292 259.3 L339.7 224.7 L329.5 153.8 L449.1 114.9 L482.6 178.3 L541.4 178.3 L574.9 114.9 L694.5 153.8 L684.3 224.7 L732 259.3 L796.3 227.7 L870.2 329.5 L820.3 380.9 Z M262 512 A250 250 0 1 0 762 512 A250 250 0 1 0 262 512 Z"/>
+  </g>
+  <g clip-path="url(#upper-left)">
+    <circle cx="512" cy="512" r="290" fill="none" stroke="url(#blue)" stroke-width="100"/>
+  </g>
+  <circle cx="512" cy="512" r="248" fill="#1F2C3B"/>
+  <g transform="translate(512 512) rotate(45) scale(0.84)">
+    <path d="M0 254 C 14 210 34 186 36 148 L -36 148 C -34 186 -14 210 0 254 Z" fill="url(#flame)"/>
+    <path d="M-72 40 C -128 70 -146 128 -136 168 L -66 126 Z" fill="url(#blue)"/>
+    <path d="M72 40 C 128 70 146 128 136 168 L 66 126 Z" fill="url(#blue)"/>
+    <rect x="-44" y="118" width="88" height="34" rx="10" fill="url(#blue)"/>
+    <path d="M0 -230 C 74 -166 86 -50 74 128 L -74 128 C -86 -50 -74 -166 0 -230 Z" fill="#F3F5F8"/>
+    <path d="M0 -230 C 44 -192 64 -150 70 -112 L -70 -112 C -64 -150 -44 -192 0 -230 Z" fill="url(#rust)"/>
+  </g>
+</svg>
