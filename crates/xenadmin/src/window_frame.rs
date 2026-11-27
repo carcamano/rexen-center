@@ -12,7 +12,12 @@
 //! window; double-, middle- and right-clicks do what the desktop's settings
 //! say; the window's edges resize it. Other desktops and platforms keep the
 //! system's frame. `REXENCENTER_TITLE_BAR` overrides the choice: `system`
-//! keeps the system's frame, `gnome` or `kde` force that look.
+//! keeps the system's frame, `gnome` or `kde` force that look. The dialogs
+//! take the same look ([`dialog`]).
+
+mod dialog;
+
+pub use dialog::{DialogWindow, dialog_window, style_dialogs};
 
 use std::path::{Path, PathBuf};
 
@@ -376,15 +381,29 @@ fn window_state(ctx: &Context) -> WindowState {
     })
 }
 
+/// The window's corner radius now: none when maximized or full screen.
+fn window_radius(flavor: Flavor, ctx: &Context) -> u8 {
+    let state = window_state(ctx);
+    if state.maximized || state.fullscreen {
+        0
+    } else {
+        flavor.look().radius
+    }
+}
+
+/// The thin line around the window and the dialogs.
+fn outline_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_white_alpha(28)
+    } else {
+        Color32::from_black_alpha(48)
+    }
+}
+
 impl WindowFrame {
     /// The window's corner radius now: none when maximized or full screen.
     fn radius(&self, ctx: &Context) -> u8 {
-        let state = window_state(ctx);
-        if state.maximized || state.fullscreen {
-            0
-        } else {
-            self.flavor.look().radius
-        }
+        window_radius(self.flavor, ctx)
     }
 
     /// The frame of the panel at the window's top: the panel's fill, the
@@ -631,11 +650,7 @@ impl WindowFrame {
         }
         let window = ctx.viewport_rect();
         let radius = f32::from(self.radius(ctx));
-        let outline = if ctx.global_style().visuals.dark_mode {
-            Color32::from_white_alpha(28)
-        } else {
-            Color32::from_black_alpha(48)
-        };
+        let outline = outline_color(ctx.global_style().visuals.dark_mode);
         ctx.layer_painter(egui::LayerId::new(
             Order::Foreground,
             Id::unique("window-outline"),

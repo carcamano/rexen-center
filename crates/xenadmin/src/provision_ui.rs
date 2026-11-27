@@ -29,6 +29,7 @@ use crate::i18n::fill;
 use crate::new_vm::NewVmWizard;
 use crate::ops_ui::{Entry, OpsUi};
 use crate::prov_strings::prov_strings;
+use crate::window_frame::{DialogWindow, dialog_window};
 
 /// A dialog a menu, button or tab asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1338,8 +1339,8 @@ pub(crate) fn sr_combo(
         });
 }
 
-fn window(title: &str) -> egui::Window<'static> {
-    egui::Window::new(title.to_owned())
+fn window(title: &str) -> DialogWindow<'static> {
+    dialog_window(title.to_owned())
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])

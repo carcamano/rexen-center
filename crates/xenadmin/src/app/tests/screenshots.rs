@@ -319,3 +319,135 @@ fn title_bar_screenshots() {
         shoot(&mut h, &dir, &format!("title-bar-{name}-{theme}.png"));
     }
 }
+
+/// The dialogs in each look (egui's, GNOME's, KDE Plasma's), light and
+/// dark, over the window against the mock server: the connect dialog, a
+/// confirmation and the New VM wizard. Besides the PNGs it writes
+/// `dialogs.tsv`: each file and its dialog's rectangle in pixels, with a
+/// little of the window around it, for cropping.
+///
+/// ```text
+/// REXEN_SCREENSHOTS_DIR=/some/dir cargo test -p xenadmin \
+///   --features readme-screenshots dialog_screenshots -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "writes dialog screenshots to REXEN_SCREENSHOTS_DIR (mock server only)"]
+fn dialog_screenshots() {
+    use std::fmt::Write as _;
+
+    use crate::ops_strings::ops_strings;
+    use crate::window_frame::{Control, Flavor};
+    let dir =
+        PathBuf::from(std::env::var("REXEN_SCREENSHOTS_DIR").expect("set REXEN_SCREENSHOTS_DIR"));
+    std::fs::create_dir_all(&dir).expect("the screenshot folder");
+    let runtime = runtime();
+    let server = runtime.block_on(MockServer::start(false));
+    let s = strings();
+    let o = ops_strings();
+    let p = prov_strings();
+    let t = tab_strings();
+    let wizard = fill(p.wizard_title, &[("pool", "Lab Pool")]);
+
+    let mut gnome_left = WindowFrame::new(Flavor::Gnome);
+    gnome_left.layout.left = vec![Control::Close, Control::Minimize, Control::Maximize];
+    gnome_left.layout.right = vec![];
+    let looks = [
+        ("egui", None),
+        ("gnome", Some(WindowFrame::new(Flavor::Gnome))),
+        ("kde", Some(WindowFrame::new(Flavor::Kde))),
+    ];
+    let mut rects = String::new();
+    let mut shoot_dialog = |h: &mut Harness<'_, XenAdminApp>, title: &str, name: String| {
+        shoot(h, &dir, &name);
+        // The dialog, and the close button's tooltip if it shows.
+        let r = h
+            .query_all_by_label(strings().dialog_close)
+            .fold(h.get_by_label(title).rect(), |r, n| r.union(n.rect()))
+            .expand(24.0);
+        let px = |v: f32| (v * SCALE).round().max(0.0);
+        writeln!(
+            rects,
+            "{name}\t{}\t{}\t{}\t{}",
+            px(r.left()),
+            px(r.top()),
+            px(r.width()),
+            px(r.height())
+        )
+        .unwrap();
+    };
+
+    for (look, frame) in looks {
+        for theme in [ThemeSetting::Light, ThemeSetting::Dark] {
+            let shade = if theme == ThemeSetting::Dark {
+                "dark"
+            } else {
+                "light"
+            };
+            let mut h = framed_screenshot_harness(&runtime, frame.clone());
+            set_theme(&mut h, theme);
+
+            // The connect dialog, open on start; KDE's close button under
+            // the pointer in the dark theme.
+            h.get_by_label(s.connect_title);
+            if look == "kde" && theme == ThemeSetting::Dark {
+                h.get_by_label(s.dialog_close).hover();
+            }
+            shoot_dialog(
+                &mut h,
+                s.connect_title,
+                format!("connect-{look}-{shade}.png"),
+            );
+            connect_through_dialog(&mut h, &server.address(), xapi_mock::PASSWORD);
+            step_until(&mut h, "tree", |h| {
+                h.query_by_label("Lab Pool").is_some()
+                    && first_conn(h).is_some_and(|c| c.status.is_connected())
+            });
+            let conn = first_conn(&h).unwrap().id;
+
+            // A confirmation: shutting down a running VM.
+            click_first(&mut h, "web-01");
+            step_until(&mut h, "VM general", |h| {
+                h.query_by_label("Debian GNU/Linux 12 (bookworm)").is_some()
+            });
+            click_first(&mut h, s.action_clean_shutdown);
+            step_until(&mut h, "confirmation", |h| {
+                h.query_by_label(o.confirm_shutdown_vm_title).is_some()
+            });
+            shoot_dialog(
+                &mut h,
+                o.confirm_shutdown_vm_title,
+                format!("confirm-{look}-{shade}.png"),
+            );
+            press(&mut h, o.no);
+            assert!(!shows(&h, o.confirm_shutdown_vm_title), "answered");
+
+            // The New VM wizard's first page, over the pool's General tab.
+            select(
+                &mut h,
+                Selection::Pool(conn, Ref::new("OpaqueRef:pool-0001")),
+            );
+            tab(&mut h, t.tab_general);
+            click_first(&mut h, p.new_vm_toolbar);
+            step_until(&mut h, "wizard", |h| {
+                h.query_by_label(p.title_template).is_some()
+            });
+            click_last(&mut h, "Debian Bookworm 12");
+            settle(&mut h);
+            shoot_dialog(&mut h, &wizard, format!("new-vm-{look}-{shade}.png"));
+            press(&mut h, p.cancel);
+            assert!(!shows(&h, p.title_template), "the wizard closed");
+        }
+    }
+
+    // GNOME with the window's buttons on the left: so is the dialog's.
+    let mut h = framed_screenshot_harness(&runtime, Some(gnome_left));
+    set_theme(&mut h, ThemeSetting::Light);
+    h.get_by_label(s.connect_title);
+    shoot_dialog(
+        &mut h,
+        s.connect_title,
+        "connect-gnome-left-light.png".into(),
+    );
+
+    std::fs::write(dir.join("dialogs.tsv"), rects).expect("write dialogs.tsv");
+}

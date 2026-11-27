@@ -44,6 +44,7 @@ use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
 use crate::vapp_ui::{GroupKind, VmsPage};
 use crate::vmss_strings::{day_name, vmss_strings};
+use crate::window_frame::dialog_window;
 use crate::xva_ui::{error_label, nav, page_list};
 
 /// Precheck ids of this module.
@@ -664,7 +665,7 @@ impl NewPolicyWizard {
         let index = pages.iter().position(|p| *p == self.page).unwrap_or(0);
         let mut open = true;
         let mut outcome = Ok(None);
-        egui::Window::new(s.wizard_title)
+        dialog_window(s.wizard_title)
             .id(egui::Id::unique("new-policy-wizard"))
             .collapsible(false)
             .resizable(false)

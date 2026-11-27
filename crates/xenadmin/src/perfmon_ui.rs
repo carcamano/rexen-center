@@ -15,6 +15,7 @@ use xen_core::{
 use crate::i18n::fill;
 use crate::ops_ui::OpsUi;
 use crate::perf_strings::perf_strings;
+use crate::window_frame::dialog_window;
 
 /// An open settings window.
 pub struct PerfmonDialog {
@@ -189,7 +190,7 @@ pub fn window(
     };
     let mut close = false;
     let mut save = false;
-    egui::Window::new(fill(p.pm_title, &[("object", &d.name)]))
+    dialog_window(fill(p.pm_title, &[("object", &d.name)]))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])

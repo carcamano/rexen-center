@@ -26,6 +26,7 @@ use xen_core::{
 use crate::branding;
 use crate::i18n::{self, fill, strings};
 use crate::ops_strings::ops_strings;
+use crate::window_frame::dialog_window;
 
 /// How long a server check of a submenu stays valid.
 const CHECK_TTL: Duration = Duration::from_secs(15);
@@ -1354,7 +1355,7 @@ impl OpsUi {
         };
         let o = ops_strings();
         let mut answer = None;
-        egui::Window::new(dialog.question.title)
+        dialog_window(dialog.question.title)
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1400,7 +1401,7 @@ impl OpsUi {
         let s = strings();
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new(branding::PRODUCT_NAME)
+        dialog_window(branding::PRODUCT_NAME)
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1522,7 +1523,7 @@ impl OpsUi {
         let mut evacuate = false;
         let mut check_again = false;
         let mut cancel = false;
-        egui::Window::new(fill(o.evacuate_title, &[("host", &dialog.host_name)]))
+        dialog_window(fill(o.evacuate_title, &[("host", &dialog.host_name)]))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])

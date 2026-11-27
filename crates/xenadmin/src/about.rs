@@ -10,6 +10,7 @@ use egui::{
 
 use crate::branding;
 use crate::i18n::{fill, strings};
+use crate::window_frame::dialog_window;
 
 /// The width of the dialog's content (points).
 pub const WIDTH: f32 = 420.0;
@@ -42,13 +43,13 @@ impl About {
             .clone();
         let mut open = self.open;
         let mut close = false;
-        egui::Window::new(format!("{} {}", s.about_title, branding::PRODUCT_NAME))
+        dialog_window(format!("{} {}", s.about_title, branding::PRODUCT_NAME))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .pivot(Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::symmetric(20, 12)))
+            .inner_margin(Margin::symmetric(20, 12))
             .min_width(WIDTH)
             .max_width(WIDTH)
             .show(ctx, |ui| {

@@ -11,6 +11,14 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   Adwaita's or Breeze's look, in the order the desktop's settings give
   (`button-layout`, `kwinrc`), rounded corners, and resizing at the edges.
   `REXENCENTER_TITLE_BAR=system` brings the system's frame back.
+- **Dialogs in the desktop's look**: with that title bar, every dialog (Connect,
+  Options, About, the wizards, the confirmations and the other dialogs) gets
+  the same desktop's look: libadwaita's rounded card with a flat header and
+  Adwaita's round close button on GNOME, Breeze's title bar and close glyph on
+  KDE Plasma, with the close button at the window's close button's end. The
+  window behind an open dialog is dimmed and takes no input; its title bar
+  still moves it. The dialogs keep their sizes, buttons and keys, and keep
+  egui's look on other desktops and platforms.
 
 ## 0.1.1 — 2026-11-27
 

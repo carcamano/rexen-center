@@ -37,7 +37,7 @@ use crate::sr_strings::sr_strings;
 use crate::storage_ui::{self, StorageUi};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
-use crate::window_frame::WindowFrame;
+use crate::window_frame::{WindowFrame, dialog_window, style_dialogs};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Selection {
@@ -1881,7 +1881,7 @@ impl XenAdminApp {
         let mut open = true;
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new(s.connect_title)
+        dialog_window(s.connect_title)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1968,7 +1968,7 @@ impl XenAdminApp {
         };
         let s = strings();
         let mut decision = None;
-        egui::Window::new(s.cert_title)
+        dialog_window(s.cert_title)
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
@@ -2036,7 +2036,7 @@ impl XenAdminApp {
         let mut open = true;
         let mut close = false;
         let mut preferences = state.settings.preferences.clone();
-        egui::Window::new(s.options_title)
+        dialog_window(s.options_title)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -2103,7 +2103,7 @@ impl XenAdminApp {
         }
         let s = strings();
         let mut clear = false;
-        egui::Window::new(s.errors_title)
+        dialog_window(s.errors_title)
             .collapsible(true)
             .resizable(true)
             .anchor(Align2::RIGHT_TOP, [-12.0, 60.0])
@@ -2176,6 +2176,7 @@ impl eframe::App for XenAdminApp {
             .retain(|id, _| state.connection(*id).is_some());
         let ctx = ui.ctx().clone();
         self.apply_appearance(&ctx, &state.settings.preferences);
+        style_dialogs(&ctx, self.window_frame.as_ref());
         self.update_consoles(&state);
         let shown_perf = self.selected_perf(&state);
         self.performance

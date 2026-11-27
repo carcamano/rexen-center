@@ -673,6 +673,16 @@ questions and messages. Open an area to see what works:
   edges resize it. Undocked consoles get the same bar.
   `REXENCENTER_TITLE_BAR=system` keeps the system's frame, `gnome` or `kde`
   forces that look on any desktop;
+- **dialogs in the desktop's look** (this console's own): with that title
+  bar the dialogs (Connect, Options, About, the wizards, the confirmations…)
+  take the same desktop's look. On GNOME they are libadwaita's rounded
+  cards with a flat header, the title in the middle and Adwaita's round
+  close button; on KDE Plasma they have Breeze's title bar with its close
+  glyph (red under the pointer). The close button sits at the end where the
+  window's is. While a dialog is open the window behind it is dimmed and
+  takes no input, but its title bar still moves it. The dialogs stay inside
+  the main window, so on Wayland they stay centred on it. Elsewhere they
+  keep egui's look;
 - **native file dialogs**: a Browse... button beside every file or folder
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or

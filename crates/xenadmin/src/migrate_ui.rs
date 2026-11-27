@@ -43,6 +43,7 @@ use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
+use crate::window_frame::dialog_window;
 use crate::xva_ui::{error_label, nav, page_list, summary};
 
 /// `VMCrossPoolMigrateAction.StaticRBACDependencies`.
@@ -1532,7 +1533,7 @@ impl MigrateWizard {
         let mut open = true;
         let mut outcome = Ok(None);
         let title = self.title(state);
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("cpm-wizard"))
             .collapsible(false)
             .resizable(false)
