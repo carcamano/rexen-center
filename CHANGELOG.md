@@ -5,6 +5,28 @@ All notable changes to ReXen Center. Versions follow the workspace version in
 
 ## Unreleased
 
+- **Updates** ([#1](https://github.com/carcamano/rexen-center/issues/1)): the
+  app looks for a newer stable release on GitHub shortly after it starts, at
+  most once a day (Options › Updates turns this off for isolated networks),
+  and Help › Check for Updates… (ReXen Center › Check for Updates… on macOS)
+  checks at once. A newer version puts an **Update to _version_** button at
+  the top of the window, with the release notes, Skip This Version and Later.
+  The update follows the way the app was installed: the macOS app bundle, the
+  Windows portable zip and the Linux tarball are replaced in place and the
+  app restarts (connections closed as Quit does; the old copy is kept, and put
+  back, until the new version has opened its window); the Windows installer
+  is run after the app quits; for the .deb and .rpm the exact install command
+  is shown and the package can be opened with the software installer, never
+  installed with root rights behind the user's back; anything else opens the
+  release page. Every download is checked against the release's
+  `SHA256SUMS` and refused if it does not match or is not listed. The check
+  sends no identifier, uses the system's proxy settings and certificate
+  authorities, and keeps its state in `update.toml`. New crate
+  `crates/xen-update`; new dependencies `semver`, `tar`, `zip` (8, the last
+  for Rust 1.88) and `rustls-platform-verifier` (reqwest's own), and
+  reqwest's `system-proxy` feature.
+- **Release workflow**: `SHA256SUMS` must list every package, and the
+  release job checks the packages against it before publishing.
 - **GNOME and KDE Plasma title bar**: on these desktops the main window and
   the undocked consoles no longer show winit's plain frame. The window draws
   its own title bar with the menus, the title and the window buttons in

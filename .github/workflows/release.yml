@@ -155,11 +155,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # The app's updater refuses a download that SHA256SUMS does not
+      # list (crates/xen-update): every package must be in it.
       - name: Write SHA256SUMS
         working-directory: dist
         run: |
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+          packages=$(find . -maxdepth 1 -type f ! -name SHA256SUMS | wc -l)
+          listed=$(wc -l < SHA256SUMS)
+          if [ "$packages" -ne 7 ] || [ "$listed" -ne "$packages" ]; then
+            echo "::error::expected 7 packages listed in SHA256SUMS, found $packages files and $listed lines"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: rexen-center-${{ needs.version.outputs.version }}
@@ -178,6 +186,11 @@ jobs:
         with:
           name: rexen-center-${{ needs.version.outputs.version }}
           path: dist
+      # What is published is what was checksummed: the updater verifies
+      # each download against this file and refuses one it does not match.
+      - name: Verify the packages against SHA256SUMS
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -127,7 +127,7 @@ pub fn translated(table: &TableInfo, key: &str) -> Option<&'static str> {
 }
 
 /// Every table of the console, in catalogue order.
-pub fn tables() -> [&'static TableInfo; 20] {
+pub fn tables() -> [&'static TableInfo; 21] {
     [
         &crate::i18n::TABLE,
         &crate::ops_strings::TABLE,
@@ -146,6 +146,7 @@ pub fn tables() -> [&'static TableInfo; 20] {
         &crate::dr_strings::TABLE,
         &crate::org_strings::TABLE,
         &crate::dev_strings::TABLE,
+        &crate::update_strings::TABLE,
         &ERRORS,
         &MESSAGE_NAMES,
         &MESSAGE_BODIES,

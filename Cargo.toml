@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xen-rrd", "crates/xapi-mock", "crates/xen-mcp", "crates/xenadmin"]
+members = ["crates/xapi", "crates/xapi-codegen", "crates/xen-core", "crates/xen-vnc", "crates/xen-rrd", "crates/xapi-mock", "crates/xen-mcp", "crates/xen-update", "crates/xenadmin"]
 
 [workspace.package]
 version = "0.1.1"
@@ -17,6 +17,7 @@ xapi-mock = { path = "crates/xapi-mock" }
 xen-vnc = { path = "crates/xen-vnc" }
 xen-rrd = { path = "crates/xen-rrd" }
 xen-mcp = { path = "crates/xen-mcp" }
+xen-update = { path = "crates/xen-update" }
 
 arc-swap = "1.7"
 bytes = "1"
@@ -35,9 +36,14 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 ring = "0.17"
 roxmltree = "0.21"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# The CA check of the update client: reqwest's own platform verifier
+# (the system's trust store), already part of its rustls stack.
+rustls-platform-verifier = "0.7"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.3"
+tar = { version = "0.4", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
@@ -45,6 +51,8 @@ toml = "1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 8 is the last major release for Rust 1.88.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

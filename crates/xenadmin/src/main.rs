@@ -75,6 +75,8 @@ mod tab_strings;
 mod tabs;
 mod theme;
 mod unified_title_bar;
+mod update_strings;
+mod update_ui;
 mod vapp_strings;
 mod vapp_ui;
 mod vmss_strings;
@@ -120,6 +122,10 @@ fn main() -> eframe::Result<()> {
     }
     let _log_guard = logging::init(paths.as_ref(), branding::APP_ID);
     report_migration(migration);
+    // `update.toml`: the last update check and the skipped version.
+    let update_state = paths
+        .as_ref()
+        .map(|p| xen_update::state::state_file(&p.dir));
 
     let store = match paths {
         Some(paths) => {
@@ -162,6 +168,9 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     let store = Arc::new(store);
+    // An update prepared in the window, completed once it has closed.
+    let post_exit = update_ui::PostExitSlot::default();
+    let updates = (update_state.clone(), post_exit.clone());
     let result = eframe::run_native(
         branding::PRODUCT_NAME,
         options,
@@ -184,12 +193,48 @@ fn main() -> eframe::Result<()> {
                 },
                 Arc::new(move || ctx.request_repaint()),
             );
-            let app = app::XenAdminApp::new(backend).with_window_frame(window_frame);
+            let repaint = cc.egui_ctx.clone();
+            let updater = xen_update::updater::Updater::new(
+                update_config(updates.0),
+                handle.clone(),
+                move || repaint.request_repaint(),
+            );
+            let app = app::XenAdminApp::new(backend)
+                .with_window_frame(window_frame)
+                .with_updates(update_ui::UpdateUi::new(updater, updates.1));
             Ok(Box::new(macos_app(app, cc, unified_title_bar)))
         }),
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    // The window has closed and logged its sessions out, as File > Quit
+    // does: now the update can replace the program.
+    let action = post_exit
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(action) = action {
+        tracing::info!("completing the update");
+        xen_update::updater::run_post_exit(action, update_state.as_deref());
+    }
     result
+}
+
+/// The updater's view of this program: its names, version and how it was
+/// installed (see `xen_update::method`).
+fn update_config(state_file: Option<std::path::PathBuf>) -> xen_update::updater::Config {
+    let product = branding::update_product();
+    let method = xen_update::method::detect(&product, &xen_update::method::SystemProbe);
+    tracing::info!(?method, "installation");
+    xen_update::updater::Config {
+        product,
+        running: xen_update::Version::parse(branding::VERSION)
+            .expect("the package version is a semantic version"),
+        method,
+        arch: xen_update::Arch::current(),
+        api: xen_update::client::Client::api_from_env(),
+        state_file,
+        start_delay: xen_update::state::START_DELAY,
+    }
 }
 
 /// macOS: the menus in the system's menu bar and, with `unified_title_bar`,

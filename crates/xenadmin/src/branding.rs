@@ -17,6 +17,23 @@ pub const LICENSE_ID: &str = "BSD-2-Clause";
 /// Full license text shown in the About window.
 pub const LICENSE_TEXT: &str = include_str!("../../../LICENSE");
 
+/// The project's page (from Cargo: the workspace's `repository`).
+pub const REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
+
+/// The product as the updater knows it: the names of its release packages
+/// and the GitHub repository they are published in.
+pub fn update_product() -> xen_update::Product {
+    let repository = REPOSITORY_URL
+        .trim_end_matches('/')
+        .trim_start_matches("https://github.com/");
+    xen_update::Product::new(
+        APP_ID,
+        xen_core::branding::BINARY_NAME,
+        PRODUCT_NAME,
+        repository,
+    )
+}
+
 /// Login originator: identifies this client in the server's logs.
 pub fn originator() -> String {
     format!("{APP_ID}/{VERSION}")

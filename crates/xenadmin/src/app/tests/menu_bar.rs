@@ -196,6 +196,7 @@ fn the_menus_move_to_the_menu_bar() {
         bar.labels(product),
         [
             about.as_str(),
+            crate::update_strings::update_strings().menu_check,
             "-",
             s.mac_settings,
             "-",
