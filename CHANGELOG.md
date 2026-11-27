@@ -5,6 +5,10 @@ All notable changes to ReXen Center. Versions follow the workspace version in
 
 ## Unreleased
 
+- **Clipboard**: pasting text copied in another app (Ctrl+V or Edit > Paste)
+  into the app's fields, and copying text out of them, now works. The app was
+  built without eframe's `clipboard` feature, so it only kept its own clipboard
+  and never reached the system's (Wayland, X11, Windows, macOS).
 - **GNOME and KDE Plasma title bar**: on these desktops the main window and
   the undocked consoles no longer show winit's plain frame. The window draws
   its own title bar with the menus, the title and the window buttons in
