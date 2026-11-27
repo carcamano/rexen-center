@@ -37,6 +37,12 @@ serde_json = { workspace = true }
 xapi-mock = { workspace = true }
 xen-vnc = { workspace = true, features = ["testing"] }
 
+[features]
+# Test tooling only: renders the README screenshots from the mock server
+# through wgpu (see `src/app/tests/screenshots.rs`). Off by default, so the
+# usual builds and tests do not compile wgpu.
+readme-screenshots = ["egui_kittest/wgpu", "egui_kittest/snapshot"]
+
 [lints]
 workspace = true
 

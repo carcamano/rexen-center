@@ -2494,6 +2494,10 @@ mod tests {
     // F14b: themes and the message catalogue on a real host
     // (`app/tests/appearance_real.rs`).
     mod appearance_real;
+    // The README screenshots, from the mock (`app/tests/screenshots.rs`;
+    // feature `readme-screenshots`).
+    #[cfg(feature = "readme-screenshots")]
+    mod screenshots;
 
     const WAIT: Duration = Duration::from_secs(10);
 
