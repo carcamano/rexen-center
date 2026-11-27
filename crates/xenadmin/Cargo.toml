@@ -30,6 +30,16 @@ xen-mcp = { workspace = true }
 xen-rrd = { workspace = true }
 xen-vnc = { workspace = true }
 
+# macOS: the menus in the system's menu bar (AppKit's NSMenu through muda;
+# 0.19 is the last release for Rust 1.88) and the title bar's layout and
+# double-click setting (src/macos.rs). eframe, egui-winit and rfd already
+# depend on these objc2 versions.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSGeometry", "NSString", "NSUserDefaults"] }
+
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["eframe"] }
 flate2 = { workspace = true }

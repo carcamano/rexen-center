@@ -46,7 +46,9 @@ use egui::{
 
 use crate::i18n::strings;
 
-/// Overrides the title bar: `system`, `gnome`, `kde` or `windows`.
+/// Overrides the title bar: `system`, `gnome`, `kde` or `windows`. On macOS
+/// `system` also keeps the toolbar out of the title bar
+/// ([`crate::unified_title_bar`]).
 pub const TITLE_BAR_ENV: &str = "REXENCENTER_TITLE_BAR";
 
 /// Whose look the title bar takes.

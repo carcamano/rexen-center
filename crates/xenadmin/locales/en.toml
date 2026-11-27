@@ -27,6 +27,29 @@ window_close = "Close"
 # The close button of the dialogs on GNOME and KDE Plasma (this
 # console's own).
 dialog_close = "Close Dialog"
+# The menus of the macOS menu bar (this console's own), with Apple's
+# names. `{product}`: the product name. The application menu:
+mac_about = "About {product}"
+mac_settings = "Settings…"
+mac_services = "Services"
+# `{product}`
+mac_hide = "Hide {product}"
+mac_hide_others = "Hide Others"
+mac_show_all = "Show All"
+# `{product}`
+mac_quit = "Quit {product}"
+# The Edit menu.
+menu_edit = "Edit"
+edit_cut = "Cut"
+edit_copy = "Copy"
+edit_paste = "Paste"
+edit_select_all = "Select All"
+# The View menu's last item: full screen on or off (⌃⌘F).
+view_full_screen = "Enter Full Screen"
+# The Window menu (Minimize is `window_minimize`).
+menu_window = "Window"
+window_zoom = "Zoom"
+window_bring_all_to_front = "Bring All to Front"
 action_start = "Start"
 action_clean_shutdown = "Shut Down"
 tree_heading = "Infrastructure"
