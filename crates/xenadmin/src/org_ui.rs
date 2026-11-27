@@ -377,77 +377,32 @@ fn tag_of_parent(parent: Option<&GroupTag>) -> Option<String> {
     }
 }
 
-/// What a [`pull_down`] needs beside its label: the padding and the chevron.
-const PULL_DOWN_EXTRA: f32 = 36.0;
-
-/// A button opening a menu, as wide as `ui`, with a chevron at its right
-/// end (painted, so that the button's label stays `text`); `on` lights it.
-fn pull_down(ui: &mut Ui, text: &str, on: bool) -> egui::Response {
-    let height = ui.spacing().interact_size.y;
-    let response = ui.add(
-        Button::new(egui::RichText::new(text))
-            .selected(on)
-            .min_size(egui::vec2(ui.available_width(), height)),
-    );
-    let color = if on {
-        ui.visuals().selection.stroke.color
-    } else {
-        ui.visuals().text_color()
-    };
-    let c = egui::pos2(response.rect.right() - 10.0, response.rect.center().y);
-    let r = 3.0;
-    ui.painter().add(egui::Shape::convex_polygon(
-        vec![
-            egui::pos2(c.x - r, c.y - r / 2.0),
-            egui::pos2(c.x + r, c.y - r / 2.0),
-            egui::pos2(c.x, c.y + r / 2.0 + 0.5),
-        ],
-        color,
-        egui::Stroke::NONE,
-    ));
-    response
-}
-
 impl OrgUi {
-    /// The navigation pane (`NavigationPane`): Infrastructure and Objects as
-    /// tabs, Organization Views and Saved Searches as menus.
-    pub fn nav_buttons(&mut self, ui: &mut Ui, state: &AppState) -> bool {
+    /// The navigation tabs at the top of the tree (the original's
+    /// `NavigationPane`): Infrastructure and Objects, then More, a menu of
+    /// the organization views and the saved searches, lit while one of them
+    /// shows. Returns whether the mode changed.
+    pub fn nav_tabs(&mut self, ui: &mut Ui, state: &AppState) -> bool {
         let s = org_strings();
         let mut changed = false;
-        // Infrastructure and Objects show the whole tree two ways: tabs
-        // over the pane, as wide as it.
-        changed |= crate::controls::segmented_filling(
+        let more_on = matches!(&self.mode, NavMode::View(v) if *v != OrgView::Objects)
+            || matches!(self.mode, NavMode::Saved(_));
+        let mut chosen = None;
+        let current = self.mode.clone();
+        changed |= crate::controls::segmented_with_menu(
             ui,
             &mut self.mode,
             [
                 (NavMode::Infrastructure, s.nav_infrastructure),
                 (NavMode::View(OrgView::Objects), s.nav_objects),
             ],
-        );
-        ui.add_space(4.0);
-        // The organization views and the saved searches are menus of views:
-        // pull-down buttons, lit while one of their views shows; side by
-        // side when both labels fit, else one over the other.
-        let fits = |text: &str| {
-            let galley = egui::WidgetText::from(text).into_galley(
-                ui,
-                Some(egui::TextWrapMode::Extend),
-                f32::INFINITY,
-                egui::TextStyle::Button,
-            );
-            galley.size().x + PULL_DOWN_EXTRA
-                <= (ui.available_width() - ui.spacing().item_spacing.x) / 2.0
-        };
-        let columns = if fits(s.nav_organization) && fits(s.nav_saved) {
-            2
-        } else {
-            1
-        };
-        ui.columns(columns, |columns| {
-            let last = columns.len() - 1;
-            let org_on = matches!(self.mode, NavMode::View(v) if v != OrgView::Objects);
-            let org = pull_down(&mut columns[0], s.nav_organization, org_on);
-            egui::Popup::menu(&org).show(|ui| {
+            s.nav_more,
+            more_on,
+            |ui| {
+                let heading = |ui: &mut Ui, text: &str| {
+                    ui.label(egui::RichText::new(text).small().weak());
+                };
+                heading(ui, s.nav_organization);
                 for (v, label) in [
                     (OrgView::Tags, s.nav_tags),
                     (OrgView::Folders, s.nav_folders),
@@ -455,35 +410,32 @@ impl OrgUi {
                     (OrgView::VApps, s.nav_vapps),
                 ] {
                     if ui
-                        .selectable_label(self.mode == NavMode::View(v), label)
+                        .selectable_label(current == NavMode::View(v), label)
                         .clicked()
                     {
-                        self.mode = NavMode::View(v);
-                        changed = true;
+                        chosen = Some(NavMode::View(v));
                         ui.close();
                     }
                 }
-            });
-            let saved_on = matches!(self.mode, NavMode::Saved(_));
-            if last == 0 {
-                columns[0].add_space(2.0);
-            }
-            let saved = pull_down(&mut columns[last], s.nav_saved, saved_on);
-            egui::Popup::menu(&saved).show(|ui| {
+                ui.separator();
+                heading(ui, s.nav_saved);
                 let w = world(state);
                 for (_, search) in search_ui::all_searches(&w) {
                     let uuid = search.uuid.clone().unwrap_or_default();
                     if ui
-                        .selectable_label(self.mode == NavMode::Saved(uuid.clone()), &search.name)
+                        .selectable_label(current == NavMode::Saved(uuid.clone()), &search.name)
                         .clicked()
                     {
-                        self.mode = NavMode::Saved(uuid);
-                        changed = true;
+                        chosen = Some(NavMode::Saved(uuid));
                         ui.close();
                     }
                 }
-            });
-        });
+            },
+        );
+        if let Some(mode) = chosen {
+            self.mode = mode;
+            changed = true;
+        }
         changed
     }
 

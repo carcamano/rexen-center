@@ -24,6 +24,9 @@ string_table! {
     nav_objects = "Objects",
     nav_organization = "Organization Views",
     nav_saved = "Saved Searches",
+    /// The navigation tabs' last segment: the organization views and the
+    /// saved searches (this console's own).
+    nav_more = "More",
     nav_tags = "Objects by Tag",
     nav_folders = "Objects by Folder",
     nav_fields = "Objects by Custom Field",

@@ -550,6 +550,14 @@ fn alignment_screenshots() {
         tab(&mut h, t.tab_general);
         shoot(&mut h, &dir, &format!("host-{look}-light.png"));
 
+        // The navigation tabs' More menu, open.
+        let more = crate::org_strings::org_strings().nav_more;
+        click_first(&mut h, more);
+        settle(&mut h);
+        shoot(&mut h, &dir, &format!("more-{look}-light.png"));
+        click_first(&mut h, more);
+        settle(&mut h);
+
         // Tools > Options.
         h.get_by_label(s.menu_tools).click();
         step_until(&mut h, "tools menu", |h| {

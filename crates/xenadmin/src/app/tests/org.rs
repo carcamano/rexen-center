@@ -73,13 +73,14 @@ fn navigation_views_build_their_trees() {
     let (_server, mut h) = org_window(&runtime);
     let s = org_strings();
 
-    // The buttons switch modes.
+    // The tabs and the More menu switch modes.
     press(&mut h, s.nav_objects);
     assert_eq!(h.state().org.mode, NavMode::View(OrgView::Objects));
     assert!(shows(&h, s.view_objects));
     assert!(shows(&h, s.type_vms) && shows(&h, s.type_servers) && shows(&h, s.type_networks));
     assert!(shows(&h, "web-01"));
-    press(&mut h, s.nav_organization);
+    press(&mut h, s.nav_more);
+    assert!(shows(&h, s.nav_organization) && shows(&h, s.nav_saved));
     press(&mut h, s.nav_tags);
     assert_eq!(h.state().org.mode, NavMode::View(OrgView::Tags));
     assert!(shows(&h, s.view_tags) && shows(&h, "prod") && shows(&h, "web"));
@@ -95,7 +96,7 @@ fn navigation_views_build_their_trees() {
     assert!(shows(&h, s.view_vapps));
 
     // A saved search's tree: VMs by Power State.
-    press(&mut h, s.nav_saved);
+    press(&mut h, s.nav_more);
     press(&mut h, s.search_vms_by_power_state);
     assert!(matches!(h.state().org.mode, NavMode::Saved(_)));
     assert!(shows(&h, "Running") && shows(&h, "Halted") && shows(&h, "web-01"));
@@ -213,9 +214,8 @@ fn search_tab_filters_groups_saves_exports_and_imports() {
     assert!(xml.contains("<PropertyGrouping property=\"power_state\" />"));
     assert!(xml.contains("<sort column=\"name\" ascending=\"yes\" />"));
     catch_up(&mut h);
-    // It is in the Saved Searches menu and mode (the navigation pane's
-    // button, not the Search tab's menu of the same name).
-    h.get_all_by_label(s.nav_saved).next().unwrap().click();
+    // It is in the navigation tabs' More menu, under Saved Searches.
+    h.get_all_by_label(s.nav_more).next().unwrap().click();
     settle(&mut h);
     assert!(shows(&h, "Ending in 01"));
     h.get_all_by_label("Ending in 01")

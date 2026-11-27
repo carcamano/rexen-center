@@ -73,7 +73,6 @@ string_table! {
     action_start = "Start",
     action_clean_shutdown = "Shut Down",
 
-    tree_heading = "Infrastructure",
     tree_empty = "Not connected. Use File > Connect… to add a server.",
     /// `{platform}`: the welcome page under the product name (this
     /// console's own; the original's home page was a web page).

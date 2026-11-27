@@ -523,14 +523,26 @@ impl XenAdminApp {
         } else {
             p.alerts_title.to_owned()
         };
-        crate::controls::segmented(
-            ui,
-            &mut self.notifications,
-            [
-                (Notifications::Alerts, alerts_title),
-                (Notifications::Events, strings().events_title.to_owned()),
-            ],
-        );
+        // One row: the two views at the left, the shown one's actions at
+        // the right (as a panel's tabs and tools in VS Code or vSphere).
+        ui.horizontal(|ui| {
+            crate::controls::segmented(
+                ui,
+                &mut self.notifications,
+                [
+                    (Notifications::Alerts, alerts_title),
+                    (Notifications::Events, strings().events_title.to_owned()),
+                ],
+            );
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match self.notifications {
+                    Notifications::Alerts => self.alerts.actions(ui, state),
+                    Notifications::Events => events::actions(ui, state, &self.backend),
+                },
+            );
+        });
+        ui.separator();
         match self.notifications {
             Notifications::Events => events::show(ui, state, &self.backend),
             Notifications::Alerts => {
@@ -1320,14 +1332,12 @@ impl XenAdminApp {
     fn tree(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
         let t = tab_strings();
-        Panel::bottom("nav-buttons").show(ui, |ui| {
-            if self.org.nav_buttons(ui, state) {
-                self.selection = None;
-                self.org.imported = None;
-            }
-        });
         ui.add_space(4.0);
-        ui.strong(s.tree_heading);
+        if self.org.nav_tabs(ui, state) {
+            self.selection = None;
+            self.org.imported = None;
+        }
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             let label = ui.label(RichText::new(t.tree_filter_label).weak());
             let clear = !self.tree_filter.is_empty();

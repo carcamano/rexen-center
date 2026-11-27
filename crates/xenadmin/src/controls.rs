@@ -315,13 +315,13 @@ where
     if size.x <= width {
         let rect = Rect::from_center_size(row.center(), size);
         ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
-            changed = segments.show(ui, selected);
+            changed = segments.show(ui, selected).0;
         });
     } else {
         ui.scope_builder(UiBuilder::new().max_rect(row), |ui| {
             ScrollArea::horizontal()
                 .id_salt("rexen-tab-view")
-                .show(ui, |ui| changed = segments.show(ui, selected));
+                .show(ui, |ui| changed = segments.show(ui, selected).0);
         });
     }
     changed
@@ -339,89 +339,140 @@ where
     T: PartialEq + Clone,
     S: Into<WidgetText>,
 {
-    Segments::new(ui, items).show(ui, selected)
+    Segments::new(ui, items).show(ui, selected).0
 }
 
-/// [`segmented`] as wide as the space left, the segments sharing it
-/// equally: tabs over a pane as wide as they are.
-pub fn segmented_filling<T, S>(
+/// [`segmented`] as wide as the space left, ending with a segment that
+/// opens a menu (`menu`'s contents): `menu_label` and a chevron, shown
+/// selected when `menu_on` (the menu's choice is the one in force). The
+/// segments share the width in proportion to their text, cut short when it
+/// is too narrow. Returns `true` when another item was chosen.
+pub fn segmented_with_menu<T, S>(
     ui: &mut Ui,
     selected: &mut T,
     items: impl IntoIterator<Item = (T, S)>,
+    menu_label: &str,
+    menu_on: bool,
+    menu: impl FnOnce(&mut Ui),
 ) -> bool
 where
     T: PartialEq + Clone,
     S: Into<WidgetText>,
 {
     let width = ui.available_width();
-    Segments::filling(ui, width, items).show(ui, selected)
+    let mut segments: Vec<Segment<T>> = items
+        .into_iter()
+        .map(|(value, text)| Segment::new(Some(value), text.into(), false))
+        .collect();
+    segments.push(Segment::new(None, menu_label.into(), menu_on));
+    let (changed, menu_response) = Segments::build(ui, segments, Some(width)).show(ui, selected);
+    if let Some(response) = menu_response {
+        egui::Popup::menu(&response).show(menu);
+    }
+    changed
 }
 
-/// The segments of a [`tab_view`] or a [`segmented`] control.
+/// The space a menu segment keeps for its chevron.
+const CHEVRON: f32 = 12.0;
+
+/// One segment: a value to choose, or (`value: None`) the menu at the end.
+struct Segment<T> {
+    value: Option<T>,
+    text: WidgetText,
+    /// A menu segment shown selected.
+    menu_on: bool,
+}
+
+impl<T> Segment<T> {
+    fn new(value: Option<T>, text: WidgetText, menu_on: bool) -> Self {
+        Self {
+            value,
+            text,
+            menu_on,
+        }
+    }
+}
+
+/// The segments of a [`tab_view`], a [`segmented`] or a
+/// [`segmented_with_menu`] control, laid out.
 struct Segments<T> {
-    items: Vec<(T, std::sync::Arc<egui::Galley>, String)>,
+    items: Vec<(Segment<T>, std::sync::Arc<egui::Galley>, String)>,
+    widths: Vec<f32>,
     height: f32,
-    /// Each segment's width when they share a given width equally.
-    equal: Option<f32>,
 }
 
 impl<T: PartialEq + Clone> Segments<T> {
     fn new<S: Into<WidgetText>>(ui: &Ui, items: impl IntoIterator<Item = (T, S)>) -> Self {
-        Self::build(ui, items, None)
-    }
-
-    /// Segments sharing `width` equally, their text cut short if it does
-    /// not fit.
-    fn filling<S: Into<WidgetText>>(
-        ui: &Ui,
-        width: f32,
-        items: impl IntoIterator<Item = (T, S)>,
-    ) -> Self {
-        let items: Vec<(T, S)> = items.into_iter().collect();
-        let each = ((width - 2.0 * SEGMENT_INSET) / items.len().max(1) as f32).max(1.0);
-        Self::build(ui, items, Some(each))
-    }
-
-    fn build<S: Into<WidgetText>>(
-        ui: &Ui,
-        items: impl IntoIterator<Item = (T, S)>,
-        equal: Option<f32>,
-    ) -> Self {
-        let (wrap, width) = match equal {
-            Some(each) => (TextWrapMode::Truncate, (each - 8.0).max(1.0)),
-            None => (TextWrapMode::Extend, f32::INFINITY),
-        };
-        let items = items
+        let segments = items
             .into_iter()
-            .map(|(value, text)| {
-                let text: WidgetText = text.into();
-                let label = text.text().to_owned();
-                let galley = text.into_galley(ui, Some(wrap), width, TextStyle::Button);
-                (value, galley, label)
+            .map(|(value, text)| Segment::new(Some(value), text.into(), false))
+            .collect();
+        Self::build(ui, segments, None)
+    }
+
+    /// Each segment as wide as its text, or, given a `width`, the segments
+    /// filling it: the spare width shared equally, or each one shrunk in
+    /// proportion and its text cut short.
+    fn build(ui: &Ui, segments: Vec<Segment<T>>, width: Option<f32>) -> Self {
+        let extra =
+            |s: &Segment<T>| 2.0 * SEGMENT_PADDING + if s.value.is_none() { CHEVRON } else { 0.0 };
+        let natural: Vec<f32> = segments
+            .iter()
+            .map(|s| {
+                let galley = s.text.clone().into_galley(
+                    ui,
+                    Some(TextWrapMode::Extend),
+                    f32::INFINITY,
+                    TextStyle::Button,
+                );
+                galley.size().x + extra(s)
+            })
+            .collect();
+        let widths = match width {
+            None => natural.clone(),
+            Some(width) => {
+                let inner = (width - 2.0 * SEGMENT_INSET).max(1.0);
+                let total: f32 = natural.iter().sum();
+                if total <= inner {
+                    let spare = (inner - total) / natural.len().max(1) as f32;
+                    natural.iter().map(|w| w + spare).collect()
+                } else {
+                    natural.iter().map(|w| w * inner / total).collect()
+                }
+            }
+        };
+        let items = segments
+            .into_iter()
+            .zip(&widths)
+            .map(|(segment, &w)| {
+                let room = (w - extra(&segment) + 2.0 * SEGMENT_PADDING - 8.0).max(1.0);
+                let label = segment.text.text().to_owned();
+                let galley = segment.text.clone().into_galley(
+                    ui,
+                    Some(TextWrapMode::Truncate),
+                    room,
+                    TextStyle::Button,
+                );
+                (segment, galley, label)
             })
             .collect();
         Self {
             items,
+            widths,
             height: ui.spacing().interact_size.y + 2.0 * SEGMENT_INSET + 2.0,
-            equal,
         }
-    }
-
-    fn widths(&self) -> impl Iterator<Item = f32> + '_ {
-        self.items.iter().map(|(_, galley, _)| {
-            self.equal
-                .unwrap_or(galley.size().x + 2.0 * SEGMENT_PADDING)
-        })
     }
 
     fn size(&self) -> Vec2 {
         vec2(
-            self.widths().sum::<f32>() + 2.0 * SEGMENT_INSET,
+            self.widths.iter().sum::<f32>() + 2.0 * SEGMENT_INSET,
             self.height,
         )
     }
 
-    fn show(self, ui: &mut Ui, selected: &mut T) -> bool {
+    /// Draws the control; returns whether another value was chosen and the
+    /// menu segment's response, if there is one.
+    fn show(self, ui: &mut Ui, selected: &mut T) -> (bool, Option<Response>) {
         let size = self.size();
         let (track, _) = ui.allocate_exact_size(size, Sense::hover());
         let visuals = ui.visuals().clone();
@@ -442,35 +493,50 @@ impl<T: PartialEq + Clone> Segments<T> {
 
         let mut rects = Vec::with_capacity(self.items.len());
         let mut x = track.left() + SEGMENT_INSET;
-        for width in self.widths() {
+        for width in &self.widths {
             rects.push(Rect::from_min_size(
                 pos2(x, track.top() + SEGMENT_INSET),
-                vec2(width, track.height() - 2.0 * SEGMENT_INSET),
+                vec2(*width, track.height() - 2.0 * SEGMENT_INSET),
             ));
             x += width;
         }
-        let chosen = self.items.iter().position(|(v, ..)| v == selected);
+        let lit: Vec<bool> = self
+            .items
+            .iter()
+            .map(|(s, ..)| match &s.value {
+                Some(v) => v == selected,
+                None => s.menu_on,
+            })
+            .collect();
 
         // The dividers between two segments that are not selected.
         let divider = Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color);
         for (i, r) in rects.iter().enumerate().skip(1) {
-            if chosen != Some(i) && chosen != Some(i - 1) {
+            if !lit[i] && !lit[i - 1] {
                 let y = r.y_range();
                 painter.vline(r.left(), (y.min + 5.0)..=(y.max - 5.0), divider);
             }
         }
 
         let mut changed = false;
+        let mut menu = None;
         let radius = CornerRadius::same(TRACK_RADIUS - SEGMENT_INSET as u8);
-        for (i, ((value, galley, label), rect)) in self.items.into_iter().zip(rects).enumerate() {
-            let is_selected = chosen == Some(i);
+        for (i, ((segment, galley, label), rect)) in self.items.into_iter().zip(rects).enumerate() {
+            let is_selected = lit[i];
             let id = ui.scope_id().with(("rexen-segment", i));
             let response = ui.interact(rect, id, Sense::click());
-            response.widget_info(|| WidgetInfo::labeled(Role::Tab, true, &label));
-            // A tab is selected, not toggled (egui's `selected` in
-            // `WidgetInfo`).
-            ui.ctx()
-                .accesskit_node_builder(id, |node| node.set_selected(is_selected));
+            if segment.value.is_some() {
+                response.widget_info(|| WidgetInfo::labeled(Role::Tab, true, &label));
+                // A tab is selected, not toggled (egui's `selected` in
+                // `WidgetInfo`).
+                ui.ctx()
+                    .accesskit_node_builder(id, |node| node.set_selected(is_selected));
+            } else {
+                response.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
+                ui.ctx().accesskit_node_builder(id, |node| {
+                    node.set_has_popup(egui::accesskit::HasPopup::Menu)
+                });
+            }
             if is_selected {
                 let fill = if dark {
                     Color32::from_gray(92)
@@ -511,14 +577,40 @@ impl<T: PartialEq + Clone> Segments<T> {
             } else {
                 visuals.text_color()
             };
-            let pos = rect.center() - galley.size() / 2.0;
-            painter.galley(pos, galley, color);
-            if response.clicked() && !is_selected {
-                *selected = value;
-                changed = true;
+            match segment.value {
+                Some(value) => {
+                    let pos = rect.center() - galley.size() / 2.0;
+                    painter.galley(pos, galley, color);
+                    if response.clicked() && !is_selected {
+                        *selected = value;
+                        changed = true;
+                    }
+                }
+                None => {
+                    // The text and the chevron, centred together.
+                    let w = galley.size().x + CHEVRON;
+                    let left = rect.center().x - w / 2.0;
+                    let pos = pos2(left, rect.center().y - galley.size().y / 2.0);
+                    let c = pos2(
+                        left + galley.size().x + CHEVRON / 2.0 + 1.0,
+                        rect.center().y,
+                    );
+                    painter.galley(pos, galley, color);
+                    let r = 3.0;
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            pos2(c.x - r, c.y - r / 2.0),
+                            pos2(c.x + r, c.y - r / 2.0),
+                            pos2(c.x, c.y + r / 2.0 + 0.5),
+                        ],
+                        color,
+                        Stroke::NONE,
+                    ));
+                    menu = Some(response);
+                }
             }
         }
-        changed
+        (changed, menu)
     }
 }
 

@@ -18,9 +18,15 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   are drawn as macOS draws a tab view: a segmented control centred on the
   line at the top of the pane, the selected tab raised, instead of buttons
   like the toolbar's. The Alerts and Events switch uses the same segmented
-  control, and so do Infrastructure and Objects in the navigation pane;
-  Organization Views and Saved Searches become pull-down buttons with a
-  chevron (side by side when they fit, one over the other when not).
+  control.
+- **Navigation tabs at the top of the tree**: the navigation pane under the
+  tree is gone. Infrastructure and Objects are tabs at the top of the tree,
+  where the "Infrastructure" heading was, followed by More, a menu of the
+  organization views (Objects by Tag, by Folder, by Custom Field, vApps) and
+  the saved searches, lit while one of them shows (as vSphere's and Xcode's
+  navigators). The Alerts and Events area puts its actions (Dismiss
+  Selected, Dismiss All, Clear Finished) at the right end of its tab row
+  instead of a row of their own.
 - **Dialogs without a line over their buttons**: as on macOS and GNOME,
   space separates a dialog's buttons from its contents.
 - **Properties page lists**: the pages of the Properties dialogs (pool,

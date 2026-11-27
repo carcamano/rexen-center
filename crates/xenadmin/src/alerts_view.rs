@@ -334,6 +334,42 @@ impl AlertsView {
     }
 
     /// Draws the view.
+    /// Dismiss Selected and Dismiss All, at the right end of the
+    /// notifications area's tab row: `ui` lays out right to left, so the
+    /// buttons are added from the right.
+    pub fn actions(&mut self, ui: &mut Ui, state: &AppState) {
+        let p = perf_strings();
+        let all = all_alerts(state);
+        let present: HashSet<(ConnectionId, Ref<Message>)> =
+            all.iter().map(|(c, a)| (*c, a.message.clone())).collect();
+        self.selected.retain(|k| present.contains(k));
+        if ui
+            .add_enabled(!all.is_empty(), egui::Button::new(p.alerts_dismiss_all))
+            .clicked()
+        {
+            let targets = group(all.iter().map(|(c, a)| (*c, a.message.clone())));
+            self.confirm = Some(Confirm {
+                all: true,
+                targets,
+                focus: true,
+            });
+        }
+        if ui
+            .add_enabled(
+                !self.selected.is_empty(),
+                egui::Button::new(p.alerts_dismiss_selected),
+            )
+            .clicked()
+        {
+            let targets = group(self.selected.iter().cloned());
+            self.confirm = Some(Confirm {
+                all: false,
+                targets,
+                focus: true,
+            });
+        }
+    }
+
     pub fn show(&mut self, ui: &mut Ui, state: &AppState) -> Option<AlertAction> {
         let p = perf_strings();
         let all = all_alerts(state);
@@ -342,34 +378,6 @@ impl AlertsView {
             all.iter().map(|(c, a)| (*c, a.message.clone())).collect();
         self.selected.retain(|k| present.contains(k));
         let mut action = None;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    !self.selected.is_empty(),
-                    egui::Button::new(p.alerts_dismiss_selected),
-                )
-                .clicked()
-            {
-                let targets = group(self.selected.iter().cloned());
-                self.confirm = Some(Confirm {
-                    all: false,
-                    targets,
-                    focus: true,
-                });
-            }
-            if ui
-                .add_enabled(!all.is_empty(), egui::Button::new(p.alerts_dismiss_all))
-                .clicked()
-            {
-                let targets = group(all.iter().map(|(c, a)| (*c, a.message.clone())));
-                self.confirm = Some(Confirm {
-                    all: true,
-                    targets,
-                    focus: true,
-                });
-            }
-        });
-        ui.separator();
         ScrollArea::vertical()
             .auto_shrink(false)
             .id_salt("alerts-scroll")
