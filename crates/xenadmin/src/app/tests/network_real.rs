@@ -11,7 +11,7 @@
 //! network, VLAN, bond, tunnel or PIF is made, changed or removed.
 //!
 //! **One VM's interfaces:** on the halted VM named
-//! [`super::FLUXER`] only, an interface is added on the network of its
+//! [`super::named_vm`] only, an interface is added on the network of its
 //! first interface (an existing network), its QoS limit changed, then it is
 //! removed; its other interfaces are left as they were, and the test checks
 //! the VM ends with exactly the interfaces it had, still halted. If a step
@@ -32,7 +32,7 @@ fn note(log: &mut String, line: String) {
 }
 
 #[test]
-#[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables); changes only the interfaces of the VM named \"09 - Ubuntu Fluxer\""]
+#[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables); changes only the interfaces of the VM named by XENADMIN_REAL_NAMED_VM"]
 fn real_f9_networking() {
     let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
     let runtime = runtime();
@@ -42,16 +42,17 @@ fn real_f9_networking() {
 }
 
 /// The same run against the mock (the sanitized capture of the real host,
-/// one halted guest renamed [`FLUXER`]), so the real run cannot fail on a
+/// one halted guest renamed [`named_vm`]), so the real run cannot fail on a
 /// test mistake.
 #[test]
 fn f9_real_run_on_the_mock() {
+    let vm_label = named_vm();
     let runtime = runtime();
     let server = runtime.block_on(MockServer::start_with_records(
         true,
         xapi_mock::capture_records(),
     ));
-    server.set_name_label("vm", "OpaqueRef:vm-0010", FLUXER);
+    server.set_name_label("vm", "OpaqueRef:vm-0010", vm_label);
     let mut h = app_harness(&runtime);
     connect_through_dialog(&mut h, &server.address(), xapi_mock::PASSWORD);
     step_until(&mut h, "certificate prompt", |h| {
@@ -114,6 +115,7 @@ fn vifs_of(
 }
 
 fn f9_run(h: &mut Harness<'static, XenAdminApp>, long: Duration) -> String {
+    let vm_label = named_vm();
     let mut log = String::new();
     let n = net_strings();
     let t = tab_strings();
@@ -360,13 +362,13 @@ fn f9_run(h: &mut Harness<'static, XenAdminApp>, long: Duration) -> String {
     let named: Vec<(Ref<Vm>, Arc<VmRecord>)> = m
         .vms
         .iter()
-        .filter(|(_, v)| v.name_label == FLUXER)
+        .filter(|(_, v)| v.name_label == vm_label)
         .map(|(r, v)| (r.clone(), v.clone()))
         .collect();
     assert_eq!(
         named.len(),
         1,
-        "refusing: {} VMs are named {FLUXER:?}",
+        "refusing: {} VMs are named {vm_label:?}",
         named.len()
     );
     let (vm, record) = named.into_iter().next().unwrap();
@@ -374,17 +376,17 @@ fn f9_run(h: &mut Harness<'static, XenAdminApp>, long: Duration) -> String {
     assert_eq!(
         record.power_state,
         VmPowerState::Halted,
-        "refusing: {FLUXER:?} is not halted"
+        "refusing: {vm_label:?} is not halted"
     );
     let original = vifs_of(h, &vm);
     assert!(
         !original.is_empty(),
-        "refusing: {FLUXER:?} has no interface whose network to reuse"
+        "refusing: {vm_label:?} has no interface whose network to reuse"
     );
     note(
         &mut log,
         format!(
-            "{FLUXER:?} halted with {} interfaces: {:?}",
+            "{vm_label:?} halted with {} interfaces: {:?}",
             original.len(),
             original
                 .iter()
@@ -394,7 +396,7 @@ fn f9_run(h: &mut Harness<'static, XenAdminApp>, long: Duration) -> String {
     );
     let net = m.vifs[&original[0].0].network.clone();
     let net_name = xen_core::objects::network_name(&m, &m.networks[&net]);
-    let vm_name = FLUXER;
+    let vm_name = vm_label;
     let wait = |h: &mut Harness<'static, XenAdminApp>, title: &str| -> Result<(), String> {
         let ok = step_for(h, long, |h| {
             let state = h.state().backend.state();

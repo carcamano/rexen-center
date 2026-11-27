@@ -2,7 +2,7 @@
 //! with the `XENADMIN_REAL_*` variables of the other real-host tests and
 //! `XENADMIN_REAL_LOG` / `XENADMIN_REAL_SHOTS` outside the repository).
 //!
-//! * `real_f7_fluxer` acts on the VM named exactly "09 - Ubuntu Fluxer"
+//! * `real_f7_named_vm` acts on the VM named exactly by `XENADMIN_REAL_NAMED_VM`
 //!   only (refused unless exactly one VM has that name and it is halted):
 //!   it takes a snapshot, loads an ISO into its DVD drive and ejects it,
 //!   reverts to the snapshot it took, and deletes that snapshot. The VM
@@ -169,16 +169,17 @@ fn write_log(log: &str) {
     }
 }
 
-/// The VM named exactly [`FLUXER`]: snapshot, DVD drive, revert, delete.
+/// The VM named exactly [`named_vm`]: snapshot, DVD drive, revert, delete.
 #[test]
-#[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables); writes to 09 - Ubuntu Fluxer"]
-fn real_f7_fluxer() {
+#[ignore = "needs a real XCP-ng host (XENADMIN_REAL_* variables); writes only to the VM named by XENADMIN_REAL_NAMED_VM"]
+fn real_f7_named_vm() {
+    let vm_label = named_vm();
     let runtime = runtime();
     let mut h = real_host_harness(&runtime);
     let p = prov_strings();
     let t = tab_strings();
     let mut log = String::new();
-    let named = vms_named(&h, FLUXER)
+    let named = vms_named(&h, vm_label)
         .into_iter()
         .filter(|r| {
             let v = &conn(&h).model.vms[r];
@@ -188,7 +189,7 @@ fn real_f7_fluxer() {
     assert_eq!(
         named.len(),
         1,
-        "refusing: {} VMs are named {FLUXER:?}",
+        "refusing: {} VMs are named {vm_label:?}",
         named.len()
     );
     let vm = named[0].clone();
@@ -196,7 +197,7 @@ fn real_f7_fluxer() {
     assert_eq!(
         rec.power_state,
         VmPowerState::Halted,
-        "refusing: {FLUXER:?} is not halted"
+        "refusing: {vm_label:?} is not halted"
     );
     let snapshots_before: HashSet<Ref<Vm>> = rec.snapshots.iter().cloned().collect();
     let cd = {
@@ -233,7 +234,7 @@ fn real_f7_fluxer() {
     note(
         &mut log,
         format!(
-            "{FLUXER:?} found once, halted; {} snapshots before; DVD drive {} ; disks {:?}",
+            "{vm_label:?} found once, halted; {} snapshots before; DVD drive {} ; disks {:?}",
             snapshots_before.len(),
             if cd.1.is_some() {
                 "holds an ISO"
@@ -254,7 +255,7 @@ fn real_f7_fluxer() {
         type_into(&mut h, p.name_label, &snap_name);
         let before = last_op(&h);
         press(&mut h, p.take_snapshot_ok);
-        let title = format!("Taking a snapshot of VM '{FLUXER}'...");
+        let title = format!("Taking a snapshot of VM '{vm_label}'...");
         wait_op(&mut h, &title, before, Duration::from_secs(300)).unwrap();
         ours = created_by_last(&h, &title);
         let snap = ours.clone().expect("the snapshot");
@@ -276,7 +277,7 @@ fn real_f7_fluxer() {
         press(&mut h, &format!("    {TEST_ISO}"));
         wait_op(
             &mut h,
-            &format!("Loading ISO '{TEST_ISO}' into the DVD Drive on VM {FLUXER}"),
+            &format!("Loading ISO '{TEST_ISO}' into the DVD Drive on VM {vm_label}"),
             before,
             Duration::from_secs(120),
         )
@@ -289,7 +290,7 @@ fn real_f7_fluxer() {
         press(&mut h, p.eject);
         wait_op(
             &mut h,
-            &format!("Setting DVD Drive on {FLUXER} as empty."),
+            &format!("Setting DVD Drive on {vm_label} as empty."),
             before,
             Duration::from_secs(120),
         )

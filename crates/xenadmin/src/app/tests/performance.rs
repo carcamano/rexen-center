@@ -1,7 +1,7 @@
 //! F6: the Performance tab, the Alerts view and the performance alert
 //! settings through the real window code (egui_kittest): against the mock
 //! always, and against a real host when asked (ignored test
-//! `real_performance_fluxer`).
+//! `real_performance_named_vm`).
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -330,7 +330,7 @@ fn tail(d: &xen_core::PerfData, name: &str, n: usize) -> Vec<(i64, String)> {
 
 /// The server's Performance tab on a real host, read-only: live graphs
 /// for a minute, with the request count and the format logged. Ignored
-/// unless asked for (same variables as `real_performance_fluxer`):
+/// unless asked for (same variables as `real_performance_named_vm`):
 /// `cargo test -p xenadmin real_performance_host -- --ignored --nocapture`.
 #[test]
 #[ignore = "reads a real host's performance data (XENADMIN_REAL_* variables)"]
@@ -393,29 +393,30 @@ fn real_performance_host() {
 }
 
 /// F6 acceptance on the real host, through the real window. Ignored unless
-/// asked for (same variables as `real_console_fluxer`, plus
+/// asked for (same variables as `real_console_named_vm`, plus
 /// `XENADMIN_REAL_LOG`):
 ///
 /// ```text
-/// cargo test -p xenadmin real_performance_fluxer -- --ignored --nocapture
+/// cargo test -p xenadmin real_performance_named_vm -- --ignored --nocapture
 /// ```
 ///
-/// Read-only for everything but the VM named exactly "09 - Ubuntu Fluxer"
+/// Read-only for everything but the VM named exactly by `XENADMIN_REAL_NAMED_VM`
 /// (refused unless exactly one VM has that name and it is halted):
 ///
 /// 1. the host's Performance tab: live graphs (JSON or XML is logged);
-/// 2. Fluxer's graphs while halted (its archive), then Start from the
+/// 2. the named VM's graphs while halted (its archive), then Start from the
 ///    toolbar and the graphs moving during the boot;
-/// 3. a test message created on Fluxer (`message.create`, a separate
+/// 3. a test message created on the named VM (`message.create`, a separate
 ///    session), shown in the Alerts view and dismissed with Dismiss
 ///    Selected, nothing else selected; every other message is still there;
-/// 4. Fluxer's alert settings: CPU alerts on (saved), then off again; the
+/// 4. the named VM's alert settings: CPU alerts on (saved), then off again; the
 ///    key ends as it was found (absent, or restored to its value). The
 ///    perfmon refresh plugin is not called (`perfmon_refresh` off);
 /// 5. Shut Down from the toolbar, leaving it halted.
 #[test]
-#[ignore = "operates the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
-fn real_performance_fluxer() {
+#[ignore = "operates only the real VM named by XENADMIN_REAL_NAMED_VM (XENADMIN_REAL_* variables)"]
+fn real_performance_named_vm() {
+    let vm_label = named_vm();
     let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
     let host_addr = std::env::var("XENADMIN_REAL_HOST").expect("set XENADMIN_REAL_HOST");
     let password = std::env::var("XENADMIN_REAL_PASSWORD").expect("set XENADMIN_REAL_PASSWORD");
@@ -435,29 +436,29 @@ fn real_performance_fluxer() {
         .model
         .vms
         .iter()
-        .filter(|(_, v)| v.name_label == FLUXER && !v.is_a_template && !v.is_control_domain)
+        .filter(|(_, v)| v.name_label == vm_label && !v.is_a_template && !v.is_control_domain)
         .map(|(r, _)| r.clone())
         .collect();
     assert_eq!(
         named.len(),
         1,
-        "refusing: {} VMs are named {FLUXER:?}",
+        "refusing: {} VMs are named {vm_label:?}",
         named.len()
     );
     let vm = named[0].clone();
-    let fluxer = conn.model.vms[&vm].clone();
+    let record = conn.model.vms[&vm].clone();
     assert_eq!(
-        fluxer.power_state,
+        record.power_state,
         VmPowerState::Halted,
-        "refusing: {FLUXER:?} is not halted"
+        "refusing: {vm_label:?} is not halted"
     );
-    let original_perfmon = fluxer.other_config.get(perfmon::PERFMON_KEY).cloned();
+    let original_perfmon = record.other_config.get(perfmon::PERFMON_KEY).cloned();
     let messages_before: HashSet<Ref<Message>> = conn.model.messages.keys().cloned().collect();
     let host_ref = conn.model.pool().unwrap().1.master.clone();
     let mut log = String::new();
     note(
         &mut log,
-        format!("VM {FLUXER:?} found once, halted; perfmon before: {original_perfmon:?}"),
+        format!("VM {vm_label:?} found once, halted; perfmon before: {original_perfmon:?}"),
     );
     note(
         &mut log,
@@ -560,7 +561,7 @@ fn real_performance_fluxer() {
             harness.get_by_label(title);
         }
 
-        // 2. Fluxer: its archive while halted, then the boot.
+        // 2. The named VM: its archive while halted, then the boot.
         let vm_key: PerfKey = (conn.id, PerfTarget::Vm(vm.clone()));
         select(&mut harness, Selection::Vm(conn.id, vm.clone()));
         performance_tab(&mut harness);
@@ -575,7 +576,7 @@ fn real_performance_fluxer() {
         note(
             &mut log,
             format!(
-                "Fluxer halted: status {:?}, archive points (5 s / 1 h / 1 day) {} / {} / {}",
+                "named VM halted: status {:?}, archive points (5 s / 1 h / 1 day) {} / {} / {}",
                 d.status,
                 d.archives.series(Interval::FiveSeconds, "cpu0").len(),
                 d.archives.series(Interval::OneHour, "cpu0").len(),
@@ -599,7 +600,7 @@ fn real_performance_fluxer() {
         assert!(
             step_for(&mut harness, Duration::from_secs(120), |h| power(h)
                 == VmPowerState::Running),
-            "Fluxer did not start"
+            "the named VM did not start"
         );
         note(
             &mut log,
@@ -642,24 +643,24 @@ fn real_performance_fluxer() {
         let last = samples.last().and_then(|s| s.0);
         note(
             &mut log,
-            format!("Fluxer graphs during the boot: newest point {first:?} -> {last:?}"),
+            format!("named VM graphs during the boot: newest point {first:?} -> {last:?}"),
         );
         assert!(
             moving && first.is_some() && last > first,
-            "Fluxer's graphs did not move during its boot"
+            "the named VM's graphs did not move during its boot"
         );
         for title in [p.graph_cpu, p.graph_memory, p.graph_network, p.graph_disk] {
             harness.get_by_label(title);
         }
 
-        // 3. A test alert on Fluxer: created, shown, dismissed.
+        // 3. A test alert on the named VM: created, shown, dismissed.
         let session = login().expect("login for message.create");
         let made = runtime.block_on(xapi::message::create(
             &session,
             "XENADMIN_RS_F6_TEST",
             3,
             &xapi::Cls::Vm,
-            &fluxer.uuid,
+            &record.uuid,
             "xenadmin-rs F6 test alert; created and dismissed by the test",
         ));
         let _ = runtime.block_on(session.logout());
@@ -667,7 +668,7 @@ fn real_performance_fluxer() {
         created = Some(made.clone());
         note(
             &mut log,
-            "test message created on Fluxer (message.create)".into(),
+            "test message created on the named VM (message.create)".into(),
         );
         let shown = step_for(&mut harness, Duration::from_secs(60), |h| {
             first_conn(h).is_some_and(|c| c.model.messages.contains_key(&made))
@@ -675,7 +676,7 @@ fn real_performance_fluxer() {
         assert!(shown, "the test message did not arrive through event.from");
         harness.state_mut().notifications = Notifications::Alerts;
         settle(&mut harness);
-        let title = format!("{FLUXER}: XENADMIN_RS_F6_TEST");
+        let title = format!("{vm_label}: XENADMIN_RS_F6_TEST");
         click_visible(&mut harness, &title);
         let selected = harness.state().alerts.selected();
         assert_eq!(
@@ -728,7 +729,7 @@ fn real_performance_fluxer() {
             format!("dismiss operations run by this window: {ours:?}"),
         );
 
-        // 4. Fluxer's alert settings: CPU on, then off.
+        // 4. The named VM's alert settings: CPU on, then off.
         harness.state_mut().notifications = Notifications::Events;
         select(&mut harness, Selection::Vm(conn.id, vm.clone()));
         performance_tab(&mut harness);
@@ -787,7 +788,7 @@ fn real_performance_fluxer() {
         note(
             &mut log,
             format!(
-                "Fluxer graphs after shutdown: status {:?}",
+                "named VM graphs after shutdown: status {:?}",
                 d.map(|d| d.status)
             ),
         );
@@ -821,7 +822,7 @@ fn real_performance_fluxer() {
         let _ = runtime.block_on(session.logout());
     }
     if power(&harness) != VmPowerState::Halted {
-        note(&mut log, "cleanup: forcing Fluxer off".into());
+        note(&mut log, "cleanup: forcing the named VM off".into());
         harness.state().backend.send(xen_core::Command::Vm {
             connection: conn.id,
             vm: vm.clone(),

@@ -129,10 +129,10 @@ mod tests {
 
     #[test]
     fn parses_common_forms() {
-        let e = Endpoint::parse("10.1.1.20").unwrap();
-        assert_eq!((e.tls, e.host.as_str(), e.port), (true, "10.1.1.20", 443));
-        assert_eq!(e.jsonrpc_url(), "https://10.1.1.20:443/jsonrpc");
-        assert_eq!(e.to_string(), "10.1.1.20");
+        let e = Endpoint::parse("192.0.2.10").unwrap();
+        assert_eq!((e.tls, e.host.as_str(), e.port), (true, "192.0.2.10", 443));
+        assert_eq!(e.jsonrpc_url(), "https://192.0.2.10:443/jsonrpc");
+        assert_eq!(e.to_string(), "192.0.2.10");
 
         let e = Endpoint::parse("xcp.example:8443").unwrap();
         assert_eq!((e.tls, e.port), (true, 8443));

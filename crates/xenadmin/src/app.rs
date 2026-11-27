@@ -3951,8 +3951,27 @@ mod tests {
 
     // ---- F4: real host, one named VM ------------------------------------------
 
-    /// The only VM the real-host test may operate on.
-    const FLUXER: &str = "09 - Ubuntu Fluxer";
+    /// The variable naming the only VM the named-VM real-host tests may
+    /// operate on (its exact name label).
+    const NAMED_VM_VAR: &str = "XENADMIN_REAL_NAMED_VM";
+
+    /// The name used when [`NAMED_VM_VAR`] is unset or empty: a neutral
+    /// label, so a real run refuses to act unless the host has exactly one
+    /// VM so named.
+    const NAMED_VM_DEFAULT: &str = "rexen-test-vm";
+
+    /// The only VM the named-VM real-host tests may operate on, from
+    /// [`NAMED_VM_VAR`] (default [`NAMED_VM_DEFAULT`]). The mock rehearsals
+    /// rename a mock guest to the same name.
+    fn named_vm() -> &'static str {
+        static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NAME.get_or_init(|| {
+            std::env::var(NAMED_VM_VAR)
+                .ok()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| NAMED_VM_DEFAULT.to_owned())
+        })
+    }
 
     /// Steps until `done` or `limit`; `false` on timeout (no panic: the
     /// real-host run must always reach its cleanup).
@@ -3993,34 +4012,35 @@ mod tests {
     /// ```text
     /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
     /// XENADMIN_REAL_FINGERPRINT=AA:BB:… XENADMIN_REAL_LOG=/path/outside/repo.txt \
-    ///   cargo test -p xenadmin real_host_fluxer -- --ignored --nocapture
+    ///   cargo test -p xenadmin real_host_named_vm -- --ignored --nocapture
     /// ```
     ///
-    /// It refuses to act unless exactly one VM is named [`FLUXER`] and it is
+    /// It refuses to act unless exactly one VM is named [`named_vm`] and it is
     /// halted; it never touches another VM or a host; it leaves the VM
     /// halted (forcing a shut down if a step failed). The log gets each
     /// step's outcome (operation titles, statuses, durations, and whether
     /// the VM's guest agent offered the clean operations).
     #[test]
-    #[ignore = "operates the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
-    fn real_host_fluxer_lifecycle() {
+    #[ignore = "operates only the real VM named by XENADMIN_REAL_NAMED_VM (XENADMIN_REAL_* variables)"]
+    fn real_host_named_vm_lifecycle() {
         let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
         let runtime = runtime();
         let mut harness = real_host_harness(&runtime);
-        fluxer_lifecycle(&mut harness, Duration::from_secs(240), Some(&log_path));
+        named_vm_lifecycle(&mut harness, Duration::from_secs(240), Some(&log_path));
     }
 
     /// The same sequence against the mock (the sanitized capture of the real
-    /// host, one halted guest renamed [`FLUXER`]), so the real run cannot
+    /// host, one halted guest renamed [`named_vm`]), so the real run cannot
     /// fail on a test mistake.
     #[test]
-    fn fluxer_lifecycle_on_the_mock() {
+    fn named_vm_lifecycle_on_the_mock() {
+        let vm_label = named_vm();
         let runtime = runtime();
         let server = runtime.block_on(MockServer::start_with_records(
             true,
             xapi_mock::capture_records(),
         ));
-        server.set_name_label("vm", "OpaqueRef:vm-0010", FLUXER);
+        server.set_name_label("vm", "OpaqueRef:vm-0010", vm_label);
         let mut harness = app_harness(&runtime);
         connect_through_dialog(&mut harness, &server.address(), xapi_mock::PASSWORD);
         step_until(&mut harness, "certificate prompt", |h| {
@@ -4030,7 +4050,7 @@ mod tests {
         step_until(&mut harness, "connected", |h| {
             first_conn(h).is_some_and(|c| c.status.is_connected() && c.rbac.is_some())
         });
-        let log = fluxer_lifecycle(&mut harness, Duration::from_secs(20), None);
+        let log = named_vm_lifecycle(&mut harness, Duration::from_secs(20), None);
         for step in [
             "Start:",
             "Pause:",
@@ -4069,13 +4089,14 @@ mod tests {
         );
     }
 
-    /// Runs every VM operation on [`FLUXER`] through the window; returns the
+    /// Runs every VM operation on [`named_vm`] through the window; returns the
     /// log. Panics (after leaving the VM halted) if a step fails.
-    fn fluxer_lifecycle(
+    fn named_vm_lifecycle(
         harness: &mut Harness<'static, XenAdminApp>,
         long: Duration,
         log_path: Option<&str>,
     ) -> String {
+        let vm_label = named_vm();
         use std::fmt::Write as _;
         use xapi::VmOperations;
         let state = harness.state().backend.state();
@@ -4084,24 +4105,24 @@ mod tests {
             .model
             .vms
             .iter()
-            .filter(|(_, v)| v.name_label == FLUXER)
+            .filter(|(_, v)| v.name_label == vm_label)
             .map(|(r, v)| (r.clone(), v.clone()))
             .collect();
         assert_eq!(
             named.len(),
             1,
-            "refusing: {} VMs are named {FLUXER:?}",
+            "refusing: {} VMs are named {vm_label:?}",
             named.len()
         );
         let (vm_ref, record) = named.into_iter().next().unwrap();
         assert!(
             model::is_guest(&record),
-            "refusing: {FLUXER:?} is not a guest VM"
+            "refusing: {vm_label:?} is not a guest VM"
         );
         assert_eq!(
             record.power_state,
             VmPowerState::Halted,
-            "refusing: {FLUXER:?} is not halted as expected"
+            "refusing: {vm_label:?} is not halted as expected"
         );
         let host_names: Vec<String> = conn
             .model
@@ -4112,7 +4133,7 @@ mod tests {
         assert_eq!(host_names.len(), 1, "expected the single-host lab pool");
         let host_name = host_names[0].clone();
         let mut log = String::new();
-        let _ = writeln!(log, "VM {FLUXER:?} found once, halted; host count 1");
+        let _ = writeln!(log, "VM {vm_label:?} found once, halted; host count 1");
         let _ = writeln!(
             log,
             "connected as root; RBAC: {:?}",
@@ -4202,7 +4223,7 @@ mod tests {
                             .model
                             .vms
                             .values()
-                            .find(|v| v.name_label == FLUXER)
+                            .find(|v| v.name_label == vm_label)
                             .map(|v| v.allowed_operations.clone()))
                     );
                     settle(h);
@@ -4221,7 +4242,7 @@ mod tests {
                     h.state_mut().selection = None;
                     let deadline = Instant::now() + Duration::from_secs(60);
                     loop {
-                        right_click(h, FLUXER);
+                        right_click(h, vm_label);
                         if h.query_all_by_label(label).next().is_some() {
                             break;
                         }
@@ -4410,7 +4431,7 @@ mod tests {
 
         // Cleanup: leave the VM halted, as found.
         if power(harness) != VmPowerState::Halted {
-            let _ = writeln!(log, "cleanup: forcing a shut down of {FLUXER:?}");
+            let _ = writeln!(log, "cleanup: forcing a shut down of {vm_label:?}");
             harness.state().backend.send(Command::Vm {
                 connection: conn.id,
                 vm: vm_ref.clone(),
@@ -4429,7 +4450,7 @@ mod tests {
             .iter()
             .filter(|o| o.object.is_some())
             .count();
-        let _ = writeln!(log, "operations run: {total}, all on {FLUXER:?}");
+        let _ = writeln!(log, "operations run: {total}, all on {vm_label:?}");
         harness
             .state()
             .backend
@@ -4447,13 +4468,14 @@ mod tests {
     }
 
     /// A real XAPI error in the window: Unpause sent to the halted VM named
-    /// [`FLUXER`] (the window would not offer it; the command goes straight
+    /// [`named_vm`] (the window would not offer it; the command goes straight
     /// to the backend). The server refuses it without changing anything, and
     /// the window shows the original's friendly message. Ignored unless
-    /// asked for (same variables as [`real_host_fluxer_lifecycle`]).
+    /// asked for (same variables as [`real_host_named_vm_lifecycle`]).
     #[test]
-    #[ignore = "sends a refused call to the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
-    fn real_host_fluxer_friendly_error() {
+    #[ignore = "sends a refused call to the real VM named by XENADMIN_REAL_NAMED_VM (XENADMIN_REAL_* variables)"]
+    fn real_host_named_vm_friendly_error() {
+        let vm_label = named_vm();
         let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
         let runtime = runtime();
         let mut harness = real_host_harness(&runtime);
@@ -4462,27 +4484,27 @@ mod tests {
             .model
             .vms
             .iter()
-            .filter(|(_, v)| v.name_label == FLUXER)
+            .filter(|(_, v)| v.name_label == vm_label)
             .map(|(r, _)| r.clone())
             .collect();
         assert_eq!(
             named.len(),
             1,
-            "refusing: {} VMs are named {FLUXER:?}",
+            "refusing: {} VMs are named {vm_label:?}",
             named.len()
         );
         let vm = named[0].clone();
         assert_eq!(
             conn.model.vms[&vm].power_state,
             VmPowerState::Halted,
-            "refusing: {FLUXER:?} is not halted"
+            "refusing: {vm_label:?} is not halted"
         );
         harness.state().backend.send(Command::Vm {
             connection: conn.id,
             vm: vm.clone(),
             action: xen_core::VmAction::Unpause,
         });
-        let prefix = format!("Unpausing VM '{FLUXER}': ");
+        let prefix = format!("Unpausing VM '{vm_label}': ");
         let shown = step_for(&mut harness, Duration::from_secs(60), |h| {
             h.state().errors.iter().any(|e| e.starts_with(&prefix))
         });

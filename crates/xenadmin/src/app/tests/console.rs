@@ -484,13 +484,13 @@ fn watch_boot(
 }
 
 /// F5 acceptance on the real host, through the real window, on the VM
-/// named exactly [`FLUXER`] only (refused unless exactly one VM has that
+/// named exactly [`named_vm`] only (refused unless exactly one VM has that
 /// name and it is halted). Ignored unless asked for:
 ///
 /// ```text
 /// XENADMIN_REAL_HOST=… XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=… \
 /// XENADMIN_REAL_FINGERPRINT=AA:BB:… XENADMIN_REAL_LOG=/outside/log.txt \
-/// XENADMIN_REAL_SHOTS=/outside/dir cargo test -p xenadmin real_console_fluxer -- --ignored --nocapture
+/// XENADMIN_REAL_SHOTS=/outside/dir cargo test -p xenadmin real_console_named_vm -- --ignored --nocapture
 /// ```
 ///
 /// It starts the VM from the toolbar (the Console tab must come up by
@@ -499,8 +499,9 @@ fn watch_boot(
 /// reboots the VM (the console must reconnect), and shuts it down, leaving
 /// it halted. Framebuffer snapshots go to `XENADMIN_REAL_SHOTS`.
 #[test]
-#[ignore = "operates the real VM named \"09 - Ubuntu Fluxer\" (XENADMIN_REAL_* variables)"]
-fn real_console_fluxer() {
+#[ignore = "operates only the real VM named by XENADMIN_REAL_NAMED_VM (XENADMIN_REAL_* variables)"]
+fn real_console_named_vm() {
+    let vm_label = named_vm();
     let log_path = std::env::var("XENADMIN_REAL_LOG").expect("set XENADMIN_REAL_LOG");
     let shots = std::env::var("XENADMIN_REAL_SHOTS").expect("set XENADMIN_REAL_SHOTS");
     let typed = std::env::var("XENADMIN_REAL_TEXT").unwrap_or_else(|_| {
@@ -517,24 +518,24 @@ fn real_console_fluxer() {
         .model
         .vms
         .iter()
-        .filter(|(_, v)| v.name_label == FLUXER && !v.is_a_template && !v.is_control_domain)
+        .filter(|(_, v)| v.name_label == vm_label && !v.is_a_template && !v.is_control_domain)
         .map(|(r, _)| r.clone())
         .collect();
     assert_eq!(
         named.len(),
         1,
-        "refusing: {} VMs are named {FLUXER:?}",
+        "refusing: {} VMs are named {vm_label:?}",
         named.len()
     );
     let vm = named[0].clone();
     assert_eq!(
         conn.model.vms[&vm].power_state,
         VmPowerState::Halted,
-        "refusing: {FLUXER:?} is not halted"
+        "refusing: {vm_label:?} is not halted"
     );
     let key: ConsoleKey = (conn.id, ConsoleTarget::Vm(vm.clone()));
     let mut log = String::new();
-    note(&mut log, format!("VM {FLUXER:?} found once, halted"));
+    note(&mut log, format!("VM {vm_label:?} found once, halted"));
     let power = |h: &Harness<'_, XenAdminApp>| vm_rec(h, vm.as_str()).power_state.clone();
     let offered = |h: &mut Harness<'_, XenAdminApp>, label: &str| {
         step_for(h, Duration::from_secs(90), |h| {
@@ -762,7 +763,7 @@ fn real_console_fluxer() {
 /// The host's (dom0) console on the real host, view-only: shown in the
 /// Console tab, with nothing sent to it (no key, mouse, Ctrl+Alt+Del or
 /// clipboard). Ignored unless asked for (same variables as
-/// [`real_console_fluxer`]; `cargo test -p xenadmin real_console_dom0`).
+/// [`real_console_named_vm`]; `cargo test -p xenadmin real_console_dom0`).
 #[test]
 #[ignore = "opens the real host's console view-only (XENADMIN_REAL_* variables)"]
 fn real_console_dom0() {

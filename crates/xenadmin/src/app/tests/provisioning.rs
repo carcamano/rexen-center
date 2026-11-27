@@ -2,7 +2,7 @@
 //! tab and its dialogs, Copy VM / Convert to Template / Delete VM, the VM
 //! Storage tab's disk buttons and DVD drives, Install Tools, and role
 //! elevation for these operations. Plus the real-host checks on the VM
-//! named exactly "09 - Ubuntu Fluxer" and on the one disposable test VM
+//! named exactly by `XENADMIN_REAL_NAMED_VM` and on the one disposable test VM
 //! (ignored tests).
 
 use egui::accesskit::Role;
