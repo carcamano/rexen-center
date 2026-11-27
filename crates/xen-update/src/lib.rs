@@ -10,6 +10,8 @@
 //! * [`client`]: the release server (latest release, checksum file,
 //!   download with progress and cancel).
 //! * [`checksum`]: SHA-256 verification against the release's `SHA256SUMS`.
+//! * [`signature`]: the release key's minisign signature over `SHA256SUMS`,
+//!   checked against the public keys built into the program.
 //! * [`state`]: what is remembered between runs (last check, skipped
 //!   version) and the daily throttle.
 //! * [`apply`]: unpacking a verified package, replacing the installation in
@@ -23,6 +25,7 @@ pub mod checksum;
 pub mod client;
 pub mod method;
 pub mod release;
+pub mod signature;
 pub mod state;
 pub mod updater;
 pub mod version;

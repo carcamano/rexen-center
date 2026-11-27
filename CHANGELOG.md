@@ -27,6 +27,17 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   reqwest's `system-proxy` feature.
 - **Release workflow**: `SHA256SUMS` must list every package, and the
   release job checks the packages against it before publishing.
+- **Signed releases**: the updater installs a release only when its
+  `SHA256SUMS` carries a valid signature by the project's release key
+  (`SHA256SUMS.minisig`, minisign's Ed25519 format, checked with `ring`
+  against the public key built into the app; a list of keys, so the key can
+  be rotated). A missing or invalid signature, or one by an unknown key,
+  leaves only Open the Release Page, with the reason. This is not code
+  signing: Gatekeeper and SmartScreen behave as before. New
+  `packaging/sign-release.sh` checks the release's files against
+  `SHA256SUMS` and signs it offline; the release workflow signs when the
+  `RELEASE_SIGNING_KEY` secret is set and otherwise creates the release as a
+  draft to be signed and published by hand (`packaging/release-signing/`).
 - **GNOME and KDE Plasma title bar**: on these desktops the main window and
   the undocked consoles no longer show winit's plain frame. The window draws
   its own title bar with the menus, the title and the window buttons in

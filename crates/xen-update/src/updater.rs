@@ -4,6 +4,15 @@
 //! progress and cancel, the verification, the preparation, and what runs
 //! once the window has closed ([`PostExit`]).
 //!
+//! Trust: the check fetches the release's `SHA256SUMS` and its signature
+//! and checks the signature against the release keys built into the
+//! program ([`signature::RELEASE_KEYS`]). Only an offer whose checksum file
+//! is signed can be installed; the download is then verified against that
+//! same text. Without a valid signature only the release page is offered,
+//! with the reason ([`Untrusted`]). The keys are fixed at build time: the
+//! release server's address can be changed for testing ([`Client::api_from_env`]),
+//! but not what it must be signed with.
+//!
 //! The work runs on a tokio runtime; the window reads [`Updater::view`]
 //! each frame and calls the actions. A failure of the automatic check is
 //! only logged; one of the manual check or of an install is shown.
@@ -19,6 +28,7 @@ use crate::checksum::{self, ChecksumError};
 use crate::client::{Client, ClientError};
 use crate::method::{Arch, InstallMethod};
 use crate::release::{Asset, Release};
+use crate::signature::{self, PublicKey, SignatureError};
 use crate::state::{self, RolledBack, UpdateState};
 use crate::version::Version;
 
@@ -32,8 +42,36 @@ pub struct Offer {
     pub release: Release,
     /// The package for this installation, if the release has one.
     pub package: Option<Asset>,
-    /// Whether the release has a checksum file (no checksum, no install).
-    pub has_checksums: bool,
+    /// Whether the release's checksum file is signed (no signature, no
+    /// install).
+    pub trust: Trust,
+}
+
+/// What the check found of the release's checksum file and its signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trust {
+    /// Not looked at: the release has no package for this installation.
+    Unchecked,
+    /// Signed by a trusted release key.
+    Signed {
+        /// The checksum file's text, as signed.
+        checksums: String,
+        /// The id of the key that signed it.
+        key_id: String,
+    },
+    /// Not trusted: only the release page is offered.
+    Refused(Untrusted),
+}
+
+/// Why a release's checksum file is not trusted.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum Untrusted {
+    #[error("the release has no checksum file (SHA256SUMS)")]
+    NoChecksumFile,
+    #[error("the release's checksum file is not signed (it has no SHA256SUMS.minisig)")]
+    NoSignature,
+    #[error("{0}")]
+    BadSignature(#[from] SignatureError),
 }
 
 impl Offer {
@@ -49,7 +87,23 @@ impl Offer {
     /// Whether this installation can be updated from the window (otherwise
     /// the release page is opened).
     pub fn installable(&self) -> bool {
-        self.package.is_some() && self.has_checksums
+        self.package.is_some() && self.signed_checksums().is_some()
+    }
+
+    /// The checksum file, when its signature was checked.
+    pub fn signed_checksums(&self) -> Option<&str> {
+        match &self.trust {
+            Trust::Signed { checksums, .. } => Some(checksums),
+            _ => None,
+        }
+    }
+
+    /// Why the release is not trusted, when it is not.
+    pub fn untrusted(&self) -> Option<&Untrusted> {
+        match &self.trust {
+            Trust::Refused(why) => Some(why),
+            _ => None,
+        }
     }
 }
 
@@ -142,6 +196,8 @@ struct Inner {
     method: InstallMethod,
     arch: Arch,
     api: String,
+    /// The keys a release's checksum file must be signed with.
+    keys: Vec<PublicKey>,
     state_file: Option<PathBuf>,
     runtime: tokio::runtime::Handle,
     started: Instant,
@@ -165,8 +221,31 @@ pub struct Config {
 }
 
 impl Updater {
+    /// The updater of this program, trusting the built-in release keys.
     pub fn new(
         config: Config,
+        runtime: tokio::runtime::Handle,
+        repaint: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(config, signature::release_keys(), runtime, repaint)
+    }
+
+    /// An updater that trusts `keys` instead of the release keys (the
+    /// tests' releases are signed with [`signature::TestKey`]). Only in the
+    /// tests' builds: a real build always trusts the built-in keys.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_keys(
+        config: Config,
+        keys: Vec<PublicKey>,
+        runtime: tokio::runtime::Handle,
+        repaint: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(config, keys, runtime, repaint)
+    }
+
+    fn build(
+        config: Config,
+        keys: Vec<PublicKey>,
         runtime: tokio::runtime::Handle,
         repaint: impl Fn() + Send + Sync + 'static,
     ) -> Self {
@@ -182,6 +261,7 @@ impl Updater {
                 method: config.method,
                 arch: config.arch,
                 api: config.api,
+                keys,
                 state_file: config.state_file,
                 runtime,
                 started: Instant::now(),
@@ -331,13 +411,49 @@ impl Updater {
         let package = release
             .package_for(&self.inner.product, &self.inner.method, self.inner.arch)
             .cloned();
-        let has_checksums = release.checksums().is_some();
+        let trust = if package.is_some() {
+            self.trust(&client, &release).await?
+        } else {
+            Trust::Unchecked
+        };
         Ok(Some(Offer {
             version,
             release,
             package,
-            has_checksums,
+            trust,
         }))
+    }
+
+    /// Fetches the release's checksum file and its signature, and checks
+    /// the signature against the trusted keys.
+    async fn trust(&self, client: &Client, release: &Release) -> Result<Trust, ClientError> {
+        let Some(sums) = release.checksums() else {
+            return Ok(Trust::Refused(Untrusted::NoChecksumFile));
+        };
+        let Some(sig) = release.signature() else {
+            return Ok(Trust::Refused(Untrusted::NoSignature));
+        };
+        let checksums = client.checksums(sums).await?;
+        let sig = client.signature(sig).await?;
+        Ok(
+            match signature::verify(checksums.as_bytes(), &sig, &self.inner.keys) {
+                Ok(verified) => {
+                    tracing::info!(
+                        key = %verified.key_id,
+                        comment = %verified.trusted_comment,
+                        "the release's SHA256SUMS is signed by a trusted key"
+                    );
+                    Trust::Signed {
+                        checksums,
+                        key_id: verified.key_id,
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "the release's SHA256SUMS signature is refused");
+                    Trust::Refused(e.into())
+                }
+            },
+        )
     }
 
     /// "Skip This Version": the automatic check stops offering it.
@@ -455,15 +571,16 @@ impl Updater {
         cancel: &AtomicBool,
     ) -> Result<(Plan, PathBuf), InstallError> {
         let package = offer.package.clone().ok_or(InstallError::NoPackage)?;
-        let sums_asset = offer
-            .release
-            .checksums()
-            .cloned()
-            .ok_or(InstallError::Checksum(ChecksumError::NoChecksumFile))?;
+        // The checksum file whose signature the check verified (not fetched
+        // again, so it cannot change in between).
+        let sums = match &offer.trust {
+            Trust::Signed { checksums, .. } => checksums.clone(),
+            Trust::Refused(why) => return Err(InstallError::Untrusted(why.clone())),
+            Trust::Unchecked => return Err(InstallError::Untrusted(Untrusted::NoSignature)),
+        };
         let client = Client::new(&self.inner.product, &self.inner.api)?;
         // The checksum first: a release without this file's entry is
         // refused before anything is downloaded.
-        let sums = client.checksums(&sums_asset).await?;
         checksum::expected_digest(&sums, &package.name)?;
         let scratch =
             apply::private_dir(DOWNLOAD_PREFIX).map_err(|e| InstallError::Io(e.to_string()))?;
@@ -491,7 +608,7 @@ impl Updater {
             tokio::task::spawn_blocking(move || checksum::verify_file(&verify_dest, &name, &sums))
                 .await
                 .map_err(|e| InstallError::Io(e.to_string()))??;
-            tracing::info!(file = %package.name, "download verified against SHA256SUMS");
+            tracing::info!(file = %package.name, "download verified against the signed SHA256SUMS");
             if cancel.load(Ordering::Relaxed) {
                 return Err(InstallError::Cancelled);
             }
@@ -599,6 +716,8 @@ pub enum InstallError {
     Client(#[from] ClientError),
     #[error("refused: {0}")]
     Checksum(#[from] ChecksumError),
+    #[error("refused: {0}")]
+    Untrusted(Untrusted),
     #[error("{0}")]
     Apply(#[from] apply::ApplyError),
     #[error("the release has no package for this installation")]

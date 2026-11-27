@@ -14,7 +14,7 @@ use egui::{
     Align, Align2, Button, Context, Layout, Margin, ProgressBar, RichText, ScrollArea, TextEdit,
     Ui, ViewportCommand,
 };
-use xen_update::updater::{Offer, Phase, PostExit, ReadyKind, Updater};
+use xen_update::updater::{Offer, Phase, PostExit, ReadyKind, Untrusted, Updater};
 use xen_update::{Arch, InstallMethod, UnknownReason, apply};
 
 use crate::branding;
@@ -326,10 +326,10 @@ impl UpdateUi {
             open_page(offer.page());
         }
         ui.add_space(6.0);
-        if !offer.has_checksums {
-            ui.label(u.no_checksums);
-        } else if offer.package.is_none() {
+        if offer.package.is_none() {
             ui.label(u.no_package);
+        } else if let Some(why) = offer.untrusted() {
+            ui.label(untrusted_text(why));
         } else {
             ui.label(RichText::new(u.integrity_note).small().weak());
         }
@@ -412,6 +412,17 @@ fn size(bytes: u64) -> String {
 fn open_page(url: &str) {
     if let Err(e) = apply::open_external(std::ffi::OsStr::new(url)) {
         tracing::warn!(%url, error = %e, "cannot open the release page");
+    }
+}
+
+/// Why the release is not installed from the window (only its page is
+/// offered).
+pub fn untrusted_text(why: &Untrusted) -> String {
+    let u = update_strings();
+    match why {
+        Untrusted::NoChecksumFile => u.no_checksums.to_owned(),
+        Untrusted::NoSignature => u.no_signature.to_owned(),
+        Untrusted::BadSignature(e) => fill(u.bad_signature, &[("error", &e.to_string())]),
     }
 }
 

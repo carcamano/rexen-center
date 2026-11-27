@@ -57,6 +57,9 @@ string_table! {
     cancel = "Cancel",
     no_package = "This installation cannot be updated from here. Download the new version from the release page.",
     no_checksums = "This release has no checksum file, so its download cannot be verified. Download the new version from the release page.",
+    no_signature = "This release is not signed with the project's release key, so it is not installed from here. Download the new version from the release page.",
+    /// `{error}`: why the signature was refused.
+    bad_signature = "This release's signature could not be verified ({error}), so it is not installed from here. It may have been changed after it was published: check the release page before downloading anything.",
     /// `{file}`: the package's name.
     downloading = "Downloading {file}…",
     /// `{done}`, `{total}`: sizes.
@@ -77,7 +80,7 @@ string_table! {
     failed = "The update failed: {error}",
     /// `{version}`, `{reason}`
     rolled_back = "The update to {version} did not start and was undone: {reason}",
-    integrity_note = "Downloads are checked against the SHA-256 checksums published with the release. The packages are not code-signed.",
+    integrity_note = "Downloads are checked against the release's SHA-256 checksums, signed with the project's release key. This is not the operating system's code signing.",
     /// Options.
     options_heading = "Updates",
     options_check = "Check for updates automatically (at most once a day, from GitHub)",

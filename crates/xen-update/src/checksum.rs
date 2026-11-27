@@ -4,9 +4,10 @@
 //!
 //! What this proves: the file is the one the release's checksum file names,
 //! so a download cut short or changed in transit or on a mirror is refused.
-//! What it does not: both files come from the same release page, so whoever
-//! can replace a release's files can replace both (the packages are not
-//! signed; see the README).
+//! Both files come from the same release page, so on its own it would not
+//! stop whoever can replace a release's files: the updater trusts the
+//! checksum file only once its signature by the release key is checked
+//! ([`crate::signature`]).
 
 use std::io::Read;
 use std::path::Path;

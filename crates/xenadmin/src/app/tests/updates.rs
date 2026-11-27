@@ -3,7 +3,8 @@
 //! the top of the window; it opens the release notes; Later, Skip This
 //! Version, Help > Check for Updates…; the download, verified, and Restart
 //! Now, which leaves the update for `main` and closes the window as Quit
-//! does. Also the macOS application menu's item and the Options setting.
+//! does. Also the macOS application menu's item and the Options setting,
+//! and a release whose signature is missing or wrong: only its page.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +14,9 @@ use egui::ViewportCommand;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use xen_core::Store;
-use xen_update::testing::{FakeRelease, FakeReleaseServer, install_tarball, release_tarball};
+use xen_update::testing::{
+    FakeRelease, FakeReleaseServer, Signing, TestKey, install_tarball, release_tarball,
+};
 use xen_update::updater::{Config, PostExit, Updater};
 use xen_update::{Arch, InstallMethod, Version};
 
@@ -47,7 +50,8 @@ fn updater(
     method: InstallMethod,
     state_file: Option<PathBuf>,
 ) -> Updater {
-    Updater::new(
+    // The fake server signs with the tests' key.
+    Updater::with_keys(
         Config {
             product: branding::update_product(),
             running: Version::parse("0.1.1").unwrap(),
@@ -57,6 +61,7 @@ fn updater(
             state_file,
             start_delay: Duration::ZERO,
         },
+        vec![TestKey::trusted().public()],
         runtime.handle().clone(),
         || {},
     )
@@ -238,6 +243,80 @@ fn a_tampered_download_is_refused_and_the_page_offered() {
     h.get_by_label(u.release_page);
     assert!(h.query_by_label(u.restart_now).is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_unsigned_or_badly_signed_release_offers_only_its_page() {
+    let runtime = runtime();
+    let product = branding::update_product();
+    let tarball = "rexen-center-0.2.0-linux-x86_64.tar.gz";
+    let u = update_strings();
+    for (signing, reason) in [
+        (Signing::Missing, u.no_signature.to_owned()),
+        (
+            Signing::TamperedSignature,
+            fill(
+                u.bad_signature,
+                &[("error", "the signature does not match the checksum file")],
+            ),
+        ),
+    ] {
+        let server = FakeReleaseServer::start();
+        server.publish(
+            &product,
+            &FakeRelease {
+                signing,
+                ..FakeRelease::new("0.2.0").asset(tarball, release_tarball(&product, "0.2.0"))
+            },
+        );
+        let dir = temp("unsigned");
+        let method = install_tarball(&product, &dir, "0.1.1");
+        let updater = updater(&runtime, &server, method, None);
+        let mut h = harness(
+            &runtime,
+            Arc::new(Store::default()),
+            updater,
+            PostExitSlot::default(),
+        );
+        let button = fill(u.button, &[("version", "0.2.0")]);
+        step_until(&mut h, "update button", |h| {
+            h.query_by_label(&button).is_some()
+        });
+        click(&mut h, &button);
+        step_until(&mut h, "dialog", |h| h.query_by_label(&reason).is_some());
+        // The page, as the main button and as the link; no install.
+        assert_eq!(h.query_all_by_label(u.release_page).count(), 2);
+        assert!(h.query_by_label(u.install_restart).is_none());
+        assert!(h.query_by_label(u.integrity_note).is_none());
+        assert!(!server.requests().iter().any(|r| r.path.ends_with(tarball)));
+        drop(h);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn the_reasons_a_release_is_not_trusted() {
+    use crate::update_ui::untrusted_text;
+    use xen_update::signature::SignatureError;
+    use xen_update::updater::Untrusted;
+    assert_eq!(
+        untrusted_text(&Untrusted::NoChecksumFile),
+        "This release has no checksum file, so its download cannot be verified. Download the new version from the release page."
+    );
+    assert_eq!(
+        untrusted_text(&Untrusted::NoSignature),
+        "This release is not signed with the project's release key, so it is not installed from here. Download the new version from the release page."
+    );
+    assert_eq!(
+        untrusted_text(&Untrusted::BadSignature(SignatureError::UnknownKey(
+            "0123456789ABCDEF".into()
+        ))),
+        "This release's signature could not be verified (the signature was made with key 0123456789ABCDEF, which this version does not trust), so it is not installed from here. It may have been changed after it was published: check the release page before downloading anything."
+    );
+    assert!(
+        untrusted_text(&Untrusted::BadSignature(SignatureError::Prehashed))
+            .contains("pre-hashed mode")
+    );
 }
 
 #[test]

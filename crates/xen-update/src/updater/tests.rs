@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::testing::{Checksums, FakeRelease, FakeReleaseServer};
+use crate::testing::{Checksums, FakeRelease, FakeReleaseServer, Signing, TestKey};
 
 fn product() -> Product {
     Product::rexen_center()
@@ -30,7 +30,7 @@ fn updater(
     method: InstallMethod,
     state_file: Option<PathBuf>,
 ) -> Updater {
-    Updater::new(
+    Updater::with_keys(
         Config {
             product: product(),
             running: Version::parse("0.1.1").unwrap(),
@@ -40,6 +40,7 @@ fn updater(
             state_file,
             start_delay: Duration::ZERO,
         },
+        vec![TestKey::trusted().public()],
         runtime.handle().clone(),
         || {},
     )
@@ -111,6 +112,9 @@ fn the_automatic_check_offers_a_newer_release_and_sends_nothing_about_the_user()
         Some("rexen-center_0.2.0-1_amd64.deb")
     );
     assert!(offer.installable());
+    assert!(
+        matches!(&offer.trust, Trust::Signed { key_id, .. } if *key_id == TestKey::trusted().public().id())
+    );
     assert!(offer.notes().contains("Release 0.2.0"));
     assert_eq!(
         u.view().button.map(|v| v.to_string()).as_deref(),
@@ -119,38 +123,45 @@ fn the_automatic_check_offers_a_newer_release_and_sends_nothing_about_the_user()
     // The attempt is remembered: no second check today, even after a
     // restart.
     assert!(UpdateState::load(&state_file).last_check.is_some());
+    // The release, then its checksum file and signature (to tell whether
+    // it can be installed); not the package.
     let requests = server.requests();
-    assert_eq!(requests.len(), 1, "{requests:?}");
-    let request = &requests[0];
+    let paths: Vec<&str> = requests.iter().map(|r| r.path.as_str()).collect();
     assert_eq!(
-        request.path,
-        "/repos/carcamano/rexen-center/releases/latest"
+        paths,
+        [
+            "/repos/carcamano/rexen-center/releases/latest",
+            "/download/v0.2.0/SHA256SUMS",
+            "/download/v0.2.0/SHA256SUMS.minisig",
+        ]
     );
-    for (name, value) in &request.headers {
-        assert!(
-            [
-                "host",
-                "user-agent",
-                "accept",
-                "x-github-api-version",
-                "accept-encoding"
-            ]
-            .contains(&name.as_str()),
-            "unexpected header {name}: {value}"
-        );
+    for request in &requests {
+        for (name, value) in &request.headers {
+            assert!(
+                [
+                    "host",
+                    "user-agent",
+                    "accept",
+                    "x-github-api-version",
+                    "accept-encoding"
+                ]
+                .contains(&name.as_str()),
+                "unexpected header {name}: {value}"
+            );
+        }
+        let ua = request
+            .headers
+            .iter()
+            .find(|(n, _)| n == "user-agent")
+            .unwrap();
+        assert_eq!(ua.1, "rexen-center-updater");
     }
-    let ua = request
-        .headers
-        .iter()
-        .find(|(n, _)| n == "user-agent")
-        .unwrap();
-    assert_eq!(ua.1, "rexen-center-updater");
 
     let again = updater(&rt, &server, InstallMethod::LinuxDeb, Some(state_file));
     again.tick(true);
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(again.view().phase, Phase::Idle);
-    assert_eq!(server.requests().len(), 1, "throttled to once a day");
+    assert_eq!(server.requests().len(), 3, "throttled to once a day");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -384,7 +395,7 @@ fn without_a_checksum_file_only_the_release_page_is_offered() {
     let Phase::Available(offer) = wait_for(&u, "offer", settled) else {
         panic!()
     };
-    assert!(!offer.has_checksums);
+    assert_eq!(offer.untrusted(), Some(&Untrusted::NoChecksumFile));
     assert!(!offer.installable());
     u.install();
     assert!(matches!(u.view().phase, Phase::Available(_)), "no download");
@@ -394,13 +405,14 @@ fn without_a_checksum_file_only_the_release_page_is_offered() {
         .filter(|r| r.path.contains("/download/"))
         .count();
     assert_eq!(downloads, 0);
-    // Another listing that lacks the package's line is refused before the
+    // A signed listing that lacks the package's line is refused before the
     // download, too.
-    server.publish(&product(), &release_020());
-    server.set(
-        &FakeReleaseServer::asset_path("0.2.0", "SHA256SUMS"),
-        200,
-        format!("{}  other-file\n", crate::checksum::Sha256::of_bytes(b"x")),
+    server.publish(
+        &product(),
+        &FakeRelease {
+            checksums: Checksums::Without(TARBALL.into()),
+            ..release_020()
+        },
     );
     u.check(true);
     wait_for(&u, "offer", settled);
@@ -508,6 +520,106 @@ fn installers_and_unknown_installations() {
     };
     assert!(offer.package.is_none());
     assert!(!offer.installable());
+}
+
+/// An offer of `release` to a tarball installation, by `u`.
+fn offer_of(u: &Updater) -> Offer {
+    u.check(true);
+    let Phase::Available(offer) = wait_for(u, "offer", settled) else {
+        panic!("{:?}", u.view())
+    };
+    offer
+}
+
+#[test]
+fn only_a_release_signed_by_a_trusted_key_can_be_installed() {
+    let rt = runtime();
+    let dir = temp("signing");
+    let (root, method) = installed(&dir);
+    let cases = [
+        (Signing::Missing, Untrusted::NoSignature),
+        (
+            Signing::OtherKey(99),
+            Untrusted::BadSignature(SignatureError::UnknownKey(TestKey::new(99).public().id())),
+        ),
+        (
+            Signing::TamperedChecksums,
+            Untrusted::BadSignature(SignatureError::Invalid),
+        ),
+        (
+            Signing::TamperedSignature,
+            Untrusted::BadSignature(SignatureError::Invalid),
+        ),
+    ];
+    for (signing, why) in cases {
+        let server = FakeReleaseServer::start();
+        server.publish(
+            &product(),
+            &FakeRelease {
+                signing: signing.clone(),
+                ..release_020()
+            },
+        );
+        let u = updater(&rt, &server, method.clone(), None);
+        let offer = offer_of(&u);
+        assert_eq!(offer.untrusted(), Some(&why), "{signing:?}");
+        assert!(!offer.installable(), "{signing:?}");
+        assert_eq!(offer.signed_checksums(), None);
+        // The button still tells of the new version (its page can be
+        // opened), but Install does nothing.
+        assert!(u.view().button.is_some());
+        u.install();
+        assert!(matches!(u.view().phase, Phase::Available(_)), "{signing:?}");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !server.requests().iter().any(|r| r.path.ends_with(TARBALL)),
+            "{signing:?}: the package was downloaded"
+        );
+        assert!(!root.join(apply::WORK_DIR).exists());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_real_build_does_not_trust_the_tests_key() {
+    // `Updater::new` trusts only the built-in release keys, whatever server
+    // it is pointed at (REXENCENTER_UPDATE_API): the fake server's release,
+    // signed with the tests' key, is refused.
+    let rt = runtime();
+    let server = FakeReleaseServer::start();
+    server.publish(&product(), &release_020());
+    let u = Updater::new(
+        Config {
+            api: server.url().to_owned(),
+            ..config_for(InstallMethod::LinuxDeb)
+        },
+        rt.handle().clone(),
+        || {},
+    );
+    let offer = offer_of(&u);
+    assert_eq!(
+        offer.untrusted(),
+        Some(&Untrusted::BadSignature(SignatureError::UnknownKey(
+            TestKey::trusted().public().id()
+        )))
+    );
+    assert!(!offer.installable());
+    // The reason, as the dialog shows it.
+    assert_eq!(
+        offer.untrusted().unwrap().to_string(),
+        format!(
+            "the signature was made with key {}, which this version does not trust",
+            TestKey::trusted().public().id()
+        )
+    );
+    // No package for this installation: nothing is fetched beyond the
+    // release itself, and nothing is said about trust.
+    let server = FakeReleaseServer::start();
+    server.publish(&product(), &FakeRelease::new("0.2.0"));
+    let u = updater(&rt, &server, InstallMethod::LinuxDeb, None);
+    let offer = offer_of(&u);
+    assert_eq!(offer.trust, Trust::Unchecked);
+    assert_eq!(server.requests().len(), 1);
 }
 
 #[test]
@@ -650,7 +762,8 @@ fn real_macos_app_update() {
     );
     let rt = runtime();
     let state_file = config.join("update.toml");
-    let u = Updater::new(
+    // The fake server's release is signed with the tests' key.
+    let u = Updater::with_keys(
         Config {
             product: product(),
             running: running.clone(),
@@ -660,6 +773,7 @@ fn real_macos_app_update() {
             state_file: Some(state_file.clone()),
             start_delay: Duration::ZERO,
         },
+        vec![TestKey::trusted().public()],
         rt.handle().clone(),
         || {},
     );

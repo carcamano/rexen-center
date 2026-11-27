@@ -95,11 +95,16 @@ Version **0.1.1** — [all releases](https://github.com/carcamano/rexen-center/r
 The packages are built by GitHub Actions from the tagged source
 ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Check them with
 `sha256sum -c SHA256SUMS --ignore-missing` on Linux or
-`shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS.
+`shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS. Releases after 0.1.1 also
+publish `SHA256SUMS.minisig`, the release key's [minisign](https://jedisct1.github.io/minisign/)
+signature of the checksum file:
+`minisign -V -m SHA256SUMS -P RWTJqnKdXYiTS8U7nG6cjVGIH6sRYUZ09F+rVLOHHTzUmtAjTz3Oqc9k`
+(the key is also in [`packaging/release-signing/`](packaging/release-signing/)).
 
 > [!IMPORTANT]
-> The packages are **not signed or notarized**, so macOS and Windows warn before the
-> first start. The steps below get past the warning.
+> The packages are **not code-signed or notarized**, so macOS and Windows warn before the
+> first start (the minisign signature above is for checking downloads, not for the
+> operating system). The steps below get past the warning.
 
 ## Install
 
@@ -203,12 +208,26 @@ undone. Updating in place needs write access to the folder the app is in: an app
 again for access to the saved passwords in the keychain, as after a manual update.
 
 **Integrity.** Each release publishes `SHA256SUMS` with the checksum of every
-package. The download goes to a private temporary folder and is checked against it;
-a release without the checksum file, without an entry for the package, or whose
-package does not match is refused, and only its page is offered. This proves the
-download is the file the release lists, not who made it: the packages are **not
-code-signed**, and the checksum file comes from the same release page, so someone
-able to replace a release's files could replace both.
+package, and `SHA256SUMS.minisig`, a [minisign](https://jedisct1.github.io/minisign/)
+(Ed25519) signature of that file made with the project's release key. The app has
+the release key's public half built in. The check fetches both files and verifies
+the signature; the download goes to a private temporary folder and is checked
+against that signed checksum file. A release without the checksum file or the
+signature, whose signature is not valid or was made with a key the app does not
+know, without an entry for the package, or whose package does not match is not
+installed: the dialog says why and offers only the release page.
+
+What the signature guarantees: the package is the one the holder of the release key
+signed for that release. Someone who can change the release page (a stolen GitHub
+account or token, a compromised download path) cannot make the app install
+something else, because they cannot sign it. What it does not: it is **not the
+operating system's code signing** — the packages are still not code-signed or
+notarized, so macOS Gatekeeper and Windows SmartScreen warn exactly as before
+(see [Install](#install)), and installing by hand is not checked unless you run
+`minisign` yourself. It does not protect against a stolen release key (that is
+what the key's rotation is for, see
+[`packaging/release-signing/README.md`](packaging/release-signing/README.md)), and
+it does not make a release safe to run: it only says who published it.
 
 **Privacy and networks.** A check is one anonymous `GET` of
 `api.github.com/repos/carcamano/rexen-center/releases/latest` with the user agent
@@ -220,7 +239,8 @@ isolated management networks turn off **Options › Updates › Check for update
 automatically**; Check for Updates… still works when asked. The last check and a
 skipped version are kept in `update.toml` in the configuration folder.
 `REXENCENTER_UPDATE_API` points the updater at another server (`https://`, or
-`http://` on the local machine only), for testing.
+`http://` on the local machine only), for testing; what it serves must still be
+signed with the built-in release key.
 
 ## Features
 
@@ -1074,7 +1094,7 @@ Each platform has a script under `packaging/` that builds a release binary
 (`cargo build --release --locked`) and packs it with the icon
 (`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
 README; the Windows `.ico` is embedded in the executable). Packages are not
-signed or notarized. The output folder defaults to `target/dist`.
+code-signed or notarized. The output folder defaults to `target/dist`.
 
 | Platform | Command | Result |
 |---|---|---|
@@ -1088,7 +1108,26 @@ x86_64 on Ubuntu 22.04 (so the Linux binary needs glibc 2.35 or newer).
 Pushing a tag `v<version>` that matches the workspace version in
 `Cargo.toml` publishes the packages and their `SHA256SUMS` as a GitHub
 Release; a push to the `release-prep` branch or a manual run only keeps
-them as the run's artifacts. `.github/workflows/ci.yml` checks formatting,
+them as the run's artifacts.
+
+The updater installs only a release whose `SHA256SUMS` is signed with the
+release key (`SHA256SUMS.minisig`). With the repository secret
+`RELEASE_SIGNING_KEY` the workflow signs it; without it the tag makes a
+**draft** release, which the owner signs offline and then publishes:
+
+```sh
+gh release download v<version> --repo carcamano/rexen-center -D release-v<version>
+packaging/sign-release.sh --key <path to the secret key> release-v<version>
+cargo run -p xen-update --example verify-release -- release-v<version>   # the app's own check
+gh release upload v<version> release-v<version>/SHA256SUMS.minisig --repo carcamano/rexen-center
+gh release edit v<version> --draft=false --repo carcamano/rexen-center
+```
+
+`packaging/sign-release.sh` checks that `SHA256SUMS` lists every file of the
+release and matches it before signing (minisign's legacy mode, `-l`, the one
+the app accepts), then checks the signature against the app's public keys in
+`packaging/release-signing/`. That folder's README describes the key, its
+backup and its rotation. `.github/workflows/ci.yml` checks formatting,
 clippy and the tests on Linux for every pull request and push to `main`.
 
 Windows release builds have no console window, so the command-line modes
@@ -1365,7 +1404,11 @@ end to end:
   install method of each platform's layout from a fake probe (so the macOS,
   Windows and Linux rules all run everywhere), the package for each method and
   architecture, `SHA256SUMS` parsing and the refusal of a mismatch, a missing
-  file or a missing entry, the daily throttle and the skipped version, a
+  file or a missing entry, the release signature (files written by the real
+  `minisign` accepted in its legacy mode, its pre-hashed mode refused with what
+  to do; a missing signature, another key, a changed checksum file, signature
+  or trusted comment refused; a list of trusted keys for rotation; the tests'
+  key never trusted by a real build), the daily throttle and the skipped version, a
   check that sends no identifying header, the download's progress and cancel,
   the unpacking of zips and tarballs (paths outside the package and links
   refused), the in-place swap that keeps the `portable` marker and `settings/`
@@ -1373,8 +1416,9 @@ end to end:
   one that hangs (both rolled back and the old one started again), the
   macOS bundle out of a real `hdiutil` disk image (on macOS), and in the
   window the button, the release notes, Later, Skip This Version, Check for
-  Updates…, the Options setting and Restart Now closing the window as Quit
-  does;
+  Updates…, the Options setting, Restart Now closing the window as Quit
+  does, and an unsigned or badly signed release offering only its page with
+  the reason;
 - that the committed generated code matches the pinned datamodel.
 
 A read-only check of the real window code against a real host (it types the
@@ -1614,7 +1658,7 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-rrd` | XAPI performance data: the `rrd_updates`, `host_rrds` and `vm_rrds` client (JSON or XML, the session reference kept out of logs and errors), their parsers, and the four archives the graphs draw from. |
 | `crates/xen-vnc` | VNC client for XAPI consoles: the `CONNECT` tunnel, the RFB protocol and decoders, the framebuffer, XT scancodes, and a fake guest console for tests (feature `testing`). Its ZRLE decoder derives from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 (MIT, see `crates/xen-vnc/LICENSE-vnc-rs`). |
 | `crates/xen-mcp` | The MCP server (`rexencenter --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
-| `crates/xen-update` | The updates: the GitHub release check and download (reqwest over rustls, the system's certificate authorities and proxy), semantic version comparison, how the running copy was installed (`method`: a platform-neutral core over a probe of the system), the package for that method and architecture, the SHA-256 check against `SHA256SUMS`, the daily throttle and skipped version (`update.toml`), the in-place swap with rollback and the installer hand-over (`apply`), the flow the window drives (`updater`), and a fake release server for tests (feature `testing`). |
+| `crates/xen-update` | The updates: the GitHub release check and download (reqwest over rustls, the system's certificate authorities and proxy), semantic version comparison, how the running copy was installed (`method`: a platform-neutral core over a probe of the system), the package for that method and architecture, the SHA-256 check against `SHA256SUMS` and the release key's minisign signature of it (`signature`), the daily throttle and skipped version (`update.toml`), the in-place swap with rollback and the installer hand-over (`apply`), the flow the window drives (`updater`), and a fake release server for tests (feature `testing`). |
 | `crates/xenadmin` | The egui/eframe desktop app, built as the `rexencenter` program; its message catalogue's English export and translation guide are in `locales/`. |
 | `packaging/` | The release package scripts and the icon: SVG sources, the eight concepts, rendered sizes and the renderer (not a crate). |
 | `.github/workflows/` | CI (format, clippy, tests on Linux) and the release builds for macOS, Windows and Linux. |

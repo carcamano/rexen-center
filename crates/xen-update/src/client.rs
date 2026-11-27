@@ -32,6 +32,9 @@ pub const USER_AGENT: &str = "rexen-center-updater";
 /// The largest checksum file read (it lists a handful of files).
 const MAX_CHECKSUMS: u64 = 256 * 1024;
 
+/// The largest signature file read (minisign's is four short lines).
+const MAX_SIGNATURE: u64 = 4 * 1024;
+
 /// The largest release answer read.
 const MAX_RELEASE: u64 = 4 * 1024 * 1024;
 
@@ -139,8 +142,17 @@ impl Client {
 
     /// The checksum file's text.
     pub async fn checksums(&self, asset: &Asset) -> Result<String, ClientError> {
+        self.small_text(asset, MAX_CHECKSUMS).await
+    }
+
+    /// The signature file's text.
+    pub async fn signature(&self, asset: &Asset) -> Result<String, ClientError> {
+        self.small_text(asset, MAX_SIGNATURE).await
+    }
+
+    async fn small_text(&self, asset: &Asset, limit: u64) -> Result<String, ClientError> {
         let response = self.get(&asset.browser_download_url).await?;
-        let body = read_limited(response, MAX_CHECKSUMS, &asset.name).await?;
+        let body = read_limited(response, limit, &asset.name).await?;
         String::from_utf8(body).map_err(|e| ClientError::Malformed(e.to_string()))
     }
 

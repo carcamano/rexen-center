@@ -1,6 +1,6 @@
 [package]
 name = "xen-update"
-description = "Update discovery and installation: GitHub Releases, install-method detection, SHA-256 verification and the per-method apply"
+description = "Update discovery and installation: GitHub Releases, install-method detection, SHA-256 verification against the signed SHA256SUMS and the per-method apply"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -61,6 +61,11 @@ impl Release {
         self.asset(CHECKSUMS_ASSET)
     }
 
+    /// The checksum file's signature ([`crate::signature`]).
+    pub fn signature(&self) -> Option<&Asset> {
+        self.asset(crate::signature::SIGNATURE_ASSET)
+    }
+
     /// The download for `method` on `arch`: the package the release
     /// workflow builds for it, by name. `None` for an unknown method or
     /// a system the release has no package for.
@@ -165,6 +170,7 @@ mod tests {
             "rexen-center-0.2.0-1.x86_64.rpm",
             "rexen-center-0.2.0-linux-x86_64.tar.gz",
             "SHA256SUMS",
+            "SHA256SUMS.minisig",
         ];
         Release {
             tag_name: "v0.2.0".into(),
@@ -306,6 +312,10 @@ mod tests {
         assert!(r.is_stable());
         assert_eq!(r.version(), Version::parse("0.2.0"));
         assert_eq!(r.checksums().map(|a| a.name.as_str()), Some("SHA256SUMS"));
+        assert_eq!(
+            r.signature().map(|a| a.name.as_str()),
+            Some("SHA256SUMS.minisig")
+        );
         let mut pre = release();
         pre.prerelease = true;
         assert!(!pre.is_stable());

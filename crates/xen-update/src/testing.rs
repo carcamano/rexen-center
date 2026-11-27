@@ -1,6 +1,8 @@
 //! A fake GitHub release server on the local machine, for the tests (no
 //! real network): it answers the "latest release" API call and serves the
-//! release's files, and records the requests it got.
+//! release's files, and records the requests it got. Its releases are
+//! signed with [`TestKey::trusted`], which only an updater made with
+//! [`crate::updater::Updater::with_keys`] trusts.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -11,6 +13,7 @@ use std::time::Duration;
 
 use crate::Product;
 use crate::checksum::Sha256;
+pub use crate::signature::TestKey;
 
 /// An answer.
 #[derive(Clone)]
@@ -39,6 +42,24 @@ pub enum Checksums {
     Missing,
     /// Every digest right except this file's.
     WrongFor(String),
+    /// Every file but this one listed.
+    Without(String),
+}
+
+/// How the checksum file is signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Signing {
+    /// With [`TestKey::trusted`].
+    Trusted,
+    /// No signature file.
+    Missing,
+    /// With another key (`TestKey::new(seed)`).
+    OtherKey(u8),
+    /// Signed with the trusted key, then the checksum file served changed
+    /// (a line added).
+    TamperedChecksums,
+    /// Signed with the trusted key, then one bit of the signature changed.
+    TamperedSignature,
 }
 
 /// A release to publish.
@@ -50,6 +71,7 @@ pub struct FakeRelease {
     /// File names and contents.
     pub assets: Vec<(String, Vec<u8>)>,
     pub checksums: Checksums,
+    pub signing: Signing,
 }
 
 impl FakeRelease {
@@ -60,6 +82,7 @@ impl FakeRelease {
             prerelease: false,
             assets: Vec::new(),
             checksums: Checksums::Correct,
+            signing: Signing::Trusted,
         }
     }
 
@@ -170,6 +193,7 @@ impl FakeReleaseServer {
             let sums: String = release
                 .assets
                 .iter()
+                .filter(|(name, _)| release.checksums != Checksums::Without(name.clone()))
                 .map(|(name, body)| {
                     let digest = match &release.checksums {
                         Checksums::WrongFor(bad) if bad == name => Sha256::of_bytes(b"tampered"),
@@ -178,7 +202,32 @@ impl FakeReleaseServer {
                     format!("{digest}  {name}\n")
                 })
                 .collect();
-            add(crate::release::CHECKSUMS_ASSET, sums.into_bytes());
+            let comment = format!("{} v{v} SHA256SUMS", product.app_id);
+            let signed = |key: TestKey| key.sign(sums.as_bytes(), &comment);
+            let (served, signature) = match &release.signing {
+                Signing::Trusted => (sums.clone(), Some(signed(TestKey::trusted()))),
+                Signing::Missing => (sums.clone(), None),
+                Signing::OtherKey(seed) => (sums.clone(), Some(signed(TestKey::new(*seed)))),
+                Signing::TamperedChecksums => (
+                    format!("{sums}{}  evil.dmg\n", Sha256::of_bytes(b"evil")),
+                    Some(signed(TestKey::trusted())),
+                ),
+                Signing::TamperedSignature => {
+                    let text = signed(TestKey::trusted());
+                    // The second line is the signature; change its last
+                    // full character.
+                    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+                    let sig = &mut lines[1];
+                    let at = sig.trim_end_matches('=').len() - 2;
+                    let c = if &sig[at..=at] == "A" { "B" } else { "A" };
+                    sig.replace_range(at..=at, c);
+                    (sums.clone(), Some(lines.join("\n") + "\n"))
+                }
+            };
+            add(crate::release::CHECKSUMS_ASSET, served.into_bytes());
+            if let Some(signature) = signature {
+                add(crate::signature::SIGNATURE_ASSET, signature.into_bytes());
+            }
         }
         let json = serde_json::json!({
             "tag_name": format!("v{v}"),
