@@ -663,6 +663,52 @@ questions and messages. Open an area to see what works:
   chooses among the shipped languages or follows the system. Only English
   ships (plan decision 5); `crates/xenadmin/locales/README.md` explains
   how to add pt-BR;
+- **GNOME and KDE Plasma title bar** (this console's own): on these
+  desktops the window draws its own title bar instead of winit's plain
+  frame, with the menus in it, the title centred, and the window buttons in
+  the desktop's look (Adwaita's round buttons, Breeze's glyphs) where the
+  desktop puts them (`button-layout` in GNOME, `ButtonsOnLeft` and
+  `ButtonsOnRight` in `kwinrc`). Drag it to move the window; double-,
+  middle- and right-clicks do what the desktop's settings say; the window's
+  edges resize it. Undocked consoles get the same bar;
+- **Windows title bar** (this console's own): the menus sit in the title
+  bar, as in Office or Visual Studio Code, with the icon, the title and
+  Windows 11's caption buttons (46×32 Minimize, Maximize or Restore and
+  Close, a subtle fill under the pointer and red under it on Close, faded
+  while the window is inactive, in light and dark). Dragging the bar moves
+  the window with the system's move loop, so Snap keeps working;
+  double-clicking it maximizes or restores; right-clicking it or clicking
+  the icon opens the window menu. The system keeps the window's shadow,
+  border and rounded corners. Snap Layouts (the flyout over Maximize) is not
+  offered: it needs a `WM_NCHITTEST` answer that winit cannot give without
+  unsafe code. Undocked consoles get the same bar.
+  `REXENCENTER_TITLE_BAR=system` keeps the system's frame on Windows, GNOME
+  and KDE; `gnome`, `kde` or `windows` forces that look on any platform;
+- **dialogs in the desktop's look** (this console's own): with that title
+  bar the dialogs (Connect, Options, About, the wizards, the confirmations…)
+  take the same desktop's look. On GNOME they are libadwaita's rounded
+  cards with a flat header, the title in the middle and Adwaita's round
+  close button; on KDE Plasma they have Breeze's title bar with its close
+  glyph (red under the pointer); on Windows the title is on the left and
+  Windows 11's Close button sits in the top-right corner. The close button
+  sits at the end where the window's is. While a dialog is open the window
+  behind it is dimmed and takes no input, but its title bar still moves it.
+  The dialogs stay inside the main window, so on Wayland they stay centred
+  on it. Elsewhere they keep egui's look;
+- **macOS menu bar and unified title bar** (this console's own): on macOS
+  the menus are in the system's menu bar, as Apple's Human Interface
+  Guidelines ask, not in the window. The ReXen Center menu holds About
+  ReXen Center, Settings… (⌘, — Tools > Options elsewhere), Services, Hide
+  (⌘H), Hide Others (⌥⌘H), Show All and Quit (⌘Q); then come File, Edit
+  (Cut, Copy, Paste and Select All for text fields and consoles), View (with
+  Enter Full Screen, ⌃⌘F), Pool, VM, Server and Storage (built from the
+  selection, as the window's menus are elsewhere), Window (Minimize ⌘M,
+  Zoom, Bring All to Front and the open windows) and Help (macOS's menu
+  search). The toolbar sits in the title bar right of the window buttons,
+  as in macOS 11 and later: dragging its empty space moves the window, and
+  a double-click zooms or minimizes it as System Settings say. The window
+  keeps macOS's own buttons and resizing. `REXENCENTER_TITLE_BAR=system`
+  keeps the system's title bar with the toolbar under it;
 - **native file dialogs**: a Browse... button beside every file or folder
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or

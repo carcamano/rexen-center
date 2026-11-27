@@ -35,6 +35,7 @@ use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_strings::pool_strings;
 use crate::props_ui::PropertiesDialog;
 use crate::provision_ui::DialogRequest;
+use crate::window_frame::{DialogWindow, dialog_window};
 
 // ---- names and rules ------------------------------------------------------------
 
@@ -1819,8 +1820,8 @@ fn warning_questions(
         .collect()
 }
 
-pub(crate) fn window(title: String) -> egui::Window<'static> {
-    egui::Window::new(title)
+pub(crate) fn window(title: String) -> DialogWindow<'static> {
+    dialog_window(title)
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])

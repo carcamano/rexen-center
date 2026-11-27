@@ -25,6 +25,7 @@ use crate::ops_ui::{Entry, OpsUi};
 use crate::perfmon_ui::{self, PerfmonDialog};
 use crate::provision_ui::DialogRequest;
 use crate::sr_strings::sr_strings;
+use crate::window_frame::{DialogWindow, dialog_window};
 
 /// "New SR..." for a pool or host (`NewSRCommand`).
 pub fn new_sr_entry(conn: &ConnectionView) -> Entry {
@@ -384,8 +385,8 @@ impl StorageUi {
     }
 }
 
-fn window(title: &str) -> egui::Window<'static> {
-    egui::Window::new(title.to_owned())
+fn window(title: &str) -> DialogWindow<'static> {
+    dialog_window(title.to_owned())
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])

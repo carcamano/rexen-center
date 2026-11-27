@@ -33,6 +33,7 @@ use crate::ops_ui::{Confirmation, Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
 use crate::vapp_strings::vapp_strings;
+use crate::window_frame::dialog_window;
 use crate::xva_ui::{error_label, nav, page_list};
 
 // ---- menu entries ----------------------------------------------------------------------
@@ -534,7 +535,7 @@ impl NewVAppWizard {
         let index = pages.iter().position(|p| *p == self.page).unwrap_or(0);
         let mut open = true;
         let mut outcome = Ok(None);
-        egui::Window::new(s.wizard_title)
+        dialog_window(s.wizard_title)
             .id(egui::Id::unique("new-vapp-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -735,7 +736,7 @@ impl VAppProperties {
         let show_hidden = state.settings.preferences.show_hidden_objects;
         let mut outcome = Ok(None);
         let mut open = true;
-        egui::Window::new(fill(s.properties_title, &[("name", &self.original_name)]))
+        dialog_window(fill(s.properties_title, &[("name", &self.original_name)]))
             .id(egui::Id::unique("vapp-properties"))
             .collapsible(false)
             .resizable(false)

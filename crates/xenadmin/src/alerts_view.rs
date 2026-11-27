@@ -20,6 +20,7 @@ use crate::i18n::fill;
 use crate::locale::{MESSAGE_BODIES, MESSAGE_NAMES, TableInfo};
 use crate::ops_ui::OpsUi;
 use crate::perf_strings::perf_strings;
+use crate::window_frame::dialog_window;
 
 /// Width of the message column (title and description wrap inside it).
 const MESSAGE_WIDTH: f32 = 440.0;
@@ -460,7 +461,7 @@ impl AlertsView {
             return;
         };
         let mut answer = None;
-        egui::Window::new(p.alerts_confirm_title)
+        dialog_window(p.alerts_confirm_title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])

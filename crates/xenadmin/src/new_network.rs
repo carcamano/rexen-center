@@ -22,6 +22,7 @@ use crate::branding;
 use crate::i18n::fill;
 use crate::net_strings::net_strings;
 use crate::tab_strings::tab_strings;
+use crate::window_frame::dialog_window;
 
 /// The network types of the first page (`NetworkTypes` without SR-IOV).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -707,7 +708,7 @@ impl NewNetworkWizard {
             .unwrap_or_default();
         let mut open = true;
         let mut outcome = WizardOutcome::Open;
-        egui::Window::new(fill(n.wizard_title, &[("pool", &pool_name)]))
+        dialog_window(fill(n.wizard_title, &[("pool", &pool_name)]))
             .id(egui::Id::unique("new-network-wizard"))
             .collapsible(false)
             .resizable(false)

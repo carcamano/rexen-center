@@ -18,6 +18,7 @@ use xen_core::{AppState, ConnectionId, ConnectionModel, ConnectionView};
 
 use crate::i18n::fill;
 use crate::prov_strings::prov_strings;
+use crate::window_frame::dialog_window;
 
 const GIB: f64 = (1u64 << 30) as f64;
 const MIB: f64 = (1u64 << 20) as f64;
@@ -549,7 +550,7 @@ impl NewVmWizard {
             .unwrap_or_else(|| conn.server.clone());
         let mut outcome = WizardOutcome::Open;
         let mut open = true;
-        egui::Window::new(fill(p.wizard_title, &[("pool", &pool)]))
+        dialog_window(fill(p.wizard_title, &[("pool", &pool)]))
             .id(egui::Id::unique("new-vm-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -1054,7 +1055,7 @@ impl NewVmWizard {
         } else {
             p.add_disk_title
         };
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("wizard-disk"))
             .collapsible(false)
             .resizable(false)
@@ -1212,7 +1213,7 @@ impl NewVmWizard {
         let networks = objects::shown_networks(model, false);
         let mut close = false;
         let mut save = false;
-        egui::Window::new(p.add_interface)
+        dialog_window(p.add_interface)
             .id(egui::Id::unique("wizard-vif"))
             .collapsible(false)
             .resizable(false)

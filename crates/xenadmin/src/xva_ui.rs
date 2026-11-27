@@ -50,6 +50,7 @@ use crate::i18n::{self, fill};
 use crate::ops_ui::{Entry, OpsUi};
 use crate::pool_ui::{connection_name, window};
 use crate::provision_ui::DialogRequest;
+use crate::window_frame::dialog_window;
 use crate::xva_strings::xva_strings;
 
 /// `ExportVmAction.StaticRBACDependencies`.
@@ -641,7 +642,7 @@ impl ExportWizard {
             ExportFormat::Ovf => crate::ovf_strings::ovf_strings().export_ovf_title,
             ExportFormat::Xva => x.export_wizard_title,
         };
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("export-wizard"))
             .collapsible(false)
             .resizable(false)
@@ -1593,7 +1594,7 @@ impl ImportWizard {
         } else {
             x.import_xva_title
         };
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("import-wizard"))
             .collapsible(false)
             .resizable(false)

@@ -44,6 +44,9 @@ mod i18n;
 mod icons;
 mod locale;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos;
+mod menu_bar;
 mod message_names;
 mod migrate_ui;
 mod net_strings;
@@ -71,10 +74,12 @@ mod storage_ui;
 mod tab_strings;
 mod tabs;
 mod theme;
+mod unified_title_bar;
 mod vapp_strings;
 mod vapp_ui;
 mod vmss_strings;
 mod vmss_ui;
+mod window_frame;
 mod xva_strings;
 mod xva_ui;
 
@@ -140,8 +145,20 @@ fn main() -> eframe::Result<()> {
         .expect("failed to start the async runtime");
     let handle = runtime.handle().clone();
 
+    // Windows, GNOME and KDE Plasma: the window draws its own title bar.
+    let window_frame = window_frame::detect();
+    if let Some(frame) = &window_frame {
+        tracing::info!(flavor = ?frame.flavor, layout = ?frame.layout, "own title bar");
+    }
+    // macOS: the toolbar in the title bar.
+    let unified_title_bar = unified_title_bar::wanted(window_frame.is_some());
+    let mut viewport = viewport(window_frame.as_ref());
+    if unified_title_bar {
+        tracing::info!("toolbar in the title bar");
+        viewport = unified_title_bar::viewport(viewport);
+    }
     let options = eframe::NativeOptions {
-        viewport: viewport(),
+        viewport,
         ..Default::default()
     };
     let store = Arc::new(store);
@@ -167,11 +184,41 @@ fn main() -> eframe::Result<()> {
                 },
                 Arc::new(move || ctx.request_repaint()),
             );
-            Ok(Box::new(app::XenAdminApp::new(backend)))
+            let app = app::XenAdminApp::new(backend).with_window_frame(window_frame);
+            Ok(Box::new(macos_app(app, cc, unified_title_bar)))
         }),
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     result
+}
+
+/// macOS: the menus in the system's menu bar and, with `unified_title_bar`,
+/// the toolbar in the title bar.
+#[cfg(target_os = "macos")]
+fn macos_app(
+    app: app::XenAdminApp,
+    cc: &eframe::CreationContext<'_>,
+    unified_title_bar: bool,
+) -> app::XenAdminApp {
+    let app = app.with_native_menu(Box::new(macos::MudaMenuBar::new(&cc.egui_ctx)));
+    if unified_title_bar {
+        app.with_unified_title_bar(unified_title_bar::UnifiedTitleBar::new(
+            macos::title_bar_geometry,
+            macos::double_click_action,
+        ))
+    } else {
+        app
+    }
+}
+
+/// Other systems: the menus and the toolbar stay in the window.
+#[cfg(not(target_os = "macos"))]
+fn macos_app(
+    app: app::XenAdminApp,
+    _cc: &eframe::CreationContext<'_>,
+    _unified_title_bar: bool,
+) -> app::XenAdminApp {
+    app
 }
 
 /// The first non-empty environment variable of `names`.
@@ -298,14 +345,21 @@ fn run_mcp(
     code
 }
 
-/// The main window: titled with the product's name.
-fn viewport() -> egui::ViewportBuilder {
+/// The main window: titled with the product's name. With the app's own
+/// title bar (`frame`: Windows, GNOME, KDE Plasma) it has no system frame;
+/// on GNOME and KDE also a transparent background, so that the title bar
+/// drawn by the app gives it rounded corners (on Windows the system keeps
+/// rounding them and drawing the shadow, which eframe asks winit for on
+/// borderless windows).
+fn viewport(frame: Option<&window_frame::WindowFrame>) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_title(branding::PRODUCT_NAME)
         .with_app_id(branding::APP_ID)
         .with_inner_size([1100.0, 760.0])
         .with_min_inner_size([640.0, 400.0])
         .with_icon(window_icon())
+        .with_decorations(frame.is_none())
+        .with_transparent(frame.is_some_and(window_frame::WindowFrame::transparent))
 }
 
 /// The application icon ([`branding::ICON_PNG`]).
@@ -348,9 +402,26 @@ mod tests {
 
     #[test]
     fn the_window_is_titled_with_the_product_name() {
-        let viewport = viewport();
+        use window_frame::{Flavor, WindowFrame};
+        let viewport = viewport(None);
         assert_eq!(viewport.title.as_deref(), Some("ReXen Center"));
         assert_eq!(viewport.app_id.as_deref(), Some("rexen-center"));
+        assert_eq!(
+            (viewport.decorations, viewport.transparent),
+            (Some(true), Some(false))
+        );
+        let own = super::viewport(Some(&WindowFrame::new(Flavor::Gnome)));
+        assert_eq!(
+            (own.decorations, own.transparent),
+            (Some(false), Some(true))
+        );
+        // Windows keeps an opaque window: the system rounds its corners.
+        // The look forced elsewhere rounds them itself.
+        let windows = super::viewport(Some(&WindowFrame::new(Flavor::Windows)));
+        assert_eq!(
+            (windows.decorations, windows.transparent),
+            (Some(false), Some(!cfg!(windows)))
+        );
         assert_eq!(
             branding::originator(),
             format!("rexen-center/{}", branding::VERSION)

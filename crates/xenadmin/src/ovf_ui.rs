@@ -43,6 +43,7 @@ use crate::i18n::{self, fill};
 use crate::ops_ui::OpsUi;
 use crate::ovf_strings::ovf_strings;
 use crate::pool_ui::connection_name;
+use crate::window_frame::dialog_window;
 use crate::xva_strings::xva_strings;
 use crate::xva_ui::{ExportWizard, error_label, nav, page_list, summary, target_picker, vm_name};
 
@@ -1120,7 +1121,7 @@ impl OvfImportWizard {
         };
         let mut open = true;
         let mut shown = Shown::Open;
-        egui::Window::new(title)
+        dialog_window(title)
             .id(egui::Id::unique("ovf-import-wizard"))
             .collapsible(false)
             .resizable(false)
