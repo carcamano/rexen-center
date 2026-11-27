@@ -2,32 +2,147 @@
 
 **ReXen Center — XCP-ng Center, born again in Rust**
 
-A cross-platform (Windows, Linux, macOS) management console for XCP-ng pools,
-written in Rust with [egui](https://github.com/emilk/egui). It is a rewrite of
-XCP-ng Center / XenAdmin 25.04, whose C# source in `../original-source/` is kept
-untouched as the reference. ReXen Center is an independent community project:
-it is not an official XCP-ng, Vates or Citrix product and does not use their
-logos.
+A cross-platform (Windows, Linux, macOS) management console for
+[XCP-ng](https://xcp-ng.org) pools, written in Rust with
+[egui](https://github.com/emilk/egui). It is a rewrite of XCP-ng Center /
+XenAdmin 25.04 that keeps the original's layout, dialogs and messages:
+connect to XCP-ng hosts, manage VMs, storage, networks and pools, and open
+VM consoles. It also runs as an [MCP server](#mcp-server) for AI
+assistants. ReXen Center is an independent community project: it is not an
+official XCP-ng, Vates or Citrix product and does not use their logos.
 
-The name, the subtitle, the program name (`rexencenter`) and the identifier
-used for the settings folder, the keyring and the packages (`rexen-center`)
-are defined once, in `crates/xen-core/src/branding.rs`; the packaging
-scripts read them from there. Inside the source tree the workspace folder
-(`xenadmin-rs/`), the app's crate (`crates/xenadmin`, package `xenadmin`)
-and some internal names keep the console's former development name.
+- [Download and install](#download-and-install)
+- [Build from source](#build-from-source)
+- [Features](#features)
+- [Settings, passwords and logs](#settings-passwords-and-logs)
+- [MCP server](#mcp-server)
+- [Test](#test)
+- [Layout](#layout) and [License](#license)
 
-**Status: phase F15 (an MCP server, `rexencenter --mcp`, for AI assistants;
-see [MCP server](#mcp-server)) on top of F1–F14b (light and dark themes,
-the message catalogue for translations, native file dialogs, the home page
-and release packages, base, connection and model, detail tabs, VM and host
-operations, VNC console, performance graphs and alerts, VM creation,
-templates, snapshots and disks, storage repositories, networking, pools
-and pool and server properties, high availability, Active Directory and
-RBAC, XVA export and import, OVF/OVA packages and disk images, cross-pool
-migration and copy, Move VM, vApps, scheduled snapshots and disaster
-recovery, search, navigation views, folders, tags and custom fields, GPUs
-and vGPUs, USB pass-through, vTPMs, memory settings, external SSH and
-Remote Desktop consoles).** What works:
+## Download and install
+
+Packages for each release are on the
+[Releases page](https://github.com/carcamano/rexen-center/releases), with
+a `SHA256SUMS` file to check them (`sha256sum -c SHA256SUMS --ignore-missing`
+on Linux, `shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS). They
+are built by GitHub Actions from the tagged source
+([`.github/workflows/release.yml`](.github/workflows/release.yml)) and are
+**not signed or notarized**, so macOS and Windows warn before the first
+start.
+
+| Platform | File |
+|---|---|
+| macOS 11 or later, Apple Silicon | `rexen-center-<version>-macos-arm64.dmg` |
+| macOS 11 or later, Intel | `rexen-center-<version>-macos-x86_64.dmg` |
+| Windows 10 or 11, x64 | `rexen-center-<version>-windows-x64.msi` (installer) or `-windows-x64.zip` (portable) |
+| Debian 12+, Ubuntu 22.04+ (x86_64) | `rexen-center_<version>-1_amd64.deb` |
+| Fedora (x86_64) | `rexen-center-<version>-1.x86_64.rpm` |
+| Other Linux (x86_64, glibc 2.35+) | `rexen-center-<version>-linux-x86_64.tar.gz` |
+
+**macOS.** Open the `.dmg` and drag ReXen Center to Applications. On the
+first start macOS says it cannot check the app for malicious software:
+click Done, then open System Settings > Privacy & Security and click
+**Open Anyway** next to the message about ReXen Center (on macOS 14 and
+earlier, right-click the app and choose Open instead). Or clear the
+quarantine flag from a terminal:
+`xattr -dr com.apple.quarantine "/Applications/ReXen Center.app"`.
+
+**Windows.** Run the `.msi` to install for all users (Start menu shortcut,
+uninstall from Settings > Apps), or unzip the `.zip` anywhere and run
+`rexencenter.exe`; an empty file named `portable` next to it keeps the
+settings beside the executable. SmartScreen may say "Windows protected your
+PC": click **More info**, then **Run anyway**.
+
+**Debian and Ubuntu.** `sudo apt install ./rexen-center_<version>-1_amd64.deb`
+(apt pulls in the libraries it needs; remove with
+`sudo apt remove rexen-center`).
+
+**Fedora.** `sudo dnf install ./rexen-center-<version>-1.x86_64.rpm`
+(remove with `sudo dnf remove rexen-center`).
+
+**Other Linux.** Unpack the `.tar.gz` and run `bin/rexencenter`; copy
+`share/` to `~/.local/share` for the menu entry and icon. It needs glibc
+2.35 or newer, OpenGL (or EGL) and xkbcommon, and an X11 or Wayland
+session.
+
+On Linux, "Remember password" stores passwords through the Secret Service
+(GNOME Keyring, KWallet), and the file dialogs use the XDG desktop portal
+(`xdg-desktop-portal` with a GTK or KDE backend); both come with the usual
+desktops.
+
+## Build from source
+
+You need a stable Rust toolchain (edition 2024, Rust 1.88 or newer) from
+[rustup](https://rustup.rs) and a C compiler. On Linux the keyring also
+needs pkg-config and the D-Bus headers (Debian/Ubuntu:
+`sudo apt install build-essential pkg-config libdbus-1-dev`; Fedora:
+`sudo dnf install gcc pkgconf-pkg-config dbus-devel`); eframe loads its
+X11, Wayland and OpenGL libraries at run time and needs no headers. On
+Windows, use the MSVC toolchain (Visual Studio Build Tools).
+
+```sh
+git clone https://github.com/carcamano/rexen-center.git
+cd rexen-center
+cargo run --release -p xenadmin     # builds and starts the rexencenter program
+```
+
+The program is `target/release/rexencenter` (`rexencenter.exe` on
+Windows). The name, the subtitle, the program name (`rexencenter`) and the
+identifier used for the settings folder, the keyring and the packages
+(`rexen-center`) are defined once, in `crates/xen-core/src/branding.rs`;
+the packaging scripts read them from there. Inside the source tree the
+app's crate (`crates/xenadmin`, package `xenadmin`) and some internal names
+keep the console's former development name, xenadmin-rs.
+
+### Trying it without an XCP-ng host
+
+To try the app without a real host, start the mock server in another terminal
+and connect to the address it prints (user `root`, password `mock-password`;
+users with one RBAC role each, such as `vm-operator-user` /
+`vm-operator-password`, are listed in `crates/xapi-mock/src/ops.rs`):
+
+```sh
+cargo run -p xapi-mock --example serve             # HTTPS with a self-signed certificate
+cargo run -p xapi-mock --example serve -- http     # plain HTTP
+cargo run -p xapi-mock --example serve -- capture  # a sanitized real XCP-ng 8.3 host
+```
+
+To check a real host read-only from the command line:
+
+```sh
+XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --example list_objects
+```
+
+### Release packages
+
+Each platform has a script under `packaging/` that builds a release binary
+(`cargo build --release --locked`) and packs it with the icon
+(`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
+README; the Windows `.ico` is embedded in the executable). Packages are not
+signed or notarized. The output folder defaults to `target/dist`.
+
+| Platform | Command | Result |
+|---|---|---|
+| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` with [cargo-deb](https://crates.io/crates/cargo-deb), an `.rpm` with [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm) and an AppImage with `appimagetool`, each when installed (the `.deb` and `.rpm` are described in `crates/xenadmin/Cargo.toml`) |
+| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`), plus an `.msi` installer (`packaging/windows/rexen-center.wxs`) when the [WiX Toolset](https://wixtoolset.org) 5 is installed (`dotnet tool install --global wix --version 5.0.2`) |
+
+The release workflow (`.github/workflows/release.yml`) runs these scripts
+on GitHub-hosted runners: both macOS architectures, Windows x64 and Linux
+x86_64 on Ubuntu 22.04 (so the Linux binary needs glibc 2.35 or newer).
+Pushing a tag `v<version>` that matches the workspace version in
+`Cargo.toml` publishes the packages and their `SHA256SUMS` as a GitHub
+Release; a push to the `release-prep` branch or a manual run only keeps
+them as the run's artifacts. `.github/workflows/ci.yml` checks formatting,
+clippy and the tests on Linux for every pull request and push to `main`.
+
+Windows release builds have no console window, so the command-line modes
+(`--add-server`, `--forget-server`) report through their exit code only
+(`--mcp` still works through the pipes its client gives it).
+
+## Features
+
+What works:
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -467,13 +582,13 @@ The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
 a pool, Users on a pool or a live standalone server). Editing from the tabs
 (the VM Properties pages beyond General, Custom Fields, GPU and USB, so
-also a VM's own HA page) and custom graphs (New/Edit Graph) come in later
-phases (Remote Desktop runs in the platform's own client, not embedded). The OVF wizards leave out signing a package (it
+also a VM's own HA page) and custom graphs (New/Edit Graph) are not ported
+yet (Remote Desktop runs in the platform's own client, not embedded). The OVF wizards leave out signing a package (it
 needs a `.pfx` reader), the OS Fixup page (its ISO is not shipped), the
 LUN-per-VDI page, URL sources and disk conversion (no external
 converter). The New VM wizard leaves out the pages the
 original shows only for Citrix features (vGPU, cloud-config, LUN per VDI,
-copying BIOS strings). See the port plan for the full roadmap.
+copying BIOS strings).
 
 Console limitations: shortcuts the operating system keeps (Alt+Tab, the
 Windows key, Ctrl+Alt+Del) never reach the console, as in the original
@@ -482,58 +597,6 @@ egui reports numpad keys as their main-keyboard twins (same characters,
 other scancodes), and gives no key event for numpad `*` and `.` on some
 platforms. A VNC password (a guest's own VNC server) is not supported: XAPI
 consoles never ask for one.
-
-## Build and run
-
-You need a stable Rust toolchain (edition 2024, Rust 1.88 or newer) from
-[rustup](https://rustup.rs).
-
-```sh
-cargo run --release -p xenadmin     # builds and starts the rexencenter program
-```
-
-On Linux, eframe also needs the usual X11/Wayland development packages (for
-example `libxkbcommon-dev`, `libgl1-mesa-dev` and `libwayland-dev`), and the
-keyring needs `libdbus-1-dev` (Secret Service).
-
-To try the app without a real host, start the mock server in another terminal
-and connect to the address it prints (user `root`, password `mock-password`;
-users with one RBAC role each, such as `vm-operator-user` /
-`vm-operator-password`, are listed in `crates/xapi-mock/src/ops.rs`):
-
-```sh
-cargo run -p xapi-mock --example serve             # HTTPS with a self-signed certificate
-cargo run -p xapi-mock --example serve -- http     # plain HTTP
-cargo run -p xapi-mock --example serve -- capture  # a sanitized real XCP-ng 8.3 host
-```
-
-To check a real host read-only from the command line:
-
-```sh
-XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --example list_objects
-```
-
-## Release packages
-
-Each platform has a script under `packaging/` that builds a release binary
-(`cargo build --release --locked`) and packs it with the icon
-(`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
-README; the Windows `.ico` is embedded in the executable). Packages are not signed or
-notarized. The output folder defaults to `target/dist`.
-
-| Platform | Command | Result |
-|---|---|---|
-| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
-| Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` when `dpkg-deb` is present and an AppImage when `appimagetool` is present |
-| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`) |
-
-The macOS package is built and started on the development machine; the
-Linux and Windows scripts have not been run yet. Gatekeeper asks before
-the first start of the unsigned app (right-click > Open). On Linux the file
-dialogs use the XDG desktop portal (`xdg-desktop-portal` with a GTK or KDE
-backend). Windows release builds have no console window, so the
-command-line modes (`--add-server`, `--forget-server`) report through their
-exit code only (`--mcp` still works through the pipes its client gives it).
 
 ## Settings, passwords and logs
 
@@ -723,13 +786,13 @@ argument whose name looks like a secret, such as `password`, `token` or
 to, the outcome (`ok`, `refused` or `error`), the refusal or error text or
 the operation's end, and the duration.
 
-### Not in this phase
+### Not supported yet
 
 There is no HTTP transport. It would be a second front end on the same
 server object (`xen_mcp::McpServer`): a local `hyper` listener taking the
 "Streamable HTTP" `POST` bodies to the same request handler, with a bearer
-token and the `Origin` check the specification asks for. The operations of
-the later phases (disks, storage, networking, pools, HA, migration and
+token and the `Origin` check the specification asks for. The other
+operations (disks, storage, networking, pools, HA, migration and
 copy, vApps, scheduled snapshots, disaster recovery, folders and tags,
 devices, memory settings, performance alerts, dismissing alerts) are not
 tools yet; each could follow the write tools' pattern.
@@ -1197,6 +1260,7 @@ same directory explains how to rebuild it with opam.
 | `crates/xen-mcp` | The MCP server (`rexencenter --mcp`): the JSON-RPC stdio transport, the tools and resources over `xen-core`'s cache and operations, `mcp.toml`, the write rules and the audit log. |
 | `crates/xenadmin` | The egui/eframe desktop app, built as the `rexencenter` program; its message catalogue's English export and translation guide are in `locales/`. |
 | `packaging/` | The release package scripts and the icon: SVG sources, the eight concepts, rendered sizes and the renderer (not a crate). |
+| `.github/workflows/` | CI (format, clippy, tests on Linux) and the release builds for macOS, Windows and Linux. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
 
 `xapi`, `xen-rrd`, `xen-vnc`, `xen-core` and `xen-mcp` do not depend on egui. The app runs a tokio runtime on
