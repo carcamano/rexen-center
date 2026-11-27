@@ -36,6 +36,13 @@ string_table! {
     menu_help = "Help",
     menu_about = "About",
 
+    /// The window buttons and window menu of the title bar drawn on GNOME
+    /// and KDE Plasma (this console's own).
+    window_minimize = "Minimize",
+    window_maximize = "Maximize",
+    window_restore = "Restore",
+    window_close = "Close",
+
     action_start = "Start",
     action_clean_shutdown = "Shut Down",
 

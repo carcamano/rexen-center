@@ -663,6 +663,16 @@ questions and messages. Open an area to see what works:
   chooses among the shipped languages or follows the system. Only English
   ships (plan decision 5); `crates/xenadmin/locales/README.md` explains
   how to add pt-BR;
+- **GNOME and KDE Plasma title bar** (this console's own): on these
+  desktops the window draws its own title bar instead of winit's plain
+  frame, with the menus in it, the title centred, and the window buttons in
+  the desktop's look (Adwaita's round buttons, Breeze's glyphs) where the
+  desktop puts them (`button-layout` in GNOME, `ButtonsOnLeft` and
+  `ButtonsOnRight` in `kwinrc`). Drag it to move the window; double-,
+  middle- and right-clicks do what the desktop's settings say; the window's
+  edges resize it. Undocked consoles get the same bar.
+  `REXENCENTER_TITLE_BAR=system` keeps the system's frame, `gnome` or `kde`
+  forces that look on any desktop;
 - **native file dialogs**: a Browse... button beside every file or folder
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or

@@ -19,6 +19,7 @@ use xen_vnc::{Cursor, Input, KeyCode};
 use crate::console_keys::{self, Keyboard, Shortcut};
 use crate::i18n::fill;
 use crate::tab_strings::tab_strings;
+use crate::window_frame::WindowFrame;
 
 /// Which console: a connection's VM or host.
 pub type ConsoleKey = (ConnectionId, ConsoleTarget);
@@ -613,8 +614,15 @@ impl Consoles {
         action
     }
 
-    /// The undocked consoles' windows.
-    pub fn windows(&mut self, ctx: &Context, titles: impl Fn(&ConsoleKey) -> String) {
+    /// The undocked consoles' windows, with the app's own title bar when
+    /// `frame` is given (GNOME, KDE Plasma): Redock and Send Ctrl+Alt+Del
+    /// then sit in it.
+    pub fn windows(
+        &mut self,
+        ctx: &Context,
+        titles: impl Fn(&ConsoleKey) -> String,
+        mut frame: Option<&mut WindowFrame>,
+    ) {
         let t = tab_strings();
         let keys: Vec<ConsoleKey> = self.undocked.iter().map(|k| k.0.clone()).collect();
         for key in keys {
@@ -633,30 +641,48 @@ impl Consoles {
             let id = ViewportId::from_hash_of(("console", key.0, format!("{:?}", key.1)));
             let mut redock = false;
             let mut requests = Requests::default();
-            ctx.show_viewport_immediate(
-                id,
-                ViewportBuilder::default()
-                    .with_title(title)
-                    .with_inner_size([f32::from(w), f32::from(h) + 36.0]),
-                |ui, _class| {
-                    if ui.input(|i| i.viewport().close_requested()) {
+            let own_frame = frame.is_some();
+            let builder = ViewportBuilder::default()
+                .with_title(title.clone())
+                .with_inner_size([f32::from(w), f32::from(h) + 36.0])
+                .with_decorations(!own_frame)
+                .with_transparent(own_frame);
+            ctx.show_viewport_immediate(id, builder, |ui, _class| {
+                if ui.input(|i| i.viewport().close_requested()) {
+                    redock = true;
+                }
+                let mut cad = false;
+                let mut buttons = |ui: &mut Ui| {
+                    if ui.button(t.con_redock).clicked() {
                         redock = true;
                     }
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button(t.con_redock).clicked() {
-                                redock = true;
-                            }
-                            if ui.button(t.con_send_cad).clicked() {
-                                view.handle.send_ctrl_alt_del();
-                            }
-                        });
-                        let r = view.show(ui, scale);
-                        requests.dock |= r.dock;
-                        requests.fullscreen |= r.fullscreen;
-                    });
-                },
-            );
+                    if ui.button(t.con_send_cad).clicked() {
+                        cad = true;
+                    }
+                };
+                let mut central = egui::CentralPanel::default();
+                if let Some(frame) = frame.as_deref_mut() {
+                    egui::Panel::top(("console-title-bar", id))
+                        .frame(frame.top_panel_frame(ui))
+                        .show(ui, |ui| frame.title_bar(ui, &title, &mut buttons));
+                    let fill = egui::Frame::central_panel(ui.style());
+                    central = central.frame(frame.bottom_corners(ui, fill));
+                }
+                central.show(ui, |ui| {
+                    if !own_frame {
+                        ui.horizontal(&mut buttons);
+                    }
+                    let r = view.show(ui, scale);
+                    requests.dock |= r.dock;
+                    requests.fullscreen |= r.fullscreen;
+                });
+                if cad {
+                    view.handle.send_ctrl_alt_del();
+                }
+                if let Some(frame) = frame.as_deref() {
+                    frame.edges(ui.ctx());
+                }
+            });
             if redock || requests.dock {
                 self.undocked.remove(&ConsoleKeyOrd(key.clone()));
             }

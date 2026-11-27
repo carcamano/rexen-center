@@ -3,6 +3,15 @@
 All notable changes to ReXen Center. Versions follow the workspace version in
 `Cargo.toml`; each is released from the tag `v<version>`.
 
+## Unreleased
+
+- **GNOME and KDE Plasma title bar**: on these desktops the main window and
+  the undocked consoles no longer show winit's plain frame. The window draws
+  its own title bar with the menus, the title and the window buttons in
+  Adwaita's or Breeze's look, in the order the desktop's settings give
+  (`button-layout`, `kwinrc`), rounded corners, and resizing at the edges.
+  `REXENCENTER_TITLE_BAR=system` brings the system's frame back.
+
 ## 0.1.1 — 2026-11-27
 
 A documentation and housekeeping release: the app behaves as in 0.1.0.
