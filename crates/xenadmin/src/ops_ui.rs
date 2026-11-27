@@ -67,6 +67,16 @@ pub enum Entry {
     Separator,
 }
 
+/// A server of a Start on / Resume on / Migrate to submenu
+/// ([`OpsUi::server_choices`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerChoice {
+    /// The server's name, with why it cannot be chosen.
+    pub text: String,
+    /// What choosing it asks for; `None` while it cannot be chosen.
+    pub request: Option<ActionRequest>,
+}
+
 /// The menu of a guest VM, in the original's order (`ContextMenuBuilder`
 /// `SingleVM`), plus Pause / Unpause (toolbar-only in the original).
 pub fn vm_entries(conn: &ConnectionView, vm_ref: &Ref<Vm>, vm: &VmRecord) -> Vec<Entry> {
@@ -1252,6 +1262,36 @@ impl OpsUi {
         menu: HostMenu,
         backend: &BackendHandle,
     ) -> Option<ActionRequest> {
+        let (choices, checking) = self.server_choices(conn, vm_ref, vm, menu, backend, true);
+        let mut chosen = None;
+        for choice in choices {
+            if ui
+                .add_enabled(choice.request.is_some(), Button::new(choice.text))
+                .clicked()
+            {
+                chosen = choice.request;
+            }
+        }
+        if checking {
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+        }
+        chosen
+    }
+
+    /// The items of a Start on / Resume on / Migrate to submenu: the home
+    /// server first, then every host, each with what choosing it asks for
+    /// once the server agrees (`None` while not), and whether the server is
+    /// still being asked. The server is asked again when its last answer is
+    /// stale and `refresh` (only when it never was otherwise).
+    pub fn server_choices(
+        &mut self,
+        conn: &ConnectionView,
+        vm_ref: &Ref<Vm>,
+        vm: &VmRecord,
+        menu: HostMenu,
+        backend: &BackendHandle,
+        refresh: bool,
+    ) -> (Vec<ServerChoice>, bool) {
         let o = ops_strings();
         let model = &conn.model;
         let hosts: Vec<(Ref<Host>, std::sync::Arc<HostRecord>)> =
@@ -1263,7 +1303,7 @@ impl OpsUi {
         let stale = self
             .checks
             .get(&key)
-            .is_none_or(|c| c.requested.elapsed() > CHECK_TTL);
+            .is_none_or(|c| refresh && c.requested.elapsed() > CHECK_TTL);
         if stale {
             // Only hosts without a known problem are asked about.
             let ask: Vec<Ref<Host>> = hosts
@@ -1298,43 +1338,36 @@ impl OpsUi {
             let checks = checks?;
             Some(checks.get(r).cloned().unwrap_or(None))
         };
-        let mut chosen = None;
-        let mut item = |ui: &mut Ui, label: &str, target: Option<&Ref<Host>>| {
+        let choice = |label: &str, target: Option<&Ref<Host>>| {
             let host = target.and_then(|r| hosts.iter().find(|(h, _)| h == r));
-            let (text, enabled) = match host {
+            let (text, usable) = match host {
                 None => (
                     fill(
                         o.host_with_reason,
                         &[("host", label), ("reason", o.reason_no_home)],
                     ),
-                    false,
+                    None,
                 ),
                 Some((r, h)) => match verdict(r, h) {
-                    None => (fill(o.host_checking, &[("host", label)]), false),
-                    Some(None) => (label.to_owned(), true),
+                    None => (fill(o.host_checking, &[("host", label)]), None),
+                    Some(None) => (label.to_owned(), Some(r)),
                     Some(Some(why)) => (
                         fill(o.host_with_reason, &[("host", label), ("reason", &why)]),
-                        false,
+                        None,
                     ),
                 },
             };
-            if ui.add_enabled(enabled, Button::new(text)).clicked()
-                && let Some((r, _)) = host
-            {
-                chosen = Some(ActionRequest::Vm {
+            ServerChoice {
+                text,
+                request: usable.map(|r| ActionRequest::Vm {
                     vm: vm_ref.clone(),
                     action: menu.action(r.clone()),
-                });
+                }),
             }
         };
-        item(ui, o.home_server, vm.affinity.non_null());
-        for (r, h) in &hosts {
-            item(ui, &h.name_label, Some(r));
-        }
-        if checks.is_none() {
-            ui.ctx().request_repaint_after(Duration::from_millis(200));
-        }
-        chosen
+        let mut choices = vec![choice(o.home_server, vm.affinity.non_null())];
+        choices.extend(hosts.iter().map(|(r, h)| choice(&h.name_label, Some(r))));
+        (choices, checks.is_none())
     }
 
     // ---- windows -----------------------------------------------------------

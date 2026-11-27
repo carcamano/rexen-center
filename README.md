@@ -673,6 +673,20 @@ questions and messages. Open an area to see what works:
   edges resize it. Undocked consoles get the same bar.
   `REXENCENTER_TITLE_BAR=system` keeps the system's frame, `gnome` or `kde`
   forces that look on any desktop;
+- **macOS menu bar and unified title bar** (this console's own): on macOS
+  the menus are in the system's menu bar, as Apple's Human Interface
+  Guidelines ask, not in the window. The ReXen Center menu holds About
+  ReXen Center, Settings… (⌘, — Tools > Options elsewhere), Services, Hide
+  (⌘H), Hide Others (⌥⌘H), Show All and Quit (⌘Q); then come File, Edit
+  (Cut, Copy, Paste and Select All for text fields and consoles), View (with
+  Enter Full Screen, ⌃⌘F), Pool, VM, Server and Storage (built from the
+  selection, as the window's menus are elsewhere), Window (Minimize ⌘M,
+  Zoom, Bring All to Front and the open windows) and Help (macOS's menu
+  search). The toolbar sits in the title bar right of the window buttons,
+  as in macOS 11 and later: dragging its empty space moves the window, and
+  a double-click zooms or minimizes it as System Settings say. The window
+  keeps macOS's own buttons and resizing. `REXENCENTER_TITLE_BAR=system`
+  keeps the system's title bar with the toolbar under it;
 - **native file dialogs**: a Browse... button beside every file or folder
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or

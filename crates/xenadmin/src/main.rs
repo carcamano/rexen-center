@@ -44,6 +44,9 @@ mod i18n;
 mod icons;
 mod locale;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos;
+mod menu_bar;
 mod message_names;
 mod migrate_ui;
 mod net_strings;
@@ -71,6 +74,7 @@ mod storage_ui;
 mod tab_strings;
 mod tabs;
 mod theme;
+mod unified_title_bar;
 mod vapp_strings;
 mod vapp_ui;
 mod vmss_strings;
@@ -146,8 +150,15 @@ fn main() -> eframe::Result<()> {
     if let Some(frame) = &window_frame {
         tracing::info!(flavor = ?frame.flavor, layout = ?frame.layout, "own title bar");
     }
+    // macOS: the toolbar in the title bar.
+    let unified_title_bar = unified_title_bar::wanted(window_frame.is_some());
+    let mut viewport = viewport(window_frame.is_some());
+    if unified_title_bar {
+        tracing::info!("toolbar in the title bar");
+        viewport = unified_title_bar::viewport(viewport);
+    }
     let options = eframe::NativeOptions {
-        viewport: viewport(window_frame.is_some()),
+        viewport,
         ..Default::default()
     };
     let store = Arc::new(store);
@@ -173,13 +184,41 @@ fn main() -> eframe::Result<()> {
                 },
                 Arc::new(move || ctx.request_repaint()),
             );
-            Ok(Box::new(
-                app::XenAdminApp::new(backend).with_window_frame(window_frame),
-            ))
+            let app = app::XenAdminApp::new(backend).with_window_frame(window_frame);
+            Ok(Box::new(macos_app(app, cc, unified_title_bar)))
         }),
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     result
+}
+
+/// macOS: the menus in the system's menu bar and, with `unified_title_bar`,
+/// the toolbar in the title bar.
+#[cfg(target_os = "macos")]
+fn macos_app(
+    app: app::XenAdminApp,
+    cc: &eframe::CreationContext<'_>,
+    unified_title_bar: bool,
+) -> app::XenAdminApp {
+    let app = app.with_native_menu(Box::new(macos::MudaMenuBar::new(&cc.egui_ctx)));
+    if unified_title_bar {
+        app.with_unified_title_bar(unified_title_bar::UnifiedTitleBar::new(
+            macos::title_bar_geometry,
+            macos::double_click_action,
+        ))
+    } else {
+        app
+    }
+}
+
+/// Other systems: the menus and the toolbar stay in the window.
+#[cfg(not(target_os = "macos"))]
+fn macos_app(
+    app: app::XenAdminApp,
+    _cc: &eframe::CreationContext<'_>,
+    _unified_title_bar: bool,
+) -> app::XenAdminApp {
+    app
 }
 
 /// The first non-empty environment variable of `names`.

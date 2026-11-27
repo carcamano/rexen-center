@@ -11,6 +11,17 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   Adwaita's or Breeze's look, in the order the desktop's settings give
   (`button-layout`, `kwinrc`), rounded corners, and resizing at the edges.
   `REXENCENTER_TITLE_BAR=system` brings the system's frame back.
+- **macOS menu bar and unified title bar**: on macOS the menus move from the
+  window to the system's menu bar (through `muda`, a macOS-only dependency):
+  a ReXen Center menu with About, Settings… (⌘,; Tools > Options elsewhere),
+  Services, Hide, Hide Others, Show All and Quit (⌘Q), then File, Edit (Cut,
+  Copy, Paste, Select All), View (with Enter Full Screen), Pool, VM, Server
+  and Storage (following the selection and carrying out the same operations
+  and dialogs), Window (Minimize, Zoom, Bring All to Front) and Help. The
+  toolbar moves into the title bar beside the window buttons; its empty
+  space moves the window and a double-click zooms or minimizes it as System
+  Settings say. `REXENCENTER_TITLE_BAR=system` keeps the system's title bar.
+  Linux and Windows are unchanged.
 
 ## 0.1.1 — 2026-11-27
 
