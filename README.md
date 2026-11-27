@@ -1,148 +1,184 @@
-# ReXen Center
+<!--
+  The download links below name the release version (v0.1.1); update them
+  together with the workspace version in Cargo.toml at each release.
+  Screenshots: docs/screenshots/, rendered from the mock server (see
+  "Development and tests").
+-->
 
-**ReXen Center — XCP-ng Center, born again in Rust**
+<div align="center">
 
-A cross-platform (Windows, Linux, macOS) management console for
-[XCP-ng](https://xcp-ng.org) pools, written in Rust with
-[egui](https://github.com/emilk/egui). It is a rewrite of XCP-ng Center /
-XenAdmin 25.04 that keeps the original's layout, dialogs and messages:
-connect to XCP-ng hosts, manage VMs, storage, networks and pools, and open
-VM consoles. It also runs as an [MCP server](#mcp-server) for AI
-assistants. ReXen Center is an independent community project: it is not an
-official XCP-ng, Vates or Citrix product and does not use their logos.
+<img src="packaging/icons/icon.svg" alt="ReXen Center icon" width="128" height="128">
 
-- [Download and install](#download-and-install)
-- [Build from source](#build-from-source)
-- [Features](#features)
-- [Settings, passwords and logs](#settings-passwords-and-logs)
-- [MCP server](#mcp-server)
-- [Test](#test)
-- [Layout](#layout) and [License](#license)
+<h1>ReXen Center</h1>
 
-## Download and install
+<p><strong>XCP-ng Center, born again in Rust</strong></p>
 
-Packages for each release are on the
-[Releases page](https://github.com/carcamano/rexen-center/releases), with
-a `SHA256SUMS` file to check them (`sha256sum -c SHA256SUMS --ignore-missing`
-on Linux, `shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS). They
-are built by GitHub Actions from the tagged source
-([`.github/workflows/release.yml`](.github/workflows/release.yml)) and are
-**not signed or notarized**, so macOS and Windows warn before the first
-start.
+<p>
+  <a href="https://github.com/carcamano/rexen-center/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/carcamano/rexen-center?sort=semver&label=release"></a>
+  <a href="https://github.com/carcamano/rexen-center/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/carcamano/rexen-center/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="LICENSE"><img alt="Licence: BSD-2-Clause" src="https://img.shields.io/badge/licence-BSD--2--Clause-blue"></a>
+  <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-informational">
+  <img alt="Rust 1.88 or newer" src="https://img.shields.io/badge/rust-1.88%2B-orange">
+</p>
 
-| Platform | File |
-|---|---|
-| macOS 11 or later, Apple Silicon | `rexen-center-<version>-macos-arm64.dmg` |
-| macOS 11 or later, Intel | `rexen-center-<version>-macos-x86_64.dmg` |
-| Windows 10 or 11, x64 | `rexen-center-<version>-windows-x64.msi` (installer) or `-windows-x64.zip` (portable) |
-| Debian 12+, Ubuntu 22.04+ (x86_64) | `rexen-center_<version>-1_amd64.deb` |
-| Fedora (x86_64) | `rexen-center-<version>-1.x86_64.rpm` |
-| Other Linux (x86_64, glibc 2.35+) | `rexen-center-<version>-linux-x86_64.tar.gz` |
+<p>
+  A cross-platform desktop console for <a href="https://xcp-ng.org">XCP-ng</a> pools, written in Rust with
+  <a href="https://github.com/emilk/egui">egui</a>: a rewrite of XCP-ng Center / XenAdmin 25.04 that keeps the
+  original's layout, dialogs and messages, and also runs as an MCP server for AI assistants.
+</p>
 
-**macOS.** Open the `.dmg` and drag ReXen Center to Applications. On the
-first start macOS says it cannot check the app for malicious software:
-click Done, then open System Settings > Privacy & Security and click
-**Open Anyway** next to the message about ReXen Center (on macOS 14 and
-earlier, right-click the app and choose Open instead). Or clear the
-quarantine flag from a terminal:
-`xattr -dr com.apple.quarantine "/Applications/ReXen Center.app"`.
+<p>
+  <a href="#download"><b>Download</b></a> ·
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#features"><b>Features</b></a> ·
+  <a href="#mcp-server"><b>MCP server</b></a> ·
+  <a href="#build-from-source"><b>Build from source</b></a> ·
+  <a href="CHANGELOG.md"><b>Changelog</b></a>
+</p>
 
-**Windows.** Run the `.msi` to install for all users (Start menu shortcut,
-uninstall from Settings > Apps), or unzip the `.zip` anywhere and run
-`rexencenter.exe`; an empty file named `portable` next to it keeps the
-settings beside the executable. SmartScreen may say "Windows protected your
-PC": click **More info**, then **Run anyway**.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/main-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/main-light.png">
+  <img alt="The ReXen Center main window: the infrastructure tree of a pool with two hosts, and the General tab of a running VM" src="docs/screenshots/main-light.png">
+</picture>
 
-**Debian and Ubuntu.** `sudo apt install ./rexen-center_<version>-1_amd64.deb`
-(apt pulls in the libraries it needs; remove with
-`sudo apt remove rexen-center`).
+</div>
 
-**Fedora.** `sudo dnf install ./rexen-center-<version>-1.x86_64.rpm`
-(remove with `sudo dnf remove rexen-center`).
+> [!NOTE]
+> ReXen Center is an independent community project. It is **not** an official
+> XCP-ng, Vates or Citrix product, and it does not use their logos.
 
-**Other Linux.** Unpack the `.tar.gz` and run `bin/rexencenter`; copy
-`share/` to `~/.local/share` for the menu entry and icon. It needs glibc
-2.35 or newer, OpenGL (or EGL) and xkbcommon, and an X11 or Wayland
-session.
+## Highlights
 
-On Linux, "Remember password" stores passwords through the Secret Service
-(GNOME Keyring, KWallet), and the file dialogs use the XDG desktop portal
-(`xdg-desktop-portal` with a GTK or KDE backend); both come with the usual
-desktops.
+- 🔌 **Connect** to XCP-ng 8.2+ hosts and pools over HTTPS, several at once, with
+  trust-on-first-use certificate pinning, passwords in the OS keyring and automatic
+  reconnection.
+- 🖥️ **Manage** VMs, templates, snapshots, disks, storage repositories, networks,
+  bonds, pools, HA, Active Directory users, vApps, schedules and disaster recovery,
+  with the original's wizards and confirmations.
+- 📺 **Console** for every VM and host: scaled or 1:1, undocked or full screen,
+  scancodes so the guest's own keyboard layout applies, clipboard both ways.
+- 📈 **Performance graphs and alerts** from XAPI's round-robin databases, with the
+  original's zoom levels and alert settings.
+- 🤖 **MCP server** (`rexencenter --mcp`): let an AI assistant read your pools and,
+  only for the VMs you allow, start, stop and snapshot them.
+- 🎨 Light and dark themes, native file dialogs, a single binary per platform.
 
-## Build from source
+<table>
+  <tr>
+    <td width="50%"><img alt="The Console tab of a running Debian VM" src="docs/screenshots/console-dark.png"><br><sub><b>Console</b>: the guest's screen over VNC, through XAPI's console tunnel.</sub></td>
+    <td width="50%"><img alt="The Performance tab of a host: CPU and memory graphs" src="docs/screenshots/performance-dark.png"><br><sub><b>Performance</b>: live graphs from the host's round-robin databases.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img alt="The New VM wizard on its installation media page" src="docs/screenshots/new-vm-wizard-light.png"><br><sub><b>New VM wizard</b>: template, media and boot mode, CPU and memory, disks, networks.</sub></td>
+    <td width="50%" align="center"><img alt="The About window" src="docs/screenshots/about-light.png" width="300"><br><sub><b>About</b>: version, build and credits.</sub></td>
+  </tr>
+</table>
 
-You need a stable Rust toolchain (edition 2024, Rust 1.88 or newer) from
-[rustup](https://rustup.rs) and a C compiler. On Linux the keyring also
-needs pkg-config and the D-Bus headers (Debian/Ubuntu:
-`sudo apt install build-essential pkg-config libdbus-1-dev`; Fedora:
-`sudo dnf install gcc pkgconf-pkg-config dbus-devel`); eframe loads its
-X11, Wayland and OpenGL libraries at run time and needs no headers. On
-Windows, use the MSVC toolchain (Visual Studio Build Tools).
+<sub>Screenshots are rendered by the app's own test harness against its mock XAPI server: every host, VM and address in them is made up.</sub>
 
-```sh
-git clone https://github.com/carcamano/rexen-center.git
-cd rexen-center
-cargo run --release -p xenadmin     # builds and starts the rexencenter program
-```
+## Download
 
-The program is `target/release/rexencenter` (`rexencenter.exe` on
-Windows). The name, the subtitle, the program name (`rexencenter`) and the
-identifier used for the settings folder, the keyring and the packages
-(`rexen-center`) are defined once, in `crates/xen-core/src/branding.rs`;
-the packaging scripts read them from there. Inside the source tree the
-app's crate (`crates/xenadmin`, package `xenadmin`) and some internal names
-keep the console's former development name, xenadmin-rs.
+Version **0.1.1** — [all releases](https://github.com/carcamano/rexen-center/releases) · [release notes](https://github.com/carcamano/rexen-center/releases/tag/v0.1.1) ·
+[`SHA256SUMS`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/SHA256SUMS)
 
-### Trying it without an XCP-ng host
-
-To try the app without a real host, start the mock server in another terminal
-and connect to the address it prints (user `root`, password `mock-password`;
-users with one RBAC role each, such as `vm-operator-user` /
-`vm-operator-password`, are listed in `crates/xapi-mock/src/ops.rs`):
-
-```sh
-cargo run -p xapi-mock --example serve             # HTTPS with a self-signed certificate
-cargo run -p xapi-mock --example serve -- http     # plain HTTP
-cargo run -p xapi-mock --example serve -- capture  # a sanitized real XCP-ng 8.3 host
-```
-
-To check a real host read-only from the command line:
-
-```sh
-XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --example list_objects
-```
-
-### Release packages
-
-Each platform has a script under `packaging/` that builds a release binary
-(`cargo build --release --locked`) and packs it with the icon
-(`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
-README; the Windows `.ico` is embedded in the executable). Packages are not
-signed or notarized. The output folder defaults to `target/dist`.
-
-| Platform | Command | Result |
+| Platform | File | Kind |
 |---|---|---|
-| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
-| Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` with [cargo-deb](https://crates.io/crates/cargo-deb), an `.rpm` with [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm) and an AppImage with `appimagetool`, each when installed (the `.deb` and `.rpm` are described in `crates/xenadmin/Cargo.toml`) |
-| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`), plus an `.msi` installer (`packaging/windows/rexen-center.wxs`) when the [WiX Toolset](https://wixtoolset.org) 5 is installed (`dotnet tool install --global wix --version 5.0.2`) |
+| 🍎 macOS 11+ — Apple Silicon | [`rexen-center-0.1.1-macos-arm64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-macos-arm64.dmg) | disk image |
+| 🍎 macOS 11+ — Intel | [`rexen-center-0.1.1-macos-x86_64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-macos-x86_64.dmg) | disk image |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.1.1-windows-x64.msi`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-windows-x64.msi) | installer |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.1.1-windows-x64.zip`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-windows-x64.zip) | portable |
+| 🐧 Debian 12+, Ubuntu 22.04+ — x86_64 | [`rexen-center_0.1.1-1_amd64.deb`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center_0.1.1-1_amd64.deb) | package |
+| 🐧 Fedora — x86_64 | [`rexen-center-0.1.1-1.x86_64.rpm`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-1.x86_64.rpm) | package |
+| 🐧 Other Linux — x86_64, glibc 2.35+ | [`rexen-center-0.1.1-linux-x86_64.tar.gz`](https://github.com/carcamano/rexen-center/releases/download/v0.1.1/rexen-center-0.1.1-linux-x86_64.tar.gz) | archive |
 
-The release workflow (`.github/workflows/release.yml`) runs these scripts
-on GitHub-hosted runners: both macOS architectures, Windows x64 and Linux
-x86_64 on Ubuntu 22.04 (so the Linux binary needs glibc 2.35 or newer).
-Pushing a tag `v<version>` that matches the workspace version in
-`Cargo.toml` publishes the packages and their `SHA256SUMS` as a GitHub
-Release; a push to the `release-prep` branch or a manual run only keeps
-them as the run's artifacts. `.github/workflows/ci.yml` checks formatting,
-clippy and the tests on Linux for every pull request and push to `main`.
+The packages are built by GitHub Actions from the tagged source
+([`.github/workflows/release.yml`](.github/workflows/release.yml)). Check them with
+`sha256sum -c SHA256SUMS --ignore-missing` on Linux or
+`shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS.
 
-Windows release builds have no console window, so the command-line modes
-(`--add-server`, `--forget-server`) report through their exit code only
-(`--mcp` still works through the pipes its client gives it).
+> [!IMPORTANT]
+> The packages are **not signed or notarized**, so macOS and Windows warn before the
+> first start. The steps below get past the warning.
+
+## Install
+
+<details>
+<summary><b>🍎 macOS</b> — open the <code>.dmg</code>, drag to Applications, then allow the unsigned app once</summary>
+
+1. Open the `.dmg` and drag **ReXen Center** to **Applications**.
+2. Start it. macOS says it cannot check the app for malicious software: click **Done**.
+3. Open **System Settings › Privacy & Security** and click **Open Anyway** next to the
+   message about ReXen Center, then confirm. (On macOS 14 and earlier, right-click the
+   app in Finder and choose **Open** instead.)
+
+Or clear the quarantine flag from a terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/ReXen Center.app"
+```
+
+</details>
+
+<details>
+<summary><b>🪟 Windows</b> — the <code>.msi</code> installer or the portable <code>.zip</code></summary>
+
+- **Installer:** run the `.msi` to install for all users (Start menu shortcut; uninstall
+  from **Settings › Apps**).
+- **Portable:** unzip the `.zip` anywhere and run `rexencenter.exe`. An empty file named
+  `portable` next to it keeps the settings beside the executable.
+
+SmartScreen may say **"Windows protected your PC"**: click **More info**, then
+**Run anyway**.
+
+</details>
+
+<details>
+<summary><b>🐧 Debian and Ubuntu</b> — the <code>.deb</code> package</summary>
+
+```sh
+sudo apt install ./rexen-center_0.1.1-1_amd64.deb
+```
+
+apt pulls in the libraries it needs. Remove it with `sudo apt remove rexen-center`.
+
+</details>
+
+<details>
+<summary><b>🐧 Fedora</b> — the <code>.rpm</code> package</summary>
+
+```sh
+sudo dnf install ./rexen-center-0.1.1-1.x86_64.rpm
+```
+
+Remove it with `sudo dnf remove rexen-center`.
+
+</details>
+
+<details>
+<summary><b>🐧 Other Linux</b> — the <code>.tar.gz</code> archive</summary>
+
+```sh
+tar xzf rexen-center-0.1.1-linux-x86_64.tar.gz
+rexen-center-0.1.1/bin/rexencenter
+```
+
+Copy `share/` to `~/.local/share` for the menu entry and icon. It needs glibc 2.35 or
+newer, OpenGL (or EGL) and xkbcommon, and an X11 or Wayland session.
+
+</details>
+
+On Linux, "Remember password" stores passwords through the Secret Service (GNOME
+Keyring, KWallet), and the file dialogs use the XDG desktop portal
+(`xdg-desktop-portal` with a GTK or KDE backend); both come with the usual desktops.
 
 ## Features
 
-What works:
+ReXen Center ports XCP-ng Center's windows one by one and keeps their layout, fields,
+questions and messages. Open an area to see what works:
+
+<details>
+<summary><b>🔌 Connections, security and settings</b></summary>
 
 - connecting to XCP-ng 8.2+ hosts (XAPI API 2.16 or later) with a user name
   and password over JSON-RPC/HTTPS, **several servers at once**;
@@ -167,10 +203,21 @@ What works:
   **reconnect on start without asking for the password**;
 - **settings** in TOML (`settings.toml`) with a **portable mode**, and
   **file logging** (never with passwords or session references);
+- **RBAC**: the session's rights (and, for an Active Directory user, who
+  they are) are read after login, each operation is
+  checked against them before it runs, and a user whose role is not enough
+  is offered the role elevation dialog (another user's credentials, checked
+  and used for that operation only);
 - an **Events panel**: the history of this client's operations and
   connection events, with progress and Cancel for those that run as XAPI
   tasks, plus the tasks other clients run on the connected servers (also
   cancellable);
+
+</details>
+
+<details>
+<summary><b>🌳 Infrastructure tree, tabs, views and search</b></summary>
+
 - an infrastructure tree per connection, as in the original: pool → hosts →
   VMs and local storage, with shared storage, VMs without a home server and
   templates under the pool. Icons show the VM power state (running, halted,
@@ -187,6 +234,45 @@ What works:
   SR's virtual disks, the SRs of a host or pool), **Networking** (a VM's
   interfaces with guest IPs; the networks and IP configuration of a host or
   pool) and **NICs**. They follow `event.from` live;
+- **navigation views** (the buttons under the tree, as the original's
+  navigation pane): Infrastructure, Objects (by type), Organization Views
+  (Objects by Tag, by Folder, by Custom Field, vApps) and Saved Searches
+  (the seven built-in searches and those saved on the pools), each with
+  its tree; the tree's search box narrows them. Networks, virtual disks,
+  vApps and folders can be selected there; a folder, a group or a view
+  shows the Search tab;
+- the **Search tab** (pools and servers, and the views): what to search
+  for, the filter tree (all of / any of / none of, name, description,
+  UUID, tags, pool, server, memory, address, start time, power state,
+  tools, OS, HA restart priority, read caching, Windows Update, size,
+  shared, HA, partially upgraded, in a pool or standalone, network,
+  vApp, parent or ancestor folder, not in a folder, custom fields), the
+  grouping levels, and the results grid with its columns (Name, CPU Usage,
+  Used Memory, Disks, Network, Address, HA, Uptime, one per custom field;
+  the figures read from `rrd_updates` every 30 seconds), sorting,
+  collapsible groups and a column chooser; Save... (on a pool's
+  `gui_config`, as XenCenter), Export... and Import... of `.xensearch`
+  files. The original's search XML is read and written for the filter
+  and grouping classes its builder makes; others are kept but not edited;
+- **folders, tags and custom fields**, stored exactly as XenCenter stores
+  them (`other_config["folder"]`, the pool's `EMPTY_FOLDERS`, the `tags`
+  field, the pool's `gui_config["XenCenter.CustomFields"]` XML and
+  `other_config["XenCenter.CustomFields.<name>"]`): the General tab's
+  Folder, Tags and Custom Fields rows; the Folder row and the Custom
+  Fields page of the pool, server and SR Properties dialogs; a VM
+  Properties dialog (General with folder and tags, Custom Fields); New
+  Folder, Rename and Delete Folder, Remove from folder, Rename and Delete
+  Tag, Untag in the views' menus; **drag and drop** of objects into a
+  folder, onto a tag, and of a running VM onto another server of its pool
+  (live migration, with the usual question);
+- a **home page** when nothing is selected (in place of the original's web
+  page), with Add a Server;
+
+</details>
+
+<details>
+<summary><b>⚡ VM and host operations, consoles</b></summary>
+
 - **VM and host operations** (as the original's commands): Start, Shut
   Down, Reboot, Suspend, Resume, Pause, Unpause, Force Shut Down, Force
   Reboot, Start on Server, Resume on Server and Migrate to Server (live,
@@ -199,11 +285,6 @@ What works:
   messages (`FriendlyErrorNames`). The server submenus check each server
   with `VM.assert_can_boot_here`, and maintenance mode lists the VMs that
   cannot be migrated (`host.get_vms_which_prevent_evacuation`);
-- **RBAC**: the session's rights (and, for an Active Directory user, who
-  they are) are read after login, each operation is
-  checked against them before it runs, and a user whose role is not enough
-  is offered the role elevation dialog (another user's credentials, checked
-  and used for that operation only);
 - the **Console tab** of a VM and of a server (its control domain's text
   console), as the original's: the guest's screen over VNC through XAPI's
   console tunnel (`CONNECT` to `console.location` with the session cookie,
@@ -222,6 +303,20 @@ What works:
   down, suspended or paused (with "Click here to start it" / "resume it"),
   and the window **switches to the Console tab** when a VM started or
   resumed from it begins to run;
+- **external consoles**: Launch SSH Console on the Console tab (Linux VMs
+  with an address, and servers) runs the platform's terminal with `ssh
+  root@<address>`, or PuTTY or an OpenSSH binary set in Options > External
+  Tools; Remote Desktop (Windows guests whose agent offers it: Turn on
+  Remote Desktop, then Open Remote Desktop) finds the address that accepts
+  port 3389 and starts the platform's client (`mstsc` on Windows, the
+  `.rdp` handler on macOS, `xfreerdp` elsewhere, or a program set in
+  Options). Remote Desktop is not embedded (plan decision);
+
+</details>
+
+<details>
+<summary><b>📈 Performance graphs and alerts</b></summary>
+
 - the **Performance tab** of a server and of a VM, as the original's: the
   default graphs (CPU per CPU or vCPU, used memory, network send/receive
   per NIC or interface, and disk read/write per disk for VMs) drawn from
@@ -252,6 +347,12 @@ What works:
   the repeat interval, saved to `other_config["perfmon"]` in the
   original's XML (other perfmon variables are kept), followed by the
   perfmon plugin's `refresh` on the hosts concerned;
+
+</details>
+
+<details>
+<summary><b>🖥️ VM creation, snapshots, disks and devices</b></summary>
+
 - the **New VM wizard**, as the original's: Template (custom templates,
   built-in ones and snapshots, with a search box), Name, Installation
   Media (an ISO from the ISO libraries, or the network) with the **boot
@@ -285,6 +386,36 @@ What works:
 - **Install XCP-ng VM Tools**: the guest tools ISO into the VM's DVD
   drive (the original's leftover `InstallPVToolsAction`; XCP-ng Center
   25.04 offers no such menu on XCP-ng 8.x);
+- **GPUs** (F14a): the GPU tab of a pool or server (the placement policy,
+  one row per group of identical physical GPUs with a bar per GPU showing
+  its vGPUs, the allowed vGPU types; Edit... / Edit Selected GPUs... to
+  allow or disallow types, a type in use cannot be disallowed); the pool
+  and server Properties' GPU page (placement policy, integrated GPU
+  pass-through after the next reboot); the VM Properties' GPU page (Add
+  virtual GPU with the original's compatible-type and allowed-type rules,
+  Delete; only while the VM is halted and not protected by HA);
+- **USB pass-through**: the server's USB tab (enable or disable
+  pass-through per device, asked first; not while a VM uses it) and the VM
+  Properties' USB page (Attach USB with the devices of the servers the VM
+  can run on, Detach, asked first; attaching switches the VM to the
+  upstream device model, as the original);
+- **vTPM**: VM > Manage vTPMs... for UEFI VMs (Add vTPM, Remove vTPM,
+  asked first, following the server's allowed operations), and the
+  General tab's Device Security row;
+- **memory settings**: Edit... on the Memory tab's VM rows (halted VMs, or
+  running ones with known tools): the dialog for one VM (a fixed memory or
+  a range; minimum, maximum and static maximum when the VM balloons) and
+  the wizard for several, with the original's limits (the pool's memory
+  ratio, the server's free memory, the template's maximum) and its
+  question before a static maximum change reboots a running VM; the change
+  runs live (`VM.set_memory_dynamic_range`) or with a clean shutdown and a
+  start around `VM.set_memory_limits`;
+
+</details>
+
+<details>
+<summary><b>💾 Storage</b></summary>
+
 - the **New SR wizard**, as the original's: Type, Name (with the
   original's automatic description) and Location for **NFS** (Scan for
   existing SRs, NFS version, create or reattach one), **iSCSI** (CHAP,
@@ -307,6 +438,12 @@ What works:
   confirmations) and **Properties** (name, description, tags, the SR's
   performance alerts and read caching); **New SR** on the toolbar and the
   pool and host menus; **Rescan** on an SR's Storage tab;
+
+</details>
+
+<details>
+<summary><b>🌐 Networking</b></summary>
+
 - the **New Network wizard** (Add Network on a host's or the pool's
   Networking tab), as the original's: an **external network** (a VLAN on
   a NIC or bond of every host, with the original's NIC, VLAN tag and MTU
@@ -339,6 +476,12 @@ What works:
   settings), **Remove Interface** (confirmed) and **Activate** /
   **Deactivate**; a new interface of a running VM is hot-plugged when the
   server allows it, else the user is told to restart the VM;
+
+</details>
+
+<details>
+<summary><b>🏊 Pools, high availability and Active Directory</b></summary>
+
 - **pools** (the original's Pool menu and the server menu's pool
   entries): **New Pool** (name, description, coordinator, and every
   connected server listed with the reason it can or cannot join, as
@@ -393,6 +536,12 @@ What works:
   including removing or logging out oneself. **Add Server** and **New
   Pool** join a server to the pool's domain first, asking for a domain
   account (asked again when refused);
+
+</details>
+
+<details>
+<summary><b>📦 Import, export and migration</b></summary>
+
 - **XVA export and import**, as the original's wizards: **Export...** (VM
   menu, and the context menus of VMs, servers and pools) opens the Export
   wizard for the XVA format (file name and folder, checked; a blocking
@@ -458,6 +607,12 @@ What works:
   another pool. A VM that may not migrate gets the F7 Copy dialog or the
   Move VM dialog (an SR for all disks). Progress and Cancel are in the
   Events panel;
+
+</details>
+
+<details>
+<summary><b>🗓️ vApps, scheduled snapshots and disaster recovery</b></summary>
+
 - **vApps**: Manage vApps... (Pool menu: the pool's vApps and their VMs;
   New vApp..., Delete, Properties, Start, Shut down, Export, Import), the
   New vApp wizard (Name, Virtual Machines, VM Startup Sequence with start
@@ -491,69 +646,12 @@ What works:
   start; the clean-up (the `DR_task`s, a test failover's VMs, vApps and
   SRs, what the fixes changed) and the summary report. Cancelling cleans
   up too;
-- **navigation views** (the buttons under the tree, as the original's
-  navigation pane): Infrastructure, Objects (by type), Organization Views
-  (Objects by Tag, by Folder, by Custom Field, vApps) and Saved Searches
-  (the seven built-in searches and those saved on the pools), each with
-  its tree; the tree's search box narrows them. Networks, virtual disks,
-  vApps and folders can be selected there; a folder, a group or a view
-  shows the Search tab;
-- the **Search tab** (pools and servers, and the views): what to search
-  for, the filter tree (all of / any of / none of, name, description,
-  UUID, tags, pool, server, memory, address, start time, power state,
-  tools, OS, HA restart priority, read caching, Windows Update, size,
-  shared, HA, partially upgraded, in a pool or standalone, network,
-  vApp, parent or ancestor folder, not in a folder, custom fields), the
-  grouping levels, and the results grid with its columns (Name, CPU Usage,
-  Used Memory, Disks, Network, Address, HA, Uptime, one per custom field;
-  the figures read from `rrd_updates` every 30 seconds), sorting,
-  collapsible groups and a column chooser; Save... (on a pool's
-  `gui_config`, as XenCenter), Export... and Import... of `.xensearch`
-  files. The original's search XML is read and written for the filter
-  and grouping classes its builder makes; others are kept but not edited;
-- **folders, tags and custom fields**, stored exactly as XenCenter stores
-  them (`other_config["folder"]`, the pool's `EMPTY_FOLDERS`, the `tags`
-  field, the pool's `gui_config["XenCenter.CustomFields"]` XML and
-  `other_config["XenCenter.CustomFields.<name>"]`): the General tab's
-  Folder, Tags and Custom Fields rows; the Folder row and the Custom
-  Fields page of the pool, server and SR Properties dialogs; a VM
-  Properties dialog (General with folder and tags, Custom Fields); New
-  Folder, Rename and Delete Folder, Remove from folder, Rename and Delete
-  Tag, Untag in the views' menus; **drag and drop** of objects into a
-  folder, onto a tag, and of a running VM onto another server of its pool
-  (live migration, with the usual question);
-- **GPUs** (F14a): the GPU tab of a pool or server (the placement policy,
-  one row per group of identical physical GPUs with a bar per GPU showing
-  its vGPUs, the allowed vGPU types; Edit... / Edit Selected GPUs... to
-  allow or disallow types, a type in use cannot be disallowed); the pool
-  and server Properties' GPU page (placement policy, integrated GPU
-  pass-through after the next reboot); the VM Properties' GPU page (Add
-  virtual GPU with the original's compatible-type and allowed-type rules,
-  Delete; only while the VM is halted and not protected by HA);
-- **USB pass-through**: the server's USB tab (enable or disable
-  pass-through per device, asked first; not while a VM uses it) and the VM
-  Properties' USB page (Attach USB with the devices of the servers the VM
-  can run on, Detach, asked first; attaching switches the VM to the
-  upstream device model, as the original);
-- **vTPM**: VM > Manage vTPMs... for UEFI VMs (Add vTPM, Remove vTPM,
-  asked first, following the server's allowed operations), and the
-  General tab's Device Security row;
-- **memory settings**: Edit... on the Memory tab's VM rows (halted VMs, or
-  running ones with known tools): the dialog for one VM (a fixed memory or
-  a range; minimum, maximum and static maximum when the VM balloons) and
-  the wizard for several, with the original's limits (the pool's memory
-  ratio, the server's free memory, the template's maximum) and its
-  question before a static maximum change reboots a running VM; the change
-  runs live (`VM.set_memory_dynamic_range`) or with a clean shutdown and a
-  start around `VM.set_memory_limits`;
-- **external consoles**: Launch SSH Console on the Console tab (Linux VMs
-  with an address, and servers) runs the platform's terminal with `ssh
-  root@<address>`, or PuTTY or an OpenSSH binary set in Options > External
-  Tools; Remote Desktop (Windows guests whose agent offers it: Turn on
-  Remote Desktop, then Open Remote Desktop) finds the address that accepts
-  port 3389 and starts the platform's client (`mstsc` on Windows, the
-  `.rdp` handler on macOS, `xfreerdp` elsewhere, or a program set in
-  Options). Remote Desktop is not embedded (plan decision);
+
+</details>
+
+<details>
+<summary><b>🎨 Look and feel, platform and API</b></summary>
+
 - **light and dark themes** (F14b, this console's own): Tools > Options >
   Appearance chooses Light, Dark or the system's setting, saved and applied
   at once. Status texts, alert badges, tree icons, graph lines and the
@@ -569,14 +667,17 @@ What works:
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or
   folder dialog; a typed path still works;
-- a **home page** when nothing is selected (in place of the original's web
-  page), with Add a Server;
 - an About window and an Options window;
 - the complete XenAPI surface, generated from the upstream datamodel: every
   class, record, enum and call, with `Async.*` variants (`crates/xapi-codegen`);
 - a client-side cache of every class the server delivers through events,
   loaded after an `event.inject` token so nothing is lost between the load
   and the first `event.from`.
+
+</details>
+
+<details>
+<summary><b>🚧 Not ported yet, and known limitations</b></summary>
 
 The original 25.04 still has the HA and Users pages but no longer adds them
 to the tab list; they are shown as the earlier XenCenter showed them (HA on
@@ -598,7 +699,172 @@ other scancodes), and gives no key event for numpad `*` and `.` on some
 platforms. A VNC password (a guest's own VNC server) is not supported: XAPI
 consoles never ask for one.
 
+</details>
+
+## MCP server
+
+`rexencenter --mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server instead of the window, so an MCP client (Claude Code, Claude
+Desktop, any other) can read the saved servers' pools, hosts, VMs, storage,
+networks, alerts and performance data and, only when the configuration
+allows it, start, stop and snapshot the VMs it names. It speaks JSON-RPC
+over standard input and output (protocol revisions 2024-11-05 to
+2025-11-25); logs go to stderr and `logs/rexen-center-mcp.*.log`, never to
+stdout.
+
+It uses the window's configuration folder, read only:
+
+- it connects to the **saved servers** (all of them, or those `mcp.toml`
+  lists) with their **saved passwords** from the keyring. Save one in the
+  window with "Remember password", or with `rexencenter --add-server`;
+- it accepts only **pinned certificates** (`known_servers.toml`): an
+  unknown or changed certificate is refused and `list_servers` says why.
+  Connect once in the window to trust it;
+- it never changes the saved list, the pins or the keyring, and never sends
+  a password, session reference or keyring detail to the client, the log
+  or the audit log.
+
+Register it with Claude Code (the server then starts with each session):
+
+```sh
+claude mcp add --scope user rexen-center -- /path/to/rexencenter --mcp
+```
+
+<details>
+<summary><b>Other clients and options</b></summary>
+
+Claude Code (the server then starts with each session; `--scope user`
+makes it available in every project):
+
+```sh
+claude mcp add --scope user rexen-center -- /path/to/rexencenter --mcp
+# with another configuration folder or keyring service:
+claude mcp add --scope user rexen-center \
+  -e REXENCENTER_CONFIG_DIR=/path/to/config -e REXENCENTER_KEYRING_SERVICE=rexen-center \
+  -- /path/to/rexencenter --mcp
+```
+
+On macOS the binary of the packaged app is
+`/Applications/ReXen Center.app/Contents/MacOS/rexencenter` (quote it, it has
+a space). Other clients take
+the same command in their JSON configuration (a project's `.mcp.json`,
+Claude Desktop's `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "rexen-center": {
+      "command": "/path/to/rexencenter",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+`--mcp-config <file>` reads another file than `mcp.toml`. On Windows the
+release build has no console window, but its standard input and output
+still work through the pipes an MCP client gives it.
+
+</details>
+
+<details>
+<summary><b>Configuration, tools, resources and audit log</b></summary>
+
+#### Configuration: `mcp.toml`
+
+In the configuration folder, next to `settings.toml`. Without the file the
+server connects to every saved server and is **read only**.
+
+```toml
+# Saved servers to connect to (addresses as in the server list).
+# Empty or absent: all of them.
+servers = ["192.0.2.10"]
+
+[writes]
+# The write tools exist only when this is true.
+enabled = false
+
+# Per server, the only VMs the write tools may touch: UUIDs, or names that
+# exactly one VM has. A server without an entry allows no write.
+[writes.allow]
+"192.0.2.10" = ["test-vm-01", "0b0b0b0b-0000-4000-8000-000000000003"]
+```
+
+An unknown key (a misspelt `enable = true`) stops the start with an error
+instead of leaving the server in another mode than intended. Optional
+timings: `connect_wait_seconds` (30), `operation_timeout_seconds` (600),
+`performance_wait_seconds` (60).
+
+#### Tools
+
+Objects are named by UUID or exact name (a name several objects share is
+refused, listing their UUIDs). `server` (a saved address, pool name or pool
+UUID) may be left out when one server is configured; list tools without it
+cover every configured server. Read tools answer from the live cache the
+connection keeps through `event.from`, so they make no call to the server;
+`get_performance` reads the RRDs as the Performance tab does.
+
+| Tool | What it returns or does |
+|---|---|
+| `list_servers` | The configured servers: status (or why one cannot connect), pool, API version, the write switch and allow-list |
+| `get_pool` | Pool: coordinator, hosts, VM counts, default SR, HA |
+| `list_hosts`, `get_host` | Hosts: address, enabled, live, maintenance mode, memory, CPUs, versions, NICs, storage, running VMs |
+| `list_vms`, `get_vm` | VMs (filters: name, power state, host, tag; templates, snapshots and control domains on request): power state, host, vCPUs, memory, OS, IP addresses, disks, interfaces, snapshots, allowed operations |
+| `list_srs`, `get_sr` | Storage: type, shared, size, utilisation, hosts, virtual disks and their VMs (never `device_config`) |
+| `list_networks`, `get_network` | Networks: bridge, MTU, VLAN, NICs, VM interfaces |
+| `list_alerts` | Alerts newest first (filters: priority, object) |
+| `get_performance` | A host's or VM's recent data per data source (interval 5s, 1m, 1h or 1d; CPU in percent, memory in bytes, throughput in bytes per second) |
+| `vm_start`, `vm_shutdown` (`force` for a forced shutdown), `vm_reboot` (`force`), `vm_suspend`, `vm_resume` | VM lifecycle (**write**) |
+| `vm_snapshot` (`name`, `description`, `memory`), `vm_snapshot_revert`, `vm_snapshot_delete` | Snapshots (**write**) |
+
+Write tools are listed only when `[writes] enabled = true`, and each call
+must pass `confirm: true`. Before anything reaches the server a write is
+refused, with the reason, when: writes are disabled; there is no
+confirmation; the VM (for a snapshot, the VM it belongs to) is not in the
+server's allow-list; the window would not offer the operation now (power
+state, `allowed_operations`, a host to run on, an operation of this client
+already running on it); the pool's HA protects a VM to start or resume (the
+window checks the HA plan first); or the user's roles do not allow it (no
+role elevation here). Otherwise the operation runs exactly as from the
+window, and the tool waits for its end. Nothing that changes a host, pool,
+SR or network is a tool.
+
+#### Resources
+
+The same views, as JSON: `rexencenter://servers`;
+`rexencenter://server/{server}/{list}` with `{list}` one of `pool`, `hosts`,
+`vms`, `srs`, `networks`, `alerts` (listed by `resources/list`); and the
+templates `rexencenter://server/{server}/{kind}/{uuid}` (`kind`: pool, host,
+vm, sr, network) and `rexencenter://server/{server}/{host|vm}/{uuid}/performance`
+(the last hour, a point a minute). `{server}` is the saved address,
+percent-encoded.
+
+#### Audit log
+
+Every tool call and resource read appends one JSON line to
+`logs/mcp-audit.jsonl`: the time (UTC), the tool, its arguments (any
+argument whose name looks like a secret, such as `password`, `token` or
+`session`, is replaced by `[redacted]`), the server and object it resolved
+to, the outcome (`ok`, `refused` or `error`), the refusal or error text or
+the operation's end, and the duration.
+
+#### Not supported yet
+
+There is no HTTP transport. It would be a second front end on the same
+server object (`xen_mcp::McpServer`): a local `hyper` listener taking the
+"Streamable HTTP" `POST` bodies to the same request handler, with a bearer
+token and the `Origin` check the specification asks for. The other
+operations (disks, storage, networking, pools, HA, migration and
+copy, vApps, scheduled snapshots, disaster recovery, folders and tags,
+devices, memory settings, performance alerts, dismissing alerts) are not
+tools yet; each could follow the write tools' pattern.
+
+</details>
+
 ## Settings, passwords and logs
+
+<details>
+<summary><b>Where settings, saved passwords and logs live</b></summary>
 
 The configuration folder is, in order of preference:
 
@@ -651,153 +917,93 @@ client redacts the session reference XAPI puts in `SESSION_INVALID` errors.
 A test runs every flow at `trace` level and checks the log for both.
 `Ctrl+C` or `SIGTERM` close the app normally, logging out of every server.
 
-## MCP server
+</details>
 
-`rexencenter --mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
-server instead of the window, so an MCP client (Claude Code, Claude
-Desktop, any other) can read the saved servers' pools, hosts, VMs, storage,
-networks, alerts and performance data and, only when the configuration
-allows it, start, stop and snapshot the VMs it names. It speaks JSON-RPC
-over standard input and output (protocol revisions 2024-11-05 to
-2025-11-25); logs go to stderr and `logs/rexen-center-mcp.*.log`, never to
-stdout.
+## Build from source
 
-It uses the window's configuration folder, read only:
+<details>
+<summary><b>Toolchain, build and run</b></summary>
 
-- it connects to the **saved servers** (all of them, or those `mcp.toml`
-  lists) with their **saved passwords** from the keyring. Save one in the
-  window with "Remember password", or with `rexencenter --add-server`;
-- it accepts only **pinned certificates** (`known_servers.toml`): an
-  unknown or changed certificate is refused and `list_servers` says why.
-  Connect once in the window to trust it;
-- it never changes the saved list, the pins or the keyring, and never sends
-  a password, session reference or keyring detail to the client, the log
-  or the audit log.
-
-### Registering it in a client
-
-Claude Code (the server then starts with each session; `--scope user`
-makes it available in every project):
+You need a stable Rust toolchain (edition 2024, Rust 1.88 or newer) from
+[rustup](https://rustup.rs) and a C compiler. On Linux the keyring also
+needs pkg-config and the D-Bus headers (Debian/Ubuntu:
+`sudo apt install build-essential pkg-config libdbus-1-dev`; Fedora:
+`sudo dnf install gcc pkgconf-pkg-config dbus-devel`); eframe loads its
+X11, Wayland and OpenGL libraries at run time and needs no headers. On
+Windows, use the MSVC toolchain (Visual Studio Build Tools).
 
 ```sh
-claude mcp add --scope user rexen-center -- /path/to/rexencenter --mcp
-# with another configuration folder or keyring service:
-claude mcp add --scope user rexen-center \
-  -e REXENCENTER_CONFIG_DIR=/path/to/config -e REXENCENTER_KEYRING_SERVICE=rexen-center \
-  -- /path/to/rexencenter --mcp
+git clone https://github.com/carcamano/rexen-center.git
+cd rexen-center
+cargo run --release -p xenadmin     # builds and starts the rexencenter program
 ```
 
-On macOS the binary of the packaged app is
-`/Applications/ReXen Center.app/Contents/MacOS/rexencenter` (quote it, it has
-a space). Other clients take
-the same command in their JSON configuration (a project's `.mcp.json`,
-Claude Desktop's `claude_desktop_config.json`):
+The program is `target/release/rexencenter` (`rexencenter.exe` on
+Windows). The name, the subtitle, the program name (`rexencenter`) and the
+identifier used for the settings folder, the keyring and the packages
+(`rexen-center`) are defined once, in `crates/xen-core/src/branding.rs`;
+the packaging scripts read them from there. Inside the source tree the
+app's crate (`crates/xenadmin`, package `xenadmin`) and some internal names
+keep the console's former development name, xenadmin-rs.
 
-```json
-{
-  "mcpServers": {
-    "rexen-center": {
-      "command": "/path/to/rexencenter",
-      "args": ["--mcp"]
-    }
-  }
-}
+</details>
+
+<details>
+<summary><b>Trying it without an XCP-ng host</b></summary>
+
+To try the app without a real host, start the mock server in another terminal
+and connect to the address it prints (user `root`, password `mock-password`;
+users with one RBAC role each, such as `vm-operator-user` /
+`vm-operator-password`, are listed in `crates/xapi-mock/src/ops.rs`):
+
+```sh
+cargo run -p xapi-mock --example serve             # HTTPS with a self-signed certificate
+cargo run -p xapi-mock --example serve -- http     # plain HTTP
+cargo run -p xapi-mock --example serve -- capture  # a sanitized real XCP-ng 8.3 host
 ```
 
-`--mcp-config <file>` reads another file than `mcp.toml`. On Windows the
-release build has no console window, but its standard input and output
-still work through the pipes an MCP client gives it.
+To check a real host read-only from the command line:
 
-### Configuration: `mcp.toml`
-
-In the configuration folder, next to `settings.toml`. Without the file the
-server connects to every saved server and is **read only**.
-
-```toml
-# Saved servers to connect to (addresses as in the server list).
-# Empty or absent: all of them.
-servers = ["192.0.2.10"]
-
-[writes]
-# The write tools exist only when this is true.
-enabled = false
-
-# Per server, the only VMs the write tools may touch: UUIDs, or names that
-# exactly one VM has. A server without an entry allows no write.
-[writes.allow]
-"192.0.2.10" = ["test-vm-01", "0b0b0b0b-0000-4000-8000-000000000003"]
+```sh
+XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --example list_objects
 ```
 
-An unknown key (a misspelt `enable = true`) stops the start with an error
-instead of leaving the server in another mode than intended. Optional
-timings: `connect_wait_seconds` (30), `operation_timeout_seconds` (600),
-`performance_wait_seconds` (60).
+</details>
 
-### Tools
+<details>
+<summary><b>Release packages</b></summary>
 
-Objects are named by UUID or exact name (a name several objects share is
-refused, listing their UUIDs). `server` (a saved address, pool name or pool
-UUID) may be left out when one server is configured; list tools without it
-cover every configured server. Read tools answer from the live cache the
-connection keeps through `event.from`, so they make no call to the server;
-`get_performance` reads the RRDs as the Performance tab does.
+Each platform has a script under `packaging/` that builds a release binary
+(`cargo build --release --locked`) and packs it with the icon
+(`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
+README; the Windows `.ico` is embedded in the executable). Packages are not
+signed or notarized. The output folder defaults to `target/dist`.
 
-| Tool | What it returns or does |
-|---|---|
-| `list_servers` | The configured servers: status (or why one cannot connect), pool, API version, the write switch and allow-list |
-| `get_pool` | Pool: coordinator, hosts, VM counts, default SR, HA |
-| `list_hosts`, `get_host` | Hosts: address, enabled, live, maintenance mode, memory, CPUs, versions, NICs, storage, running VMs |
-| `list_vms`, `get_vm` | VMs (filters: name, power state, host, tag; templates, snapshots and control domains on request): power state, host, vCPUs, memory, OS, IP addresses, disks, interfaces, snapshots, allowed operations |
-| `list_srs`, `get_sr` | Storage: type, shared, size, utilisation, hosts, virtual disks and their VMs (never `device_config`) |
-| `list_networks`, `get_network` | Networks: bridge, MTU, VLAN, NICs, VM interfaces |
-| `list_alerts` | Alerts newest first (filters: priority, object) |
-| `get_performance` | A host's or VM's recent data per data source (interval 5s, 1m, 1h or 1d; CPU in percent, memory in bytes, throughput in bytes per second) |
-| `vm_start`, `vm_shutdown` (`force` for a forced shutdown), `vm_reboot` (`force`), `vm_suspend`, `vm_resume` | VM lifecycle (**write**) |
-| `vm_snapshot` (`name`, `description`, `memory`), `vm_snapshot_revert`, `vm_snapshot_delete` | Snapshots (**write**) |
+| Platform | Command | Result |
+|---|---|---|
+| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` with [cargo-deb](https://crates.io/crates/cargo-deb), an `.rpm` with [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm) and an AppImage with `appimagetool`, each when installed (the `.deb` and `.rpm` are described in `crates/xenadmin/Cargo.toml`) |
+| Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`), plus an `.msi` installer (`packaging/windows/rexen-center.wxs`) when the [WiX Toolset](https://wixtoolset.org) 5 is installed (`dotnet tool install --global wix --version 5.0.2`) |
 
-Write tools are listed only when `[writes] enabled = true`, and each call
-must pass `confirm: true`. Before anything reaches the server a write is
-refused, with the reason, when: writes are disabled; there is no
-confirmation; the VM (for a snapshot, the VM it belongs to) is not in the
-server's allow-list; the window would not offer the operation now (power
-state, `allowed_operations`, a host to run on, an operation of this client
-already running on it); the pool's HA protects a VM to start or resume (the
-window checks the HA plan first); or the user's roles do not allow it (no
-role elevation here). Otherwise the operation runs exactly as from the
-window, and the tool waits for its end. Nothing that changes a host, pool,
-SR or network is a tool.
+The release workflow (`.github/workflows/release.yml`) runs these scripts
+on GitHub-hosted runners: both macOS architectures, Windows x64 and Linux
+x86_64 on Ubuntu 22.04 (so the Linux binary needs glibc 2.35 or newer).
+Pushing a tag `v<version>` that matches the workspace version in
+`Cargo.toml` publishes the packages and their `SHA256SUMS` as a GitHub
+Release; a push to the `release-prep` branch or a manual run only keeps
+them as the run's artifacts. `.github/workflows/ci.yml` checks formatting,
+clippy and the tests on Linux for every pull request and push to `main`.
 
-### Resources
+Windows release builds have no console window, so the command-line modes
+(`--add-server`, `--forget-server`) report through their exit code only
+(`--mcp` still works through the pipes its client gives it).
 
-The same views, as JSON: `rexencenter://servers`;
-`rexencenter://server/{server}/{list}` with `{list}` one of `pool`, `hosts`,
-`vms`, `srs`, `networks`, `alerts` (listed by `resources/list`); and the
-templates `rexencenter://server/{server}/{kind}/{uuid}` (`kind`: pool, host,
-vm, sr, network) and `rexencenter://server/{server}/{host|vm}/{uuid}/performance`
-(the last hour, a point a minute). `{server}` is the saved address,
-percent-encoded.
+</details>
 
-### Audit log
+## Development and tests
 
-Every tool call and resource read appends one JSON line to
-`logs/mcp-audit.jsonl`: the time (UTC), the tool, its arguments (any
-argument whose name looks like a secret, such as `password`, `token` or
-`session`, is replaced by `[redacted]`), the server and object it resolved
-to, the outcome (`ok`, `refused` or `error`), the refusal or error text or
-the operation's end, and the duration.
-
-### Not supported yet
-
-There is no HTTP transport. It would be a second front end on the same
-server object (`xen_mcp::McpServer`): a local `hyper` listener taking the
-"Streamable HTTP" `POST` bodies to the same request handler, with a bearer
-token and the `Origin` check the specification asks for. The other
-operations (disks, storage, networking, pools, HA, migration and
-copy, vApps, scheduled snapshots, disaster recovery, folders and tags,
-devices, memory settings, performance alerts, dismissing alerts) are not
-tools yet; each could follow the write tools' pattern.
-
-## Test
+<details>
+<summary><b>Tests, real-host checks and screenshots</b></summary>
 
 ```sh
 cargo test
@@ -1067,6 +1273,21 @@ XENADMIN_REAL_HOST=192.0.2.10 XENADMIN_REAL_USER=root XENADMIN_REAL_PASSWORD=...
 XENADMIN_REAL_FINGERPRINT=AA:BB:... cargo test -p xenadmin real_host -- --ignored --nocapture
 ```
 
+The tests below that act on a VM act on **one named VM only**: its exact name
+label comes from `XENADMIN_REAL_NAMED_VM` (default `rexen-test-vm`), and each
+refuses to act unless exactly one VM has that name and it is halted. The
+mock rehearsals rename a mock guest to the same name. With the variables
+above plus `XENADMIN_REAL_LOG=<file>` (outside the repository),
+`real_host_named_vm_lifecycle` runs every VM operation on it through the
+window and leaves it halted, and `real_host_named_vm_friendly_error` sends
+it one call the server refuses (Unpause while halted) to check the
+friendly error message:
+
+```sh
+XENADMIN_REAL_NAMED_VM="my test VM" XENADMIN_REAL_LOG=/path/outside/repo.txt \
+  cargo test -p xenadmin real_host_named_vm -- --ignored --nocapture
+```
+
 With the same variables, `real_host_tabs_read_only` also draws every tab of
 the pool, its coordinator, one VM (`XENADMIN_REAL_VM=<uuid>`, else the first
 running guest) and one SR (`XENADMIN_REAL_SR=<uuid>`, else the default SR),
@@ -1079,8 +1300,8 @@ framebuffer snapshots, both outside the repository):
 
 - `real_console_dom0` opens the server's console view-only (it sends no key,
   mouse, Ctrl+Alt+Del or clipboard input, and checks so);
-- `real_console_fluxer` acts on the VM named exactly "09 - Ubuntu Fluxer"
-  only (refused unless exactly one VM has that name and it is halted): it
+- `real_console_named_vm` acts on the VM named exactly by
+  `XENADMIN_REAL_NAMED_VM` only (refused unless exactly one VM has that name and it is halted): it
   starts it from the toolbar, checks the switch to the Console tab, watches
   the boot, types a test text at the login prompt without Enter and erases
   it, moves the mouse, reboots it (the console must reconnect) and shuts it
@@ -1094,9 +1315,9 @@ cargo test -p xenadmin real_console_dom0 -- --ignored --nocapture
 reads: it follows the server's Performance tab for a minute.
 
 The performance graphs, alerts and alert settings on a real host
-(`real_performance_fluxer`, same variables plus `XENADMIN_REAL_LOG`): it
-reads the server's graphs, then acts on the VM named exactly "09 - Ubuntu
-Fluxer" only (refused unless exactly one VM has that name and it is
+(`real_performance_named_vm`, same variables plus `XENADMIN_REAL_LOG`): it
+reads the server's graphs, then acts on the VM named exactly by
+`XENADMIN_REAL_NAMED_VM` only (refused unless exactly one VM has that name and it is
 halted): starts it and watches its graphs move during the boot, creates a
 test message on it and dismisses that one alert alone from the Alerts
 view (checking every other message is still there), turns its CPU alert
@@ -1107,8 +1328,8 @@ VM creation, snapshots and disks on a real host
 (`app/tests/provisioning_real.rs`, same variables plus `XENADMIN_REAL_LOG`
 and `XENADMIN_REAL_SHOTS`):
 
-- `real_f7_fluxer` acts on the VM named exactly "09 - Ubuntu Fluxer" only
-  (refused unless exactly one VM has that name and it is halted): it
+- `real_f7_named_vm` acts on the VM named exactly by `XENADMIN_REAL_NAMED_VM`
+  only (refused unless exactly one VM has that name and it is halted): it
   takes a snapshot, loads an ISO into its DVD drive and ejects it,
   reverts to the snapshot it took and deletes it, leaving the VM halted
   with no new snapshot or disk;
@@ -1134,7 +1355,7 @@ host's Networking tabs and the NICs tab against the cache, opens each
 network's Properties, the Configure IP Addresses dialog, the Create Bond
 dialog and the New Network wizard and cancels them (no network, VLAN,
 bond, tunnel or PIF is ever changed); then, on the halted VM named
-exactly "09 - Ubuntu Fluxer" only, it adds an interface on the network
+exactly by `XENADMIN_REAL_NAMED_VM` only, it adds an interface on the network
 of its first interface, changes its QoS limit and removes it, and checks
 the VM ends with exactly the interfaces it had. `f9_real_run_on_the_mock`
 rehearses the same run on the capture.
@@ -1234,7 +1455,26 @@ it with Ctrl+C and start it again:
 cargo run -p xapi-mock --example serve -- --port 47123
 ```
 
-## Generated XenAPI bindings
+The screenshots in this README (`docs/screenshots/`) are drawn by the real
+window code against the mock server's hand-written pool (made-up names and
+documentation addresses only), rendered through wgpu by an ignored test
+behind the `readme-screenshots` feature (off by default, so the usual
+builds do not compile wgpu):
+
+```sh
+REXEN_SCREENSHOTS_DIR=/some/folder cargo test --release -p xenadmin \
+  --features readme-screenshots readme_screenshots -- --ignored --nocapture
+```
+
+It writes the main window (light and dark), a host's Performance tab, a
+VM console, the New VM wizard and the About window as PNGs; the copies in
+`docs/screenshots/` are quantised to 256 colours and the About window is
+cropped to the dialog.
+
+</details>
+
+<details>
+<summary><b>Generated XenAPI bindings</b></summary>
 
 `crates/xapi/src/generated/` is generated; do not edit it. To regenerate it
 after changing the generator or the pinned datamodel:
@@ -1248,7 +1488,10 @@ The datamodel is `crates/xapi-codegen/data/xenapi.json`, produced by xen-api's
 `gen_json` at tag v25.27.0 (the XAPI of XCP-ng 8.3) and pinned by sha256. The
 same directory explains how to rebuild it with opam.
 
-## Layout
+</details>
+
+<details>
+<summary><b>Repository layout</b></summary>
 
 | Crate | Role |
 |---|---|
@@ -1262,6 +1505,7 @@ same directory explains how to rebuild it with opam.
 | `packaging/` | The release package scripts and the icon: SVG sources, the eight concepts, rendered sizes and the renderer (not a crate). |
 | `.github/workflows/` | CI (format, clippy, tests on Linux) and the release builds for macOS, Windows and Linux. |
 | `crates/xapi-mock` | Test-only mock XAPI server. |
+| `docs/screenshots/` | The README's screenshots, rendered from the mock server (see "Development and tests"). |
 
 `xapi`, `xen-rrd`, `xen-vnc`, `xen-core` and `xen-mcp` do not depend on egui. The app runs a tokio runtime on
 background threads and keeps eframe on the main thread. It sends `Command`s to
@@ -1270,9 +1514,20 @@ snapshot each frame (every connection, the operation history and the
 settings). The backend calls `request_repaint` after each batch of events,
 publishing at most about 10 snapshots per second per connection.
 
-## License
+</details>
 
-BSD-2-Clause; see [LICENSE](LICENSE). Credits go to the XenAdmin (Citrix
-XenCenter) and XCP-ng Center projects this work derives from. The ZRLE
-decoder and zlib reader in `crates/xen-vnc` derive from vnc-rs 0.6.1 and are
-used under its MIT license (`crates/xen-vnc/LICENSE-vnc-rs`).
+## Credits and licence
+
+<details>
+<summary><b>BSD-2-Clause, and the projects this work derives from</b></summary>
+
+ReXen Center is released under the BSD-2-Clause licence; see [LICENSE](LICENSE).
+
+It is a rewrite of **XCP-ng Center**, maintained by the XCP-ng community, which derives
+from **XenAdmin** (Citrix XenCenter) by Citrix Systems, Inc. and Cloud Software Group,
+Inc. Thanks to the XenCenter and XCP-ng Center contributors listed in the original
+project's `CREDITS.md`. The ZRLE decoder and zlib reader in `crates/xen-vnc` derive
+from [vnc-rs](https://github.com/HsuJv/vnc-rs) 0.6.1 and are used under its MIT
+licence (`crates/xen-vnc/LICENSE-vnc-rs`).
+
+</details>
