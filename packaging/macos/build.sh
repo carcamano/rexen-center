@@ -8,8 +8,9 @@
 # architecture (e.g. x86_64-apple-darwin, after `rustup target add`).
 #
 # Needs only Xcode's command line tools (iconutil, hdiutil, plutil). The
-# bundle is not signed or notarized: Gatekeeper asks before the first start
-# (right-click > Open, or `xattr -dr com.apple.quarantine "ReXen Center.app"`).
+# bundle is not signed or notarized: Gatekeeper blocks the first start until
+# System Settings > Privacy & Security > Open Anyway (right-click > Open on
+# macOS 14 and earlier), or `xattr -dr com.apple.quarantine "ReXen Center.app"`.
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -23,6 +24,8 @@ if [ -n "${TARGET:-}" ]; then
     cargo build --manifest-path "$root/Cargo.toml" --release --locked -p xenadmin --target "$TARGET"
     bin="$root/target/$TARGET/release/$brand_bin"
     arch=${TARGET%%-*}
+    # Apple's name, as `uname -m` prints it on Apple Silicon.
+    [ "$arch" = aarch64 ] && arch=arm64
 else
     cargo build --manifest-path "$root/Cargo.toml" --release --locked -p xenadmin
     bin="$root/target/release/$brand_bin"

@@ -1,11 +1,12 @@
 [package]
 name = "xenadmin"
-description = "Desktop management console for XCP-ng / XAPI pools (egui)"
+description = "Desktop management console for XCP-ng pools"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+repository.workspace = true
 
 # The package keeps its development name; the program is ReXen Center's.
 [[bin]]
@@ -42,3 +43,78 @@ workspace = true
 # Embeds packaging/icons/icon.ico in the Windows executable (build.rs).
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# Linux packages, built by packaging/linux/build.sh with cargo-deb and
+# cargo-generate-rpm after a release build. The package, desktop entry and
+# icon names repeat APP_ID and BINARY_NAME from crates/xen-core/src/branding.rs;
+# build.sh fails when they drift apart. Run time: eframe loads the X11 or
+# Wayland, xkbcommon and OpenGL/EGL libraries with dlopen, so they are listed
+# by hand; the rest (glibc, libdbus for the Secret Service keyring) is found
+# from the binary. File dialogs use the XDG desktop portal and saved
+# passwords the Secret Service (GNOME Keyring, KWallet).
+[package.metadata.deb]
+name = "rexen-center"
+maintainer = "ReXen Center contributors"
+copyright = "2026, ReXen Center contributors"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+ReXen Center is a cross-platform management console for XCP-ng, written in \
+Rust and egui and derived from XCP-ng Center / XenAdmin 25.04: connect to \
+XCP-ng hosts, manage VMs, storage, networks and pools, and open VM consoles. \
+An independent community project, not an official XCP-ng, Vates or Citrix \
+product."""
+section = "admin"
+priority = "optional"
+depends = "$auto, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0, libwayland-cursor0, libwayland-egl1"
+recommends = "xdg-desktop-portal, gnome-keyring | kwalletmanager"
+assets = [
+    ["target/release/rexencenter", "usr/bin/", "755"],
+    ["../../packaging/linux/rexen-center.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/icons/icon.svg", "usr/share/icons/hicolor/scalable/apps/rexen-center.svg", "644"],
+    ["../../packaging/icons/png/icon-16.png", "usr/share/icons/hicolor/16x16/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-24.png", "usr/share/icons/hicolor/24x24/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-32.png", "usr/share/icons/hicolor/32x32/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-48.png", "usr/share/icons/hicolor/48x48/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-64.png", "usr/share/icons/hicolor/64x64/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-128.png", "usr/share/icons/hicolor/128x128/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-256.png", "usr/share/icons/hicolor/256x256/apps/rexen-center.png", "644"],
+    ["../../packaging/icons/png/icon-512.png", "usr/share/icons/hicolor/512x512/apps/rexen-center.png", "644"],
+    ["../../README.md", "usr/share/doc/rexen-center/README.md", "644"],
+]
+
+# Paths are relative to the workspace, where build.sh runs it.
+[package.metadata.generate-rpm]
+name = "rexen-center"
+assets = [
+    { source = "target/release/rexencenter", dest = "/usr/bin/rexencenter", mode = "755" },
+    { source = "packaging/linux/rexen-center.desktop", dest = "/usr/share/applications/rexen-center.desktop", mode = "644" },
+    { source = "packaging/icons/icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rexen-center.svg", mode = "644" },
+    { source = "packaging/icons/png/icon-16.png", dest = "/usr/share/icons/hicolor/16x16/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-24.png", dest = "/usr/share/icons/hicolor/24x24/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-32.png", dest = "/usr/share/icons/hicolor/32x32/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-64.png", dest = "/usr/share/icons/hicolor/64x64/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/rexen-center.png", mode = "644" },
+    { source = "packaging/icons/png/icon-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/rexen-center.png", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/rexen-center/LICENSE", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/rexen-center/README.md", mode = "644", doc = true },
+]
+
+# Shared library names, so any RPM distribution resolves them to its own packages.
+[package.metadata.generate-rpm.requires]
+"libGL.so.1()(64bit)" = "*"
+"libEGL.so.1()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libxkbcommon-x11.so.0()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libX11-xcb.so.1()(64bit)" = "*"
+"libXcursor.so.1()(64bit)" = "*"
+"libXi.so.6()(64bit)" = "*"
+"libXrandr.so.2()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libwayland-cursor.so.0()(64bit)" = "*"
+"libwayland-egl.so.1()(64bit)" = "*"
+
+[package.metadata.generate-rpm.recommends]
+xdg-desktop-portal = "*"

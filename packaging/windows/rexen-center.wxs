@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer, built by build.ps1 with the WiX Toolset 5 command
+  line (`wix build -arch x64 -d ...`). It installs rexencenter.exe and the
+  licence for all users under Program Files\<ProductName> and adds a Start
+  menu shortcut. Settings, saved passwords and logs are per user
+  (%APPDATA%\rexen-center, the Credential Manager) and are left in place on
+  uninstall.
+
+  Variables passed by build.ps1: ProductName, Version, BinFile, IconFile,
+  LicenseFile. Keep the UpgradeCode: it is what lets a newer installer
+  replace an older one.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="$(var.ProductName)"
+           Manufacturer="ReXen Center contributors"
+           Version="$(var.Version)"
+           UpgradeCode="62CAD1B0-309A-42EA-BA01-920D649B32AC"
+           Language="1033"
+           Scope="perMachine">
+    <SummaryInformation Description="$(var.ProductName) $(var.Version) installer" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/carcamano/rexen-center" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)">
+        <Component Id="MainExecutable">
+          <File Id="MainExe" Source="$(var.BinFile)" KeyPath="yes">
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="$(var.ProductName)"
+                      Description="Management console for XCP-ng"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Icon="AppIcon.ico"
+                      Advertise="yes" />
+          </File>
+        </Component>
+        <Component Id="LicenseText">
+          <File Id="LicenseFile" Source="$(var.LicenseFile)" Name="LICENSE.txt" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="$(var.ProductName)">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="LicenseText" />
+    </Feature>
+  </Package>
+</Wix>

@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "BSD-2-Clause"
 publish = false
+repository = "https://github.com/carcamano/rexen-center"
 
 [workspace.dependencies]
 xapi = { path = "crates/xapi" }
