@@ -609,6 +609,12 @@ fn real_macos_app_update() {
         "the running app checked: GET {} {:?}",
         check.path, check.headers
     );
+    // E2E_HOLD: seconds to leave it open (to look at its update button).
+    let hold = std::env::var("E2E_HOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    std::thread::sleep(Duration::from_secs(hold));
     let _ = old.kill();
     let _ = old.wait();
 
