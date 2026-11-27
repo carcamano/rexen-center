@@ -377,28 +377,76 @@ fn tag_of_parent(parent: Option<&GroupTag>) -> Option<String> {
     }
 }
 
+/// What a [`pull_down`] needs beside its label: the padding and the chevron.
+const PULL_DOWN_EXTRA: f32 = 36.0;
+
+/// A button opening a menu, as wide as `ui`, with a chevron at its right
+/// end (painted, so that the button's label stays `text`); `on` lights it.
+fn pull_down(ui: &mut Ui, text: &str, on: bool) -> egui::Response {
+    let height = ui.spacing().interact_size.y;
+    let response = ui.add(
+        Button::new(egui::RichText::new(text))
+            .selected(on)
+            .min_size(egui::vec2(ui.available_width(), height)),
+    );
+    let color = if on {
+        ui.visuals().selection.stroke.color
+    } else {
+        ui.visuals().text_color()
+    };
+    let c = egui::pos2(response.rect.right() - 10.0, response.rect.center().y);
+    let r = 3.0;
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(c.x - r, c.y - r / 2.0),
+            egui::pos2(c.x + r, c.y - r / 2.0),
+            egui::pos2(c.x, c.y + r / 2.0 + 0.5),
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
+    response
+}
+
 impl OrgUi {
-    /// The navigation buttons (`NavigationPane`).
+    /// The navigation pane (`NavigationPane`): Infrastructure and Objects as
+    /// tabs, Organization Views and Saved Searches as menus.
     pub fn nav_buttons(&mut self, ui: &mut Ui, state: &AppState) -> bool {
         let s = org_strings();
         let mut changed = false;
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .selectable_label(self.mode == NavMode::Infrastructure, s.nav_infrastructure)
-                .clicked()
-            {
-                self.mode = NavMode::Infrastructure;
-                changed = true;
-            }
-            if ui
-                .selectable_label(self.mode == NavMode::View(OrgView::Objects), s.nav_objects)
-                .clicked()
-            {
-                self.mode = NavMode::View(OrgView::Objects);
-                changed = true;
-            }
+        // Infrastructure and Objects show the whole tree two ways: tabs
+        // over the pane, as wide as it.
+        changed |= crate::controls::segmented_filling(
+            ui,
+            &mut self.mode,
+            [
+                (NavMode::Infrastructure, s.nav_infrastructure),
+                (NavMode::View(OrgView::Objects), s.nav_objects),
+            ],
+        );
+        ui.add_space(4.0);
+        // The organization views and the saved searches are menus of views:
+        // pull-down buttons, lit while one of their views shows; side by
+        // side when both labels fit, else one over the other.
+        let fits = |text: &str| {
+            let galley = egui::WidgetText::from(text).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Extend),
+                f32::INFINITY,
+                egui::TextStyle::Button,
+            );
+            galley.size().x + PULL_DOWN_EXTRA
+                <= (ui.available_width() - ui.spacing().item_spacing.x) / 2.0
+        };
+        let columns = if fits(s.nav_organization) && fits(s.nav_saved) {
+            2
+        } else {
+            1
+        };
+        ui.columns(columns, |columns| {
+            let last = columns.len() - 1;
             let org_on = matches!(self.mode, NavMode::View(v) if v != OrgView::Objects);
-            let org = ui.add(Button::new(s.nav_organization).selected(org_on));
+            let org = pull_down(&mut columns[0], s.nav_organization, org_on);
             egui::Popup::menu(&org).show(|ui| {
                 for (v, label) in [
                     (OrgView::Tags, s.nav_tags),
@@ -417,7 +465,10 @@ impl OrgUi {
                 }
             });
             let saved_on = matches!(self.mode, NavMode::Saved(_));
-            let saved = ui.add(Button::new(s.nav_saved).selected(saved_on));
+            if last == 0 {
+                columns[0].add_space(2.0);
+            }
+            let saved = pull_down(&mut columns[last], s.nav_saved, saved_on);
             egui::Popup::menu(&saved).show(|ui| {
                 let w = world(state);
                 for (_, search) in search_ui::all_searches(&w) {
@@ -1082,7 +1133,7 @@ impl OrgUi {
                     ui.label(fill(s.delete_field_prompt, &[("name", &definition.name)]));
                 }
             }
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 let label = match dialog {
                     OrgDialog::SaveSearch { .. } => s.save_button,
@@ -1870,7 +1921,8 @@ impl VmPropertiesDialog {
         let (mut ok, mut cancel) = (false, false);
         window(fill(s.vm_properties_title, &[("name", &self.original.0)])).show(ctx, |ui| {
             ui.set_width(700.0);
-            ui.horizontal_top(|ui| {
+            let mut divider = 0.0;
+            let row = ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(170.0);
                     let d = crate::dev_strings::dev_strings();
@@ -1892,16 +1944,11 @@ impl VmPropertiesDialog {
                             crate::dev_ui::VmUsbPage::subtext(&vm_rec),
                         ));
                     }
-                    for (p, title, sub) in pages {
-                        if ui
-                            .selectable_label(self.page == p, format!("{title}\n{sub}"))
-                            .clicked()
-                        {
-                            self.page = p;
-                        }
+                    if let Some(p) = crate::controls::page_list(ui, &self.page, pages) {
+                        self.page = p;
                     }
                 });
-                ui.add_space(12.0);
+                divider = crate::controls::divider_gap(ui);
                 ui.vertical(|ui| {
                     ui.set_width(500.0);
                     ScrollArea::vertical()
@@ -1948,7 +1995,8 @@ impl VmPropertiesDialog {
                         });
                 });
             });
-            ui.separator();
+            crate::controls::paint_divider(ui, divider, row.response.rect);
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 let can = !self.name.trim().is_empty() && self.editor.valid();
                 ok = row

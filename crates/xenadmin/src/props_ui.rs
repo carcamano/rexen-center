@@ -586,24 +586,26 @@ impl PropertiesDialog {
         }
         window(fill(s.props_title, &[("name", &self.object_name)])).show(ctx, |ui| {
             ui.set_width(740.0);
-            ui.horizontal_top(|ui| {
+            let mut divider = 0.0;
+            let row = ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(200.0);
                     ScrollArea::vertical()
                         .id_salt("props-pages")
                         .max_height(PAGE_HEIGHT)
                         .show(ui, |ui| {
-                            for page in self.pages.clone() {
-                                let text =
-                                    format!("{}\n{}", Self::page_title(page), self.subtext(page));
-                                if ui.selectable_label(self.page == page, text).clicked() {
-                                    self.page = page;
-                                    self.problem = None;
-                                }
+                            let pages: Vec<_> = self
+                                .pages
+                                .iter()
+                                .map(|&page| (page, Self::page_title(page), self.subtext(page)))
+                                .collect();
+                            if let Some(page) = crate::controls::page_list(ui, &self.page, pages) {
+                                self.page = page;
+                                self.problem = None;
                             }
                         });
                 });
-                ui.add_space(12.0); // a separator would stretch to the screen height
+                divider = crate::controls::divider_gap(ui);
                 ui.vertical(|ui| {
                     ui.set_width(500.0);
                     ScrollArea::vertical()
@@ -614,6 +616,7 @@ impl PropertiesDialog {
                         });
                 });
             });
+            crate::controls::paint_divider(ui, divider, row.response.rect);
             if let Some(p) = &self.problem {
                 ui.colored_label(ui.visuals().error_fg_color, p);
             }

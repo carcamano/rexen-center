@@ -771,8 +771,11 @@ questions and messages. Open an area to see what works:
   right end with Cancel before it on macOS, GNOME and the other Linux
   desktops, and the main action before Cancel on Windows and KDE Plasma.
   Path fields fill their row so their Browse... buttons line up at the
-  right. The detail tabs are a segmented control centred on the pane's top
-  line, as in a macOS tab view, so they no longer look like buttons;
+  right, and no line separates them from the contents. The detail tabs
+  are a segmented control centred on the pane's top line, as in a macOS
+  tab view, so they no longer look like buttons; Infrastructure and Objects
+  are tabs over the tree too. Properties dialogs list their pages as a
+  sidebar, and table headings are plain text with a sort chevron;
 - **macOS menu bar and unified title bar** (this console's own): on macOS
   the menus are in the system's menu bar, as Apple's Human Interface
   Guidelines ask, not in the window. The ReXen Center menu holds About

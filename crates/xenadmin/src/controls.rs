@@ -342,38 +342,76 @@ where
     Segments::new(ui, items).show(ui, selected)
 }
 
+/// [`segmented`] as wide as the space left, the segments sharing it
+/// equally: tabs over a pane as wide as they are.
+pub fn segmented_filling<T, S>(
+    ui: &mut Ui,
+    selected: &mut T,
+    items: impl IntoIterator<Item = (T, S)>,
+) -> bool
+where
+    T: PartialEq + Clone,
+    S: Into<WidgetText>,
+{
+    let width = ui.available_width();
+    Segments::filling(ui, width, items).show(ui, selected)
+}
+
 /// The segments of a [`tab_view`] or a [`segmented`] control.
 struct Segments<T> {
     items: Vec<(T, std::sync::Arc<egui::Galley>, String)>,
     height: f32,
+    /// Each segment's width when they share a given width equally.
+    equal: Option<f32>,
 }
 
 impl<T: PartialEq + Clone> Segments<T> {
     fn new<S: Into<WidgetText>>(ui: &Ui, items: impl IntoIterator<Item = (T, S)>) -> Self {
+        Self::build(ui, items, None)
+    }
+
+    /// Segments sharing `width` equally, their text cut short if it does
+    /// not fit.
+    fn filling<S: Into<WidgetText>>(
+        ui: &Ui,
+        width: f32,
+        items: impl IntoIterator<Item = (T, S)>,
+    ) -> Self {
+        let items: Vec<(T, S)> = items.into_iter().collect();
+        let each = ((width - 2.0 * SEGMENT_INSET) / items.len().max(1) as f32).max(1.0);
+        Self::build(ui, items, Some(each))
+    }
+
+    fn build<S: Into<WidgetText>>(
+        ui: &Ui,
+        items: impl IntoIterator<Item = (T, S)>,
+        equal: Option<f32>,
+    ) -> Self {
+        let (wrap, width) = match equal {
+            Some(each) => (TextWrapMode::Truncate, (each - 8.0).max(1.0)),
+            None => (TextWrapMode::Extend, f32::INFINITY),
+        };
         let items = items
             .into_iter()
             .map(|(value, text)| {
                 let text: WidgetText = text.into();
                 let label = text.text().to_owned();
-                let galley = text.into_galley(
-                    ui,
-                    Some(TextWrapMode::Extend),
-                    f32::INFINITY,
-                    TextStyle::Button,
-                );
+                let galley = text.into_galley(ui, Some(wrap), width, TextStyle::Button);
                 (value, galley, label)
             })
             .collect();
         Self {
             items,
             height: ui.spacing().interact_size.y + 2.0 * SEGMENT_INSET + 2.0,
+            equal,
         }
     }
 
     fn widths(&self) -> impl Iterator<Item = f32> + '_ {
-        self.items
-            .iter()
-            .map(|(_, galley, _)| galley.size().x + 2.0 * SEGMENT_PADDING)
+        self.items.iter().map(|(_, galley, _)| {
+            self.equal
+                .unwrap_or(galley.size().x + 2.0 * SEGMENT_PADDING)
+        })
     }
 
     fn size(&self) -> Vec2 {
@@ -482,6 +520,179 @@ impl<T: PartialEq + Clone> Segments<T> {
         }
         changed
     }
+}
+
+// ---- tables -----------------------------------------------------------------
+
+/// A table's column heading, as a macOS table header draws it: the title as
+/// plain text (no button frame), brighter under the pointer, and a chevron
+/// after it on the column the rows are sorted by (`sort`: `Some(true)`
+/// ascending). It fills its cell, which a click sorts by; the label stays
+/// `title` whatever the order.
+pub fn column_heading(ui: &mut Ui, title: &str, sort: Option<bool>) -> Response {
+    let galley = WidgetText::from(title).into_galley(
+        ui,
+        Some(TextWrapMode::Extend),
+        f32::INFINITY,
+        TextStyle::Body,
+    );
+    let chevron = 12.0;
+    let width = (galley.size().x + chevron).max(ui.available_width());
+    let height = galley.size().y.max(ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::ColumnHeader, true, title));
+    if let Some(ascending) = sort {
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_sort_direction(if ascending {
+                egui::accesskit::SortDirection::Ascending
+            } else {
+                egui::accesskit::SortDirection::Descending
+            });
+        });
+    }
+    let visuals = ui.visuals();
+    let color = if response.hovered() || sort.is_some() {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+    let painter = ui.painter();
+    let text_pos = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    let text_right = rect.left() + galley.size().x;
+    painter.galley(text_pos, galley, color);
+    if let Some(ascending) = sort {
+        let c = pos2(text_right + 8.0, rect.center().y);
+        let (w, h) = (3.5, 2.0);
+        let (tip, base) = if ascending { (-h, h) } else { (h, -h) };
+        painter.line(
+            vec![
+                pos2(c.x - w, c.y + base),
+                pos2(c.x, c.y + tip),
+                pos2(c.x + w, c.y + base),
+            ],
+            Stroke::new(1.5, color),
+        );
+    }
+    response
+}
+
+/// The line under a table's headings, across the table (`table`, the
+/// grid's rectangle) just below `headings_bottom`.
+pub fn paint_heading_rule(ui: &Ui, table: Rect, headings_bottom: f32) {
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    ui.painter()
+        .hline(table.x_range(), headings_bottom + 2.0, stroke);
+}
+
+// ---- a dialog's pages -------------------------------------------------------
+
+/// The space between a page's text and its row's edges.
+const PAGE_PADDING: Vec2 = vec2(8.0, 4.0);
+const PAGE_RADIUS: u8 = 6;
+
+/// A Properties dialog's list of pages, as the sidebar of macOS' System
+/// Settings: one row per page as wide as the column, the title over a
+/// smaller, dimmer summary (none when `subtitle` is empty), the selected
+/// row filled with the selection colour. Returns the page clicked, if
+/// another than `selected`.
+pub fn page_list<T, A, B>(
+    ui: &mut Ui,
+    selected: &T,
+    pages: impl IntoIterator<Item = (T, A, B)>,
+) -> Option<T>
+where
+    T: PartialEq,
+    A: AsRef<str>,
+    B: AsRef<str>,
+{
+    let mut chosen = None;
+    let width = ui.available_width();
+    let wrap = width - 2.0 * PAGE_PADDING.x;
+    for (value, title, subtitle) in pages {
+        let (title, subtitle) = (title.as_ref(), subtitle.as_ref());
+        let is_selected = value == *selected;
+        let title_galley = WidgetText::from(title).into_galley(
+            ui,
+            Some(TextWrapMode::Wrap),
+            wrap,
+            TextStyle::Body,
+        );
+        let sub_galley = (!subtitle.is_empty()).then(|| {
+            WidgetText::from(subtitle).into_galley(
+                ui,
+                Some(TextWrapMode::Wrap),
+                wrap,
+                TextStyle::Small,
+            )
+        });
+        let text_height =
+            title_galley.size().y + sub_galley.as_ref().map_or(0.0, |g| g.size().y + 1.0);
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(width, text_height + 2.0 * PAGE_PADDING.y),
+            Sense::click(),
+        );
+        let label = if subtitle.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}\n{subtitle}")
+        };
+        response.widget_info(|| WidgetInfo::labeled(Role::Tab, true, &label));
+        ui.ctx()
+            .accesskit_node_builder(response.id, |node| node.set_selected(is_selected));
+
+        let visuals = ui.visuals();
+        let (fill, title_color, sub_color) = if is_selected {
+            let on = visuals.selection.stroke.color;
+            (visuals.selection.bg_fill, on, on.gamma_multiply(0.8))
+        } else {
+            let fill = if response.hovered() {
+                visuals.widgets.hovered.weak_bg_fill
+            } else {
+                Color32::TRANSPARENT
+            };
+            (fill, visuals.text_color(), visuals.weak_text_color())
+        };
+        let painter = ui.painter();
+        painter.rect_filled(rect, PAGE_RADIUS, fill);
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                PAGE_RADIUS,
+                visuals.selection.stroke,
+                StrokeKind::Inside,
+            );
+        }
+        let mut pos = rect.min + PAGE_PADDING;
+        let title_height = title_galley.size().y;
+        painter.galley(pos, title_galley, title_color);
+        if let Some(g) = sub_galley {
+            pos.y += title_height + 1.0;
+            painter.galley(pos, g, sub_color);
+        }
+        if response.clicked() && !is_selected {
+            chosen = Some(value);
+        }
+    }
+    chosen
+}
+
+/// Leaves the gap for a line between a dialog's page list and its page in a
+/// row (`Ui::horizontal_top`); returns where the line goes, for
+/// [`paint_divider`] once the row is done. A separator there would grow to
+/// the screen's height in a dialog sized to its contents.
+pub fn divider_gap(ui: &mut Ui) -> f32 {
+    let gap = 8.0;
+    ui.add_space(gap);
+    let x = ui.cursor().left();
+    ui.add_space(gap);
+    x
+}
+
+/// Draws the line [`divider_gap`] left room for, at `x` down the `row`
+/// that `Ui::horizontal_top` returned.
+pub fn paint_divider(ui: &Ui, x: f32, row: Rect) {
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    ui.painter().vline(x, row.y_range(), stroke);
 }
 
 #[cfg(test)]
@@ -630,5 +841,60 @@ mod tests {
         h.run();
         assert_eq!(*h.state(), Page::Three);
         assert!(h.get_by_label("Three").accesskit_node().is_selected() == Some(true));
+    }
+
+    #[test]
+    fn page_lists_choose_a_page_and_name_it_with_its_summary() {
+        let mut h = Harness::builder()
+            .with_size(vec2(300.0, 200.0))
+            .build_ui_state(
+                |ui, page: &mut u8| {
+                    ui.set_width(160.0);
+                    let pages = [(1, "General", "web-01"), (2, "Custom Fields", "")];
+                    if let Some(p) = page_list(ui, page, pages) {
+                        *page = p;
+                    }
+                },
+                1,
+            );
+        h.run();
+        let general = h.get_by_label("General\nweb-01");
+        assert_eq!(general.accesskit_node().is_selected(), Some(true));
+        // A row is as wide as its column, not its text.
+        assert!(general.rect().width() >= 159.0, "{:?}", general.rect());
+        h.get_by_label("Custom Fields").click();
+        h.run();
+        assert_eq!(*h.state(), 2);
+        assert_eq!(
+            h.get_by_label("Custom Fields")
+                .accesskit_node()
+                .is_selected(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn column_headings_keep_their_title_and_say_the_order() {
+        let mut h = Harness::builder()
+            .with_size(vec2(300.0, 100.0))
+            .build_ui_state(
+                |ui, sorted: &mut Option<bool>| {
+                    ui.horizontal(|ui| {
+                        if column_heading(ui, "Name", *sorted).clicked() {
+                            *sorted = Some(!sorted.unwrap_or(false));
+                        }
+                    });
+                },
+                None,
+            );
+        h.run();
+        h.get_by_label("Name").click();
+        h.run();
+        assert_eq!(*h.state(), Some(true));
+        let node = h.get_by_label("Name");
+        assert_eq!(
+            node.accesskit_node().sort_direction(),
+            Some(egui::accesskit::SortDirection::Ascending)
+        );
     }
 }

@@ -681,7 +681,7 @@ impl ExportWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == ExportPage::Finish;
                 let (previous, next, cancel) = nav(
                     ui,
@@ -1632,7 +1632,7 @@ impl ImportWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == ImportPage::Finish;
                 let next_label = match self.page {
                     ImportPage::Storage => x.import_button,

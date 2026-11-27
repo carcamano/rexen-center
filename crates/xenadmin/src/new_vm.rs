@@ -592,7 +592,7 @@ impl NewVmWizard {
                             });
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 dialog_buttons(ui, |row| {
                     let index = PAGES.iter().position(|x| *x == self.page).unwrap_or(0);
                     if row

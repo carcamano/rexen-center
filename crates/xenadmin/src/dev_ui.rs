@@ -936,7 +936,7 @@ impl VtpmDialog {
                     }
                 });
             });
-            ui.separator();
+            ui.add_space(8.0);
             close = dialog_buttons(ui, |row| row.button(ButtonRole::Cancel, d.close).clicked());
         });
         close
@@ -1076,7 +1076,7 @@ impl MemoryDialog {
                             vms.iter_mut().for_each(|v| v.1 = false);
                         }
                     });
-                    ui.separator();
+                    ui.add_space(8.0);
                     dialog_buttons(ui, |row| {
                         if row
                             .add_enabled(ButtonRole::Primary, n > 0, Button::new(d.next))
@@ -1111,7 +1111,7 @@ impl MemoryDialog {
             if let Some(e) = self.edit.as_mut() {
                 memory_controls(ui, e);
             }
-            ui.separator();
+            ui.add_space(8.0);
             let mut apply = false;
             dialog_buttons(ui, |row| {
                 if let Some((_, page)) = &mut self.wizard {

@@ -210,7 +210,7 @@ impl ConfigureDialog {
                     );
                 }
             }
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 let ok_enabled = self.pending.is_none() && note != ConfigureNote::TooMany;
                 if row
@@ -459,7 +459,7 @@ impl IscsiDialog {
             if let Some(e) = &self.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 let config = self.device_config();
                 if row
@@ -1694,7 +1694,7 @@ impl DrWizard {
                         }
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 dialog_buttons(ui, |row| {
                     let first = index == 0;
                     let can_back = !first

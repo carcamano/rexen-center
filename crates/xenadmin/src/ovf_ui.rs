@@ -1169,7 +1169,7 @@ impl OvfImportWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == OvfPage::Finish;
                 let (previous, next, cancel) = nav(
                     ui,

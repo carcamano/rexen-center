@@ -850,7 +850,7 @@ impl HaWizard {
                             });
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 dialog_buttons(ui, |row| {
                     if row
                         .add_enabled(

@@ -484,7 +484,8 @@ fn properties_window(
     let mut save = false;
     window(&fill(s.properties_title, &[("name", &sr.name_label)])).show(ctx, |ui| {
         ui.set_min_width(560.0);
-        ui.horizontal_top(|ui| {
+        let mut divider = 0.0;
+        let row = ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(120.0);
                 let mut tabs = vec![
@@ -500,13 +501,12 @@ fn properties_window(
                 if d.read_caching.is_some() {
                     tabs.push((PropertiesTab::ReadCaching, s.tab_read_caching));
                 }
-                for (tab, label) in tabs {
-                    if ui.selectable_label(d.tab == tab, label).clicked() {
-                        d.tab = tab;
-                    }
+                let pages = tabs.into_iter().map(|(tab, label)| (tab, label, ""));
+                if let Some(tab) = crate::controls::page_list(ui, &d.tab, pages) {
+                    d.tab = tab;
                 }
             });
-            ui.separator();
+            divider = crate::controls::divider_gap(ui);
             ui.vertical(|ui| {
                 ui.set_min_width(400.0);
                 match d.tab {
@@ -561,7 +561,8 @@ fn properties_window(
                 }
             });
         });
-        ui.separator();
+        crate::controls::paint_divider(ui, divider, row.response.rect);
+        ui.add_space(8.0);
         dialog_buttons(ui, |row| {
             if row
                 .add_enabled(

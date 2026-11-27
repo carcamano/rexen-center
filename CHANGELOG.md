@@ -18,7 +18,20 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   are drawn as macOS draws a tab view: a segmented control centred on the
   line at the top of the pane, the selected tab raised, instead of buttons
   like the toolbar's. The Alerts and Events switch uses the same segmented
-  control.
+  control, and so do Infrastructure and Objects in the navigation pane;
+  Organization Views and Saved Searches become pull-down buttons with a
+  chevron (side by side when they fit, one over the other when not).
+- **Dialogs without a line over their buttons**: as on macOS and GNOME,
+  space separates a dialog's buttons from its contents.
+- **Properties page lists**: the pages of the Properties dialogs (pool,
+  server, VM, SR, network, vApp, snapshot policy) are a sidebar list as in
+  macOS' System Settings: rows as wide as the list, the title over a dimmer
+  summary, the selected row filled. The line between the list and the page
+  is as tall as the page; the SR, network, vApp and policy dialogs no longer
+  grow to the screen's height (and get cut off) because of it.
+- **Table headings**: the Search tab's column headings are plain text over a
+  line, as in a macOS table, with a chevron on the sorted column, instead of
+  buttons; names no longer wrap inside the Name column.
 
 ## 0.2.0 — 2026-11-27
 

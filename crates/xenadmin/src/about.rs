@@ -107,7 +107,6 @@ impl About {
                             });
                         });
                     ui.add_space(4.0);
-                    ui.separator();
                     ui.add_space(6.0);
                     close = dialog_buttons(ui, |row| {
                         row.add(

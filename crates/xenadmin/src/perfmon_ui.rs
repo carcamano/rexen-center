@@ -200,7 +200,7 @@ pub fn window(
             form_ui(ui, &mut d.form);
             ui.add_space(4.0);
             ui.label(RichText::new(summary(&d.form)).weak());
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 if row
                     .add_enabled(

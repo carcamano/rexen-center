@@ -753,7 +753,7 @@ impl NewPolicyWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = self.page == NewPage::Finish;
                 let (previous, next, cancel) = nav(
                     ui,
@@ -910,21 +910,21 @@ impl PolicyProperties {
             &[("name", &self.original.name_label)],
         ))
         .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
+            let mut divider = 0.0;
+            let row = ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(150.0);
-                    for (tab, label) in [
-                        (PropTab::General, s.tab_general),
-                        (PropTab::Vms, s.page_vms),
-                        (PropTab::Type, s.page_type),
-                        (PropTab::Schedule, s.page_schedule),
-                    ] {
-                        if ui.selectable_label(self.tab == tab, label).clicked() {
-                            self.tab = tab;
-                        }
+                    let pages = [
+                        (PropTab::General, s.tab_general, ""),
+                        (PropTab::Vms, s.page_vms, ""),
+                        (PropTab::Type, s.page_type, ""),
+                        (PropTab::Schedule, s.page_schedule, ""),
+                    ];
+                    if let Some(tab) = crate::controls::page_list(ui, &self.tab, pages) {
+                        self.tab = tab;
                     }
                 });
-                ui.separator();
+                divider = crate::controls::divider_gap(ui);
                 ui.vertical(|ui| {
                     ui.set_min_width(600.0);
                     egui::ScrollArea::vertical()
@@ -950,6 +950,7 @@ impl PolicyProperties {
                         });
                 });
             });
+            crate::controls::paint_divider(ui, divider, row.response.rect);
             if let Some(text) = self.warning.clone() {
                 ui.colored_label(ui.visuals().warn_fg_color, text);
                 ui.horizontal(|ui| {
@@ -965,7 +966,7 @@ impl PolicyProperties {
                     }
                 });
             }
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 let valid = !self.name.trim().is_empty() && self.schedule.choice.valid();
                 if row
@@ -1341,7 +1342,7 @@ impl ManagePolicies {
                     }
                 });
             }
-            ui.separator();
+            ui.add_space(8.0);
             dialog_buttons(ui, |row| {
                 if row.button(ButtonRole::Cancel, s.button_close).clicked() {
                     close = true;

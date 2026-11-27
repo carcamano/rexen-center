@@ -1585,7 +1585,7 @@ impl MigrateWizard {
                         error_label(ui, &self.error);
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 let last = index + 1 == pages.len();
                 let (previous, next, cancel) = nav(
                     ui,

@@ -706,7 +706,7 @@ impl NewSrWizard {
                             });
                     });
                 });
-                ui.separator();
+                ui.add_space(8.0);
                 dialog_buttons(ui, |row| {
                     // The probes' spinner, at the row's left end.
                     if self.probing() {

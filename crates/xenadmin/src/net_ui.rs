@@ -1390,7 +1390,7 @@ fn vif_window(
         if let Err(Some(text)) = valid {
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
-        ui.separator();
+        ui.add_space(8.0);
         dialog_buttons(ui, |row| {
             let ok = if d.existing.is_some() { n.ok } else { n.add };
             if row
@@ -1438,19 +1438,19 @@ fn properties_window(
     ))
     .show(ctx, |ui| {
         ui.set_min_width(600.0);
-        ui.horizontal_top(|ui| {
+        let mut divider = 0.0;
+        let row = ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(140.0);
-                for (tab, label) in [
-                    (PropertiesTab::General, n.tab_general),
-                    (PropertiesTab::Settings, n.tab_network_settings),
-                ] {
-                    if ui.selectable_label(d.tab == tab, label).clicked() {
-                        d.tab = tab;
-                    }
+                let pages = [
+                    (PropertiesTab::General, n.tab_general, ""),
+                    (PropertiesTab::Settings, n.tab_network_settings, ""),
+                ];
+                if let Some(tab) = crate::controls::page_list(ui, &d.tab, pages) {
+                    d.tab = tab;
                 }
             });
-            ui.separator();
+            divider = crate::controls::divider_gap(ui);
             ui.vertical(|ui| {
                 ui.set_min_width(420.0);
                 match d.tab {
@@ -1482,7 +1482,8 @@ fn properties_window(
                 }
             });
         });
-        ui.separator();
+        crate::controls::paint_divider(ui, divider, row.response.rect);
+        ui.add_space(8.0);
         dialog_buttons(ui, |row| {
             if row
                 .add_enabled(
@@ -1708,7 +1709,7 @@ fn ip_window(
                 ip_page(ui, m, d, show_hidden);
             });
         });
-        ui.separator();
+        ui.add_space(8.0);
         dialog_buttons(ui, |row| {
             if row
                 .add_enabled(ButtonRole::Primary, d.valid(m), Button::new(n.ok))
@@ -1908,7 +1909,7 @@ fn bond_window(
             return;
         }
         form.ui(ui, m, "create-bond");
-        ui.separator();
+        ui.add_space(8.0);
         dialog_buttons(ui, |row| {
             if row
                 .add_enabled(ButtonRole::Primary, form.valid(m), Button::new(n.create))
