@@ -75,6 +75,7 @@ mod vapp_strings;
 mod vapp_ui;
 mod vmss_strings;
 mod vmss_ui;
+mod window_frame;
 mod xva_strings;
 mod xva_ui;
 
@@ -140,8 +141,13 @@ fn main() -> eframe::Result<()> {
         .expect("failed to start the async runtime");
     let handle = runtime.handle().clone();
 
+    // GNOME and KDE Plasma: the window draws its own title bar.
+    let window_frame = window_frame::detect();
+    if let Some(frame) = &window_frame {
+        tracing::info!(flavor = ?frame.flavor, layout = ?frame.layout, "own title bar");
+    }
     let options = eframe::NativeOptions {
-        viewport: viewport(),
+        viewport: viewport(window_frame.is_some()),
         ..Default::default()
     };
     let store = Arc::new(store);
@@ -167,7 +173,9 @@ fn main() -> eframe::Result<()> {
                 },
                 Arc::new(move || ctx.request_repaint()),
             );
-            Ok(Box::new(app::XenAdminApp::new(backend)))
+            Ok(Box::new(
+                app::XenAdminApp::new(backend).with_window_frame(window_frame),
+            ))
         }),
     );
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
@@ -298,14 +306,18 @@ fn run_mcp(
     code
 }
 
-/// The main window: titled with the product's name.
-fn viewport() -> egui::ViewportBuilder {
+/// The main window: titled with the product's name. With `own_title_bar`
+/// (GNOME, KDE Plasma) it has no system frame and a transparent background,
+/// so that the title bar drawn by the app gives it rounded corners.
+fn viewport(own_title_bar: bool) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_title(branding::PRODUCT_NAME)
         .with_app_id(branding::APP_ID)
         .with_inner_size([1100.0, 760.0])
         .with_min_inner_size([640.0, 400.0])
         .with_icon(window_icon())
+        .with_decorations(!own_title_bar)
+        .with_transparent(own_title_bar)
 }
 
 /// The application icon ([`branding::ICON_PNG`]).
@@ -348,9 +360,15 @@ mod tests {
 
     #[test]
     fn the_window_is_titled_with_the_product_name() {
-        let viewport = viewport();
+        let viewport = viewport(false);
         assert_eq!(viewport.title.as_deref(), Some("ReXen Center"));
         assert_eq!(viewport.app_id.as_deref(), Some("rexen-center"));
+        assert_eq!(viewport.decorations, Some(true));
+        let own = super::viewport(true);
+        assert_eq!(
+            (own.decorations, own.transparent),
+            (Some(false), Some(true))
+        );
         assert_eq!(
             branding::originator(),
             format!("rexen-center/{}", branding::VERSION)

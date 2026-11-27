@@ -37,6 +37,7 @@ use crate::sr_strings::sr_strings;
 use crate::storage_ui::{self, StorageUi};
 use crate::tab_strings::tab_strings;
 use crate::tabs::{self, Subject, Tab};
+use crate::window_frame::WindowFrame;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Selection {
@@ -176,6 +177,9 @@ pub struct XenAdminApp {
     /// The theme and language last applied from the preferences.
     applied_theme: Option<xen_core::ThemeSetting>,
     applied_language: Option<String>,
+    /// The title bar drawn by the app on GNOME and KDE Plasma (`None`: the
+    /// system's frame).
+    window_frame: Option<WindowFrame>,
 }
 
 /// The views of the notifications area (the original's Alerts and Events).
@@ -229,11 +233,18 @@ impl XenAdminApp {
             last_selection: None,
             applied_theme: None,
             applied_language: None,
+            window_frame: None,
         };
         if !restoring {
             app.open_connect_dialog(&state, None);
         }
         app
+    }
+
+    /// Draws the window's own title bar (the window has no system frame).
+    pub fn with_window_frame(mut self, frame: Option<WindowFrame>) -> Self {
+        self.window_frame = frame;
+        self
     }
 
     fn drain_notifications(&mut self) {
@@ -533,175 +544,193 @@ impl XenAdminApp {
 
     // ---- panels -----------------------------------------------------------
 
+    /// The menus and the toolbar; on GNOME and KDE Plasma the menus are in
+    /// the title bar.
     fn menu_bar(&mut self, ui: &mut Ui, state: &AppState) {
+        if let Some(mut frame) = self.window_frame.take() {
+            frame.title_bar(ui, branding::PRODUCT_NAME, |ui| self.menus(ui, state));
+            self.window_frame = Some(frame);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(8, 0))
+                .show(ui, |ui| self.toolbar(ui, state));
+        } else {
+            egui::MenuBar::new().ui(ui, |ui| self.menus(ui, state));
+            self.toolbar(ui, state);
+        }
+        ui.add_space(2.0);
+    }
+
+    fn menus(&mut self, ui: &mut Ui, state: &AppState) {
         let s = strings();
         let selected_conn = self
             .selection
             .as_ref()
             .and_then(Selection::connection)
             .filter(|c| state.connection(*c).is_some());
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(s.menu_file, |ui| {
-                if ui.button(s.menu_connect).clicked() {
-                    self.actions.push(Action::OpenConnect {
-                        server: String::new(),
-                        username: "root".to_owned(),
-                    });
-                    ui.close();
+        ui.menu_button(s.menu_file, |ui| {
+            if ui.button(s.menu_connect).clicked() {
+                self.actions.push(Action::OpenConnect {
+                    server: String::new(),
+                    username: "root".to_owned(),
+                });
+                ui.close();
+            }
+            if ui
+                .add_enabled(selected_conn.is_some(), Button::new(s.menu_disconnect))
+                .clicked()
+                && let Some(connection) = selected_conn
+            {
+                self.actions
+                    .push(Action::Send(Command::Disconnect { connection }));
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    !state.connections.is_empty(),
+                    Button::new(s.menu_disconnect_all),
+                )
+                .clicked()
+            {
+                for conn in &state.connections {
+                    self.actions.push(Action::Send(Command::Disconnect {
+                        connection: conn.id,
+                    }));
                 }
-                if ui
-                    .add_enabled(selected_conn.is_some(), Button::new(s.menu_disconnect))
-                    .clicked()
-                    && let Some(connection) = selected_conn
-                {
-                    self.actions
-                        .push(Action::Send(Command::Disconnect { connection }));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        !state.connections.is_empty(),
-                        Button::new(s.menu_disconnect_all),
-                    )
-                    .clicked()
-                {
-                    for conn in &state.connections {
-                        self.actions.push(Action::Send(Command::Disconnect {
-                            connection: conn.id,
-                        }));
-                    }
-                    ui.close();
-                }
-                ui.separator();
-                let any_connected = state.connections.iter().any(|c| c.status.is_connected());
-                if ui
-                    .add_enabled(
-                        any_connected,
-                        Button::new(crate::xva_strings::xva_strings().menu_import),
-                    )
-                    .clicked()
-                {
-                    // `ImportCommand` with the selection as the home server.
-                    let target = match &self.selection {
-                        Some(Selection::Host(c, h)) => Some((*c, Some(h.clone()))),
-                        _ => selected_conn.map(|c| (c, None)),
-                    };
-                    self.xva.open_import(target);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(s.menu_quit).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.menu_button(s.menu_view, |ui| {
-                ui.checkbox(&mut self.events_open, s.menu_events);
-                ui.separator();
-                let t = tab_strings();
-                let mut prefs = state.settings.preferences.clone();
-                ui.checkbox(&mut prefs.show_user_templates, t.view_custom_templates);
-                ui.checkbox(&mut prefs.show_default_templates, t.view_default_templates);
-                ui.checkbox(&mut prefs.show_local_storage, t.view_local_storage);
-                ui.checkbox(&mut prefs.show_snapshots, t.view_snapshots);
-                ui.checkbox(&mut prefs.show_hidden_objects, t.view_hidden);
-                if prefs != state.settings.preferences {
-                    self.actions
-                        .push(Action::Send(Command::SetPreferences(prefs)));
-                }
-            });
-            ui.menu_button(pool_strings().menu_pool, |ui| {
-                let conn = self
-                    .selected_connection(state)
-                    .or_else(|| state.connections.first().map(|c| &**c));
-                let Some(conn) = conn else {
-                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
-                    return;
+                ui.close();
+            }
+            ui.separator();
+            let any_connected = state.connections.iter().any(|c| c.status.is_connected());
+            if ui
+                .add_enabled(
+                    any_connected,
+                    Button::new(crate::xva_strings::xva_strings().menu_import),
+                )
+                .clicked()
+            {
+                // `ImportCommand` with the selection as the home server.
+                let target = match &self.selection {
+                    Some(Selection::Host(c, h)) => Some((*c, Some(h.clone()))),
+                    _ => selected_conn.map(|c| (c, None)),
                 };
-                let entries = pool_ui::pool_entries(state, conn);
-                self.ops.menu(ui, conn, None, entries, false, &self.backend);
-            });
-            ui.menu_button(s.menu_vm, |ui| {
-                let Some(conn) = self.selected_connection(state) else {
-                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
-                    return;
-                };
-                let mut entries = vec![provision_ui::new_vm_entry(conn, None)];
-                let mut vm_arg = None;
-                if let Some((_, r, vm)) = self.selected_vm(state) {
-                    entries.push(Entry::Separator);
-                    if model::is_guest(vm) {
-                        entries.extend(ops_ui::vm_entries(conn, &r, vm));
-                        entries.extend(provision_ui::vm_entries(conn, &r, vm));
-                        entries.push(crate::xva_ui::export_entry(
-                            state,
-                            conn,
-                            std::slice::from_ref(&r),
-                            false,
-                        ));
-                        if xen_core::devices::vtpm_supported(&conn.model) {
-                            let can = xen_core::devices::vtpm_command(&conn.model, vm);
-                            entries.push(Entry::Separator);
-                            entries.push(Entry::Named {
-                                label: crate::dev_strings::dev_strings().vtpm_menu.to_owned(),
-                                enabled: can.is_ok(),
-                                hint: can
-                                    .err()
-                                    .and_then(crate::dev_strings::vtpm_unavailable_text)
-                                    .map(str::to_owned),
-                                dialog: crate::provision_ui::DialogRequest::ManageVtpm(r.clone()),
-                            });
-                        }
-                    } else {
-                        entries.extend(provision_ui::template_entries(conn, &r, vm));
-                    }
-                    vm_arg = Some((r, vm.clone()));
-                }
-                let vm_arg = vm_arg.as_ref().map(|(r, v)| (r, &**v));
-                self.ops
-                    .menu(ui, conn, vm_arg, entries, false, &self.backend);
-            });
-            ui.menu_button(ops_strings().menu_server, |ui| {
-                match self.selected_host(state) {
-                    Some((conn, r, host)) => {
-                        let mut entries = ops_ui::host_entries(conn, &r, host);
-                        entries.extend(pool_ui::host_entries(state, conn, &r, host));
-                        self.ops.menu(ui, conn, None, entries, false, &self.backend);
-                    }
-                    None => {
-                        ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
-                    }
-                }
-            });
-            ui.menu_button(sr_strings().menu_storage, |ui| {
-                let Some(conn) = self.selected_connection(state) else {
-                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
-                    return;
-                };
-                let mut entries = vec![storage_ui::new_sr_entry(conn)];
-                if let Some(Selection::Sr(_, r)) = &self.selection
-                    && let Some(sr) = conn.model.srs.get(r)
-                {
-                    entries.push(Entry::Separator);
-                    entries.extend(storage_ui::sr_entries(conn, r, sr));
-                }
-                self.ops.menu(ui, conn, None, entries, false, &self.backend);
-            });
-            ui.menu_button(s.menu_tools, |ui| {
-                if ui.button(s.menu_options).clicked() {
-                    self.options_open = true;
-                    ui.close();
-                }
-            });
-            ui.menu_button(s.menu_help, |ui| {
-                if ui
-                    .button(format!("{} {}", s.menu_about, branding::PRODUCT_NAME))
-                    .clicked()
-                {
-                    self.about.open = true;
-                    ui.close();
-                }
-            });
+                self.xva.open_import(target);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(s.menu_quit).clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         });
+        ui.menu_button(s.menu_view, |ui| {
+            ui.checkbox(&mut self.events_open, s.menu_events);
+            ui.separator();
+            let t = tab_strings();
+            let mut prefs = state.settings.preferences.clone();
+            ui.checkbox(&mut prefs.show_user_templates, t.view_custom_templates);
+            ui.checkbox(&mut prefs.show_default_templates, t.view_default_templates);
+            ui.checkbox(&mut prefs.show_local_storage, t.view_local_storage);
+            ui.checkbox(&mut prefs.show_snapshots, t.view_snapshots);
+            ui.checkbox(&mut prefs.show_hidden_objects, t.view_hidden);
+            if prefs != state.settings.preferences {
+                self.actions
+                    .push(Action::Send(Command::SetPreferences(prefs)));
+            }
+        });
+        ui.menu_button(pool_strings().menu_pool, |ui| {
+            let conn = self
+                .selected_connection(state)
+                .or_else(|| state.connections.first().map(|c| &**c));
+            let Some(conn) = conn else {
+                ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                return;
+            };
+            let entries = pool_ui::pool_entries(state, conn);
+            self.ops.menu(ui, conn, None, entries, false, &self.backend);
+        });
+        ui.menu_button(s.menu_vm, |ui| {
+            let Some(conn) = self.selected_connection(state) else {
+                ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                return;
+            };
+            let mut entries = vec![provision_ui::new_vm_entry(conn, None)];
+            let mut vm_arg = None;
+            if let Some((_, r, vm)) = self.selected_vm(state) {
+                entries.push(Entry::Separator);
+                if model::is_guest(vm) {
+                    entries.extend(ops_ui::vm_entries(conn, &r, vm));
+                    entries.extend(provision_ui::vm_entries(conn, &r, vm));
+                    entries.push(crate::xva_ui::export_entry(
+                        state,
+                        conn,
+                        std::slice::from_ref(&r),
+                        false,
+                    ));
+                    if xen_core::devices::vtpm_supported(&conn.model) {
+                        let can = xen_core::devices::vtpm_command(&conn.model, vm);
+                        entries.push(Entry::Separator);
+                        entries.push(Entry::Named {
+                            label: crate::dev_strings::dev_strings().vtpm_menu.to_owned(),
+                            enabled: can.is_ok(),
+                            hint: can
+                                .err()
+                                .and_then(crate::dev_strings::vtpm_unavailable_text)
+                                .map(str::to_owned),
+                            dialog: crate::provision_ui::DialogRequest::ManageVtpm(r.clone()),
+                        });
+                    }
+                } else {
+                    entries.extend(provision_ui::template_entries(conn, &r, vm));
+                }
+                vm_arg = Some((r, vm.clone()));
+            }
+            let vm_arg = vm_arg.as_ref().map(|(r, v)| (r, &**v));
+            self.ops
+                .menu(ui, conn, vm_arg, entries, false, &self.backend);
+        });
+        ui.menu_button(ops_strings().menu_server, |ui| {
+            match self.selected_host(state) {
+                Some((conn, r, host)) => {
+                    let mut entries = ops_ui::host_entries(conn, &r, host);
+                    entries.extend(pool_ui::host_entries(state, conn, &r, host));
+                    self.ops.menu(ui, conn, None, entries, false, &self.backend);
+                }
+                None => {
+                    ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                }
+            }
+        });
+        ui.menu_button(sr_strings().menu_storage, |ui| {
+            let Some(conn) = self.selected_connection(state) else {
+                ui.add_enabled(false, Button::new(ops_strings().host_menu_empty));
+                return;
+            };
+            let mut entries = vec![storage_ui::new_sr_entry(conn)];
+            if let Some(Selection::Sr(_, r)) = &self.selection
+                && let Some(sr) = conn.model.srs.get(r)
+            {
+                entries.push(Entry::Separator);
+                entries.extend(storage_ui::sr_entries(conn, r, sr));
+            }
+            self.ops.menu(ui, conn, None, entries, false, &self.backend);
+        });
+        ui.menu_button(s.menu_tools, |ui| {
+            if ui.button(s.menu_options).clicked() {
+                self.options_open = true;
+                ui.close();
+            }
+        });
+        ui.menu_button(s.menu_help, |ui| {
+            if ui
+                .button(format!("{} {}", s.menu_about, branding::PRODUCT_NAME))
+                .clicked()
+            {
+                self.about.open = true;
+                ui.close();
+            }
+        });
+    }
+
+    fn toolbar(&mut self, ui: &mut Ui, state: &AppState) {
+        let s = strings();
         ui.horizontal(|ui| {
             if ui.button(s.menu_connect).clicked() {
                 self.actions.push(Action::OpenConnect {
@@ -712,7 +741,6 @@ impl XenAdminApp {
             ui.separator();
             self.selection_buttons(ui, state);
         });
-        ui.add_space(2.0);
     }
 
     fn status_bar(&self, ui: &mut Ui, state: &AppState) {
@@ -2153,7 +2181,8 @@ impl eframe::App for XenAdminApp {
         self.performance
             .retain(shown_perf.as_ref(), |c| state.connection(c).is_some());
         let titles = |key: &ConsoleKey| console_title(&state, key);
-        self.consoles.windows(&ctx, titles);
+        self.consoles
+            .windows(&ctx, titles, self.window_frame.as_mut());
         if self.consoles.fullscreen_ui(ui) {
             self.ops.windows(&ctx, &state, &self.backend);
             self.apply_actions(&state);
@@ -2163,8 +2192,14 @@ impl eframe::App for XenAdminApp {
             self.org.imported = None;
             self.last_selection = self.selection.clone();
         }
-        Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &state));
-        Panel::bottom("status").show(ui, |ui| self.status_bar(ui, &state));
+        let (mut top, mut bottom) = (Panel::top("menu"), Panel::bottom("status"));
+        if let Some(frame) = &self.window_frame {
+            top = top.frame(frame.top_panel_frame(ui));
+            let status = egui::Frame::side_top_panel(ui.style());
+            bottom = bottom.frame(frame.bottom_corners(ui, status));
+        }
+        top.show(ui, |ui| self.menu_bar(ui, &state));
+        bottom.show(ui, |ui| self.status_bar(ui, &state));
         let mut moving = false;
         if self.events_open {
             Panel::bottom("events")
@@ -2305,6 +2340,19 @@ impl eframe::App for XenAdminApp {
             .any(|c| matches!(c.status, ConnectionStatus::Reconnecting { .. }));
         if moving || reconnecting {
             ctx.request_repaint_after(Duration::from_secs(1));
+        }
+        if let Some(frame) = &self.window_frame {
+            frame.edges(&ctx);
+        }
+    }
+
+    /// With the app's own title bar the window is transparent outside its
+    /// rounded corners.
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if self.window_frame.is_some() {
+            [0.0; 4]
+        } else {
+            visuals.panel_fill.to_normalized_gamma_f32()
         }
     }
 

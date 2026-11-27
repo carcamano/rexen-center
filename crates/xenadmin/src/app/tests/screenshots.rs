@@ -27,6 +27,7 @@ use crate::console_view::ConsoleKey;
 use crate::perf_strings::perf_strings;
 use crate::prov_strings::prov_strings;
 use crate::tab_strings::tab_strings;
+use crate::window_frame::WindowFrame;
 
 /// The window size of every screenshot, in points.
 const SIZE: egui::Vec2 = egui::vec2(1280.0, 800.0);
@@ -58,6 +59,14 @@ admin@db-01:~$ \u{2588}";
 /// The app at [`SIZE`] and [`SCALE`], rendered with wgpu, over an
 /// in-memory store (as [`app_harness_with`]).
 fn screenshot_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, XenAdminApp> {
+    framed_screenshot_harness(runtime, None)
+}
+
+/// [`screenshot_harness`] with the app's own title bar.
+fn framed_screenshot_harness(
+    runtime: &tokio::runtime::Runtime,
+    frame: Option<WindowFrame>,
+) -> Harness<'static, XenAdminApp> {
     let handle = runtime.handle().clone();
     Harness::builder()
         .with_size(SIZE)
@@ -77,6 +86,7 @@ fn screenshot_harness(runtime: &tokio::runtime::Runtime) -> Harness<'static, Xen
                 options,
                 Arc::new(move || ctx.request_repaint()),
             ))
+            .with_window_frame(frame)
         })
 }
 
@@ -254,4 +264,58 @@ fn readme_screenshots() {
         h.query_by_label(s.about_credits).is_some()
     });
     shoot(&mut h, &dir, "about-light.png");
+}
+
+/// The title bar drawn on GNOME and KDE Plasma, light and dark, with a
+/// button under the pointer: for checking its look by eye.
+///
+/// ```text
+/// REXEN_SCREENSHOTS_DIR=/some/dir cargo test -p xenadmin \
+///   --features readme-screenshots title_bar_screenshots -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "writes title bar screenshots to REXEN_SCREENSHOTS_DIR"]
+fn title_bar_screenshots() {
+    use crate::window_frame::{Control, Flavor};
+    let dir =
+        PathBuf::from(std::env::var("REXEN_SCREENSHOTS_DIR").expect("set REXEN_SCREENSHOTS_DIR"));
+    std::fs::create_dir_all(&dir).expect("the screenshot folder");
+    let runtime = runtime();
+    let s = strings();
+    let mut gnome = WindowFrame::new(Flavor::Gnome);
+    gnome.layout.right = vec![Control::Minimize, Control::Maximize, Control::Close];
+    let mut gnome_left = WindowFrame::new(Flavor::Gnome);
+    gnome_left.layout.left = vec![Control::Close, Control::Minimize, Control::Maximize];
+    gnome_left.layout.right = vec![Control::Icon];
+    let kde = WindowFrame::new(Flavor::Kde);
+    let shots = [
+        ("gnome", gnome.clone(), ThemeSetting::Light, None),
+        ("gnome", gnome, ThemeSetting::Dark, Some(s.window_close)),
+        (
+            "gnome-left",
+            gnome_left,
+            ThemeSetting::Light,
+            Some(s.window_minimize),
+        ),
+        (
+            "kde",
+            kde.clone(),
+            ThemeSetting::Light,
+            Some(s.window_minimize),
+        ),
+        ("kde", kde, ThemeSetting::Dark, Some(s.window_close)),
+    ];
+    for (name, frame, theme, hovered) in shots {
+        let mut h = framed_screenshot_harness(&runtime, Some(frame));
+        set_theme(&mut h, theme);
+        if let Some(label) = hovered {
+            h.get_by_label(label).hover();
+        }
+        let theme = if theme == ThemeSetting::Dark {
+            "dark"
+        } else {
+            "light"
+        };
+        shoot(&mut h, &dir, &format!("title-bar-{name}-{theme}.png"));
+    }
 }
