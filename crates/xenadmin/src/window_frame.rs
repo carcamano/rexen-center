@@ -1,5 +1,6 @@
-//! The window's own title bar on GNOME and KDE Plasma (this console's own;
-//! the original was a Windows Forms window with the system's frame).
+//! The window's own title bar on Windows, GNOME and KDE Plasma (this
+//! console's own; the original was a Windows Forms window with the system's
+//! frame).
 //!
 //! Under GNOME the compositor draws no title bars (applications draw their
 //! own), so winit falls back to a plain frame of its own that matches no
@@ -10,9 +11,24 @@
 //! desktop's settings put them (`button-layout` in GNOME,
 //! `ButtonsOnLeft`/`ButtonsOnRight` in `kwinrc`). Dragging the bar moves the
 //! window; double-, middle- and right-clicks do what the desktop's settings
-//! say; the window's edges resize it. Other desktops and platforms keep the
-//! system's frame. `REXENCENTER_TITLE_BAR` overrides the choice: `system`
-//! keeps the system's frame, `gnome` or `kde` force that look.
+//! say; the window's edges resize it.
+//!
+//! On Windows the menus move into the title bar too, as in Office or Visual
+//! Studio Code, following Microsoft's guidance for custom title bars: a
+//! 32-pixel bar with the icon on the left, the title, and Windows 11's
+//! 46×32 Minimize, Maximize (Restore) and Close buttons on the right.
+//! Dragging the bar moves the window with the system's move loop, so Snap
+//! still works; double-clicking it maximizes or restores; right-clicking it
+//! or clicking the icon opens the window menu; double-clicking the icon
+//! closes. The system keeps drawing the window's shadow, border and rounded
+//! corners (winit's undecorated shadow, which eframe asks for on borderless
+//! windows). Snap Layouts, the flyout over the Maximize button, needs the
+//! window to answer `WM_NCHITTEST` with `HTMAXBUTTON`, which winit has no
+//! way to do without unsafe code: it is left out (Win+Z still opens it).
+//!
+//! macOS and other desktops keep the system's frame.
+//! `REXENCENTER_TITLE_BAR` overrides the choice: `system` keeps the system's
+//! frame, `gnome`, `kde` or `windows` force that look on any platform.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +41,7 @@ use egui::{
 
 use crate::i18n::strings;
 
-/// Overrides the title bar: `system`, `gnome` or `kde`.
+/// Overrides the title bar: `system`, `gnome`, `kde` or `windows`.
 pub const TITLE_BAR_ENV: &str = "REXENCENTER_TITLE_BAR";
 
 /// Whose look the title bar takes.
@@ -35,13 +51,15 @@ pub enum Flavor {
     Gnome,
     /// KDE Plasma's (the Breeze window decoration).
     Kde,
+    /// Windows 11's (a custom title bar as Microsoft's guidance draws it).
+    Windows,
 }
 
 /// A button of the title bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
-    /// The application's icon (GNOME's `icon`; KDE's `M`, which opens the
-    /// window menu).
+    /// The application's icon (GNOME's `icon`; KDE's `M` and Windows' icon,
+    /// which open the window menu).
     Icon,
     Minimize,
     Maximize,
@@ -85,6 +103,7 @@ impl WindowFrame {
         match flavor {
             Flavor::Gnome => gnome_frame(""),
             Flavor::Kde => kde_frame(""),
+            Flavor::Windows => windows_frame(),
         }
     }
 }
@@ -92,28 +111,42 @@ impl WindowFrame {
 /// The title bar for this session, or `None` to keep the system's frame.
 pub fn detect() -> Option<WindowFrame> {
     let forced = std::env::var(TITLE_BAR_ENV).unwrap_or_default();
-    let flavor = match forced.trim().to_ascii_lowercase().as_str() {
-        "" => {
-            if !cfg!(all(unix, not(target_os = "macos"))) {
-                return None;
-            }
-            flavor_of(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())?
-        }
-        "system" => return None,
-        "gnome" => Flavor::Gnome,
-        "kde" => Flavor::Kde,
+    Some(match chosen_flavor(&forced, platform_flavor)? {
+        Flavor::Gnome => gnome_frame(&gnome_settings()),
+        Flavor::Kde => kde_frame(&kwinrc_text()),
+        Flavor::Windows => windows_frame(),
+    })
+}
+
+/// The flavor `REXENCENTER_TITLE_BAR` (`forced`) asks for, or the
+/// platform's own when it is unset; `None` keeps the system's frame.
+fn chosen_flavor(forced: &str, platform: impl FnOnce() -> Option<Flavor>) -> Option<Flavor> {
+    match forced.trim().to_ascii_lowercase().as_str() {
+        "" => platform(),
+        "system" => None,
+        "gnome" => Some(Flavor::Gnome),
+        "kde" => Some(Flavor::Kde),
+        "windows" => Some(Flavor::Windows),
         other => {
             tracing::warn!(
                 value = other,
-                "{TITLE_BAR_ENV}: expected system, gnome or kde"
+                "{TITLE_BAR_ENV}: expected system, gnome, kde or windows"
             );
-            return None;
+            None
         }
-    };
-    Some(match flavor {
-        Flavor::Gnome => gnome_frame(&gnome_settings()),
-        Flavor::Kde => kde_frame(&kwinrc_text()),
-    })
+    }
+}
+
+/// The platform's own title bar: Windows' on Windows, GNOME's or KDE's on
+/// those desktops; none (the system's frame) on macOS and other desktops.
+fn platform_flavor() -> Option<Flavor> {
+    if cfg!(windows) {
+        Some(Flavor::Windows)
+    } else if cfg!(all(unix, not(target_os = "macos"))) {
+        flavor_of(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+    } else {
+        None
+    }
 }
 
 /// GNOME or KDE from `XDG_CURRENT_DESKTOP` (a colon-separated list, such as
@@ -314,6 +347,25 @@ fn kde_action(value: &str) -> TitleAction {
     }
 }
 
+// ---- Windows ----------------------------------------------------------------
+
+/// Windows' title bar, which has no settings: the icon on the left,
+/// Minimize, Maximize and Close on the right; double-click maximizes or
+/// restores, right-click opens the window menu (as the system's title bar).
+fn windows_frame() -> WindowFrame {
+    WindowFrame {
+        flavor: Flavor::Windows,
+        layout: ButtonLayout {
+            left: vec![Control::Icon],
+            right: vec![Control::Minimize, Control::Maximize, Control::Close],
+        },
+        double_click: TitleAction::ToggleMaximize,
+        middle_click: TitleAction::Nothing,
+        right_click: TitleAction::Menu,
+        icon: None,
+    }
+}
+
 // ---- drawing ----------------------------------------------------------------
 
 /// Sizes of the bar and its buttons, in points.
@@ -321,10 +373,12 @@ struct Look {
     height: f32,
     /// The window's corner radius (when not maximized).
     radius: u8,
-    /// From the window's edge to the outermost button.
-    edge: f32,
-    /// A button's clickable size, and the gap between two.
-    slot: f32,
+    /// From the window's left and right edges to the outermost button.
+    left_edge: f32,
+    right_edge: f32,
+    /// A window button's clickable size (the icon's is square, as high as
+    /// this), and the gap between two.
+    slot: Vec2,
     gap: f32,
 }
 
@@ -336,17 +390,31 @@ impl Flavor {
             Flavor::Gnome => Look {
                 height: 46.0,
                 radius: 12,
-                edge: 6.0,
-                slot: 34.0,
+                left_edge: 6.0,
+                right_edge: 6.0,
+                slot: Vec2::splat(34.0),
                 gap: 3.0,
             },
             // Breeze: an 18-point button grid, small corners.
             Flavor::Kde => Look {
                 height: 32.0,
                 radius: 6,
-                edge: 4.0,
-                slot: 24.0,
+                left_edge: 4.0,
+                right_edge: 4.0,
+                slot: Vec2::splat(24.0),
                 gap: 2.0,
+            },
+            // Windows 11: a 32-pixel bar; the 16-pixel icon 16 pixels from
+            // the left edge (centred in a 32-pixel square 8 from it); 46×32
+            // caption buttons side by side against the right edge; 8-pixel
+            // window corners.
+            Flavor::Windows => Look {
+                height: 32.0,
+                radius: 8,
+                left_edge: 8.0,
+                right_edge: 0.0,
+                slot: vec2(46.0, 32.0),
+                gap: 0.0,
             },
         }
     }
@@ -377,10 +445,24 @@ fn window_state(ctx: &Context) -> WindowState {
 }
 
 impl WindowFrame {
-    /// The window's corner radius now: none when maximized or full screen.
+    /// Whether the system still draws the borderless window's shadow,
+    /// border and rounded corners: on Windows (DWM, for winit's undecorated
+    /// windows with their shadow), not on the Linux desktops.
+    fn system_draws_edges(&self) -> bool {
+        self.flavor == Flavor::Windows && cfg!(windows)
+    }
+
+    /// Whether the window needs a transparent background: the app rounds
+    /// its corners and draws its outline (all but Windows' own frame).
+    pub fn transparent(&self) -> bool {
+        !self.system_draws_edges()
+    }
+
+    /// The window's corner radius now: none when maximized or full screen,
+    /// or when the system rounds the corners.
     fn radius(&self, ctx: &Context) -> u8 {
         let state = window_state(ctx);
-        if state.maximized || state.fullscreen {
+        if state.maximized || state.fullscreen || self.system_draws_edges() {
             0
         } else {
             self.flavor.look().radius
@@ -441,7 +523,10 @@ impl WindowFrame {
             ));
         }
 
-        let inner = rect.shrink2(vec2(look.edge, 0.0));
+        let inner = Rect::from_min_max(
+            rect.min + vec2(look.left_edge, 0.0),
+            rect.max - vec2(look.right_edge, 0.0),
+        );
         let mut menu_requested = false;
         let layout = self.layout.clone();
         let left = self.controls(ui, inner, &layout.left, false, state, &mut menu_requested);
@@ -458,6 +543,11 @@ impl WindowFrame {
                 .layout(Layout::left_to_right(Align::Center)),
         );
         contents_ui.set_clip_rect(contents_rect.intersect(ui.clip_rect()));
+        // Windows: everything on the bar fades while the window is inactive.
+        let windows = self.flavor == Flavor::Windows;
+        if windows && !state.focused {
+            contents_ui.multiply_opacity(WINDOWS_INACTIVE);
+        }
         let used = egui::MenuBar::new()
             .ui(&mut contents_ui, |ui| ui.horizontal(contents).response.rect)
             .inner;
@@ -478,8 +568,11 @@ impl WindowFrame {
             let pos = pos2(x, rect.center().y - galley.size().y / 2.0);
             let visuals = ui.visuals();
             let color = match (state.focused, self.flavor) {
+                (false, Flavor::Windows) => {
+                    visuals.strong_text_color().gamma_multiply(WINDOWS_INACTIVE)
+                }
                 (false, _) => visuals.weak_text_color(),
-                (true, Flavor::Gnome) => visuals.strong_text_color(),
+                (true, Flavor::Gnome | Flavor::Windows) => visuals.strong_text_color(),
                 (true, Flavor::Kde) => visuals.text_color(),
             };
             ui.painter().galley(pos, galley, color);
@@ -550,7 +643,13 @@ impl WindowFrame {
         };
         for control in ordered {
             let response = self.button(&mut child, control, state);
-            if response.clicked() {
+            // Windows: double-clicking the icon closes the window.
+            if control == Control::Icon
+                && self.flavor == Flavor::Windows
+                && response.double_clicked()
+            {
+                perform(ui.ctx(), TitleAction::Close, state);
+            } else if response.clicked() {
                 match control {
                     Control::Icon => *menu_requested = true,
                     Control::Minimize => perform(ui.ctx(), TitleAction::Minimize, state),
@@ -580,14 +679,19 @@ impl WindowFrame {
         } else {
             Sense::click()
         };
-        let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(look.slot), sense);
+        let size = if control == Control::Icon {
+            Vec2::splat(look.slot.y)
+        } else {
+            look.slot
+        };
+        let (rect, mut response) = ui.allocate_exact_size(size, sense);
         let role = if sense == Sense::hover() {
             Role::Image
         } else {
             Role::Button
         };
         response.widget_info(|| WidgetInfo::labeled(role, true, label));
-        if self.flavor == Flavor::Kde {
+        if matches!(self.flavor, Flavor::Kde | Flavor::Windows) {
             response = response.on_hover_text(label);
         }
         if !ui.is_rect_visible(rect) {
@@ -602,10 +706,10 @@ impl WindowFrame {
         };
         if control == Control::Icon {
             if let Some(icon) = &self.icon {
-                let size = if self.flavor == Flavor::Gnome {
-                    16.0
-                } else {
+                let size = if self.flavor == Flavor::Kde {
                     18.0
+                } else {
+                    16.0
                 };
                 let mut image = Image::from_texture((icon.id(), Vec2::splat(size)));
                 if !state.focused {
@@ -617,35 +721,48 @@ impl WindowFrame {
             match self.flavor {
                 Flavor::Gnome => paint.adwaita(ui, control),
                 Flavor::Kde => paint.breeze(ui, control),
+                Flavor::Windows => {
+                    // The Close button's backplate follows the window's
+                    // top-right corner (Close is the last button).
+                    let corner = if control == Control::Close {
+                        self.radius(ui.ctx())
+                    } else {
+                        0
+                    };
+                    paint.windows(ui, control, corner);
+                }
             }
         }
         response
     }
 
     /// The window's edges: resize handles (unless maximized or full
-    /// screen) and a thin outline. Call after the window's other contents.
+    /// screen) and a thin outline (unless the system draws the window's
+    /// border). Call after the window's other contents.
     pub fn edges(&self, ctx: &Context) {
         let state = window_state(ctx);
         if state.maximized || state.fullscreen {
             return;
         }
         let window = ctx.viewport_rect();
-        let radius = f32::from(self.radius(ctx));
-        let outline = if ctx.global_style().visuals.dark_mode {
-            Color32::from_white_alpha(28)
-        } else {
-            Color32::from_black_alpha(48)
-        };
-        ctx.layer_painter(egui::LayerId::new(
-            Order::Foreground,
-            Id::unique("window-outline"),
-        ))
-        .rect_stroke(
-            window,
-            radius,
-            Stroke::new(1.0, outline),
-            StrokeKind::Inside,
-        );
+        if !self.system_draws_edges() {
+            let radius = f32::from(self.radius(ctx));
+            let outline = if ctx.global_style().visuals.dark_mode {
+                Color32::from_white_alpha(28)
+            } else {
+                Color32::from_black_alpha(48)
+            };
+            ctx.layer_painter(egui::LayerId::new(
+                Order::Foreground,
+                Id::unique("window-outline"),
+            ))
+            .rect_stroke(
+                window,
+                radius,
+                Stroke::new(1.0, outline),
+                StrokeKind::Inside,
+            );
+        }
 
         let m = RESIZE_MARGIN;
         let strips = [
@@ -789,6 +906,14 @@ struct ButtonPaint {
 const BREEZE_NEGATIVE: Color32 = Color32::from_rgb(0xda, 0x44, 0x53);
 const BREEZE_NEGATIVE_PRESSED: Color32 = Color32::from_rgb(0xb0, 0x37, 0x43);
 
+/// Windows 11's Close button under the pointer.
+const WINDOWS_CLOSE: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
+
+/// How much of their colour the title, the glyphs and the menus keep on
+/// Windows while the window is inactive (Microsoft: every element of the
+/// title bar semi-transparent).
+const WINDOWS_INACTIVE: f32 = 0.5;
+
 impl ButtonPaint {
     /// Adwaita: a faint round button with a 16-point symbolic icon; the
     /// circle darkens under the pointer and when pressed; everything fades
@@ -885,6 +1010,97 @@ impl ButtonPaint {
             }
             Control::Maximize => {
                 painter.line(vec![p(4.0, 11.0), p(9.0, 6.0), p(14.0, 11.0)], stroke);
+            }
+            Control::Icon => {}
+        }
+    }
+
+    /// Windows 11: a full-height backplate, invisible at rest; under the
+    /// pointer a subtle fill (Close: red with a white glyph); pressed, a
+    /// lighter fill and a dimmer glyph, as Fluent's subtle buttons. The
+    /// glyphs are Segoe Fluent Icons' ChromeMinimize, ChromeMaximize,
+    /// ChromeRestore and ChromeClose on their 10-point grid, faded while the
+    /// window is inactive. `corner` rounds the backplate's top-right corner.
+    fn windows(&self, ui: &Ui, control: Control, corner: u8) {
+        let painter = ui.painter();
+        let visuals = ui.visuals();
+        let close = control == Control::Close;
+        let subtle = |alpha| {
+            if visuals.dark_mode {
+                Color32::from_white_alpha(alpha)
+            } else {
+                Color32::from_black_alpha(alpha)
+            }
+        };
+        let fill = match (close, self.hovered, self.pressed) {
+            (_, false, false) => None,
+            (true, _, false) => Some(WINDOWS_CLOSE),
+            (true, _, true) => Some(WINDOWS_CLOSE.gamma_multiply(0.9)),
+            (false, _, false) => Some(subtle(0x17)),
+            (false, _, true) => Some(subtle(0x0f)),
+        };
+        if let Some(fill) = fill {
+            let corners = CornerRadius {
+                nw: 0,
+                ne: corner,
+                sw: 0,
+                se: 0,
+            };
+            painter.rect_filled(self.rect, corners, fill);
+        }
+        let fg = match (close && fill.is_some(), self.pressed) {
+            (true, false) => Color32::WHITE,
+            (true, true) => Color32::WHITE.gamma_multiply(0.7),
+            (false, true) => visuals.strong_text_color().gamma_multiply(0.62),
+            (false, false) if self.hovered || self.state.focused => visuals.strong_text_color(),
+            (false, false) => visuals.strong_text_color().gamma_multiply(WINDOWS_INACTIVE),
+        };
+        // The 10-point glyph box, its lines on pixel centres.
+        let c = self.rect.center();
+        let o = pos2(
+            painter.round_to_pixel_center(c.x - 5.0),
+            painter.round_to_pixel_center(c.y - 5.0),
+        );
+        let p = |x: f32, y: f32| o + vec2(x, y);
+        let stroke = Stroke::new(1.0, fg);
+        match control {
+            Control::Minimize => {
+                painter.line_segment([p(0.0, 5.0), p(10.0, 5.0)], stroke);
+            }
+            Control::Maximize if self.state.maximized => {
+                // Restore: a square in front, the top-right of another
+                // behind it.
+                painter.rect_stroke(
+                    Rect::from_min_max(p(0.0, 2.0), p(8.0, 10.0)),
+                    1.0,
+                    stroke,
+                    StrokeKind::Middle,
+                );
+                painter.line(
+                    vec![
+                        p(2.0, 2.0),
+                        p(2.0, 1.0),
+                        p(3.0, 0.0),
+                        p(9.0, 0.0),
+                        p(10.0, 1.0),
+                        p(10.0, 7.0),
+                        p(9.0, 8.0),
+                        p(8.0, 8.0),
+                    ],
+                    stroke,
+                );
+            }
+            Control::Maximize => {
+                painter.rect_stroke(
+                    Rect::from_min_max(p(0.0, 0.0), p(10.0, 10.0)),
+                    1.0,
+                    stroke,
+                    StrokeKind::Middle,
+                );
+            }
+            Control::Close => {
+                painter.line_segment([p(0.0, 0.0), p(10.0, 10.0)], stroke);
+                painter.line_segment([p(10.0, 0.0), p(0.0, 10.0)], stroke);
             }
             Control::Icon => {}
         }
@@ -1056,6 +1272,148 @@ ButtonsOnRight=HSM
             .expect("the menu's Close");
         close.click();
         h.step();
+        assert_eq!(commands(&h), vec![ViewportCommand::Close]);
+    }
+
+    #[test]
+    fn the_variable_or_the_platform_chooses_the_flavor() {
+        let windows = || Some(Flavor::Windows);
+        assert_eq!(chosen_flavor("", windows), Some(Flavor::Windows));
+        assert_eq!(chosen_flavor("", || None), None);
+        assert_eq!(chosen_flavor("system", windows), None);
+        assert_eq!(chosen_flavor(" Windows ", || None), Some(Flavor::Windows));
+        assert_eq!(chosen_flavor("gnome", windows), Some(Flavor::Gnome));
+        assert_eq!(chosen_flavor("KDE", windows), Some(Flavor::Kde));
+        // An unknown value keeps the system's frame.
+        assert_eq!(chosen_flavor("aqua", windows), None);
+        if cfg!(windows) {
+            assert_eq!(platform_flavor(), Some(Flavor::Windows));
+        }
+    }
+
+    #[test]
+    fn windows_has_fixed_buttons_and_clicks() {
+        use Control::*;
+        let f = WindowFrame::new(Flavor::Windows);
+        assert_eq!(
+            (f.layout.left.clone(), f.layout.right.clone()),
+            (vec![Icon], vec![Minimize, Maximize, Close])
+        );
+        assert_eq!(f.double_click, TitleAction::ToggleMaximize);
+        assert_eq!(f.middle_click, TitleAction::Nothing);
+        assert_eq!(f.right_click, TitleAction::Menu);
+        // On Windows the system rounds the corners of an opaque window; the
+        // look forced elsewhere rounds them itself.
+        assert_eq!(f.transparent(), !cfg!(windows));
+        assert!(WindowFrame::new(Flavor::Gnome).transparent());
+        assert!(WindowFrame::new(Flavor::Kde).transparent());
+    }
+
+    /// A harness drawing `frame`'s title bar with "Menus" as its contents,
+    /// 800 points wide (the bar is 784: kittest adds an 8-point margin).
+    /// Frames are 50 ms apart, so two clicks make a double-click.
+    fn title_bar_harness(mut frame: WindowFrame) -> egui_kittest::Harness<'static> {
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(vec2(800.0, 80.0))
+            .with_step_dt(0.05)
+            .build_ui(move |ui| {
+                frame.title_bar(ui, "Title", |ui| {
+                    ui.label("Menus");
+                });
+            });
+        h.run();
+        h
+    }
+
+    #[test]
+    fn windows_caption_buttons_are_46_by_32_against_the_right_edge() {
+        use egui_kittest::kittest::Queryable;
+        let s = strings();
+        let mut h = title_bar_harness(WindowFrame::new(Flavor::Windows));
+        let rect = |h: &egui_kittest::Harness<'_>, label| h.get_by_label(label).rect();
+        let (min, max, close) = (
+            rect(&h, s.window_minimize),
+            rect(&h, s.window_maximize),
+            rect(&h, s.window_close),
+        );
+        for r in [min, max, close] {
+            assert_eq!(r.size(), vec2(46.0, 32.0));
+            assert_eq!(r.top(), 8.0, "full height, from the bar's top");
+        }
+        // Side by side, Close against the bar's right edge.
+        assert_eq!(min.right(), max.left());
+        assert_eq!(max.right(), close.left());
+        assert_eq!(close.right(), 792.0);
+        // The icon: 16 points from the bar's left edge, the menus after it.
+        let icon = rect(&h, crate::branding::PRODUCT_NAME);
+        assert_eq!(icon.center().x - 8.0, 16.0 + 8.0);
+        assert!(icon.right() < rect(&h, "Menus").left());
+        assert!(rect(&h, "Menus").right() < min.left());
+
+        for (label, command) in [
+            (s.window_minimize, ViewportCommand::Minimized(true)),
+            (s.window_maximize, ViewportCommand::Maximized(true)),
+            (s.window_close, ViewportCommand::Close),
+        ] {
+            h.get_by_label(label).click();
+            h.step();
+            assert_eq!(commands(&h), vec![command], "{label}");
+            h.run();
+        }
+    }
+
+    #[test]
+    fn windows_maximized_shows_restore() {
+        use egui_kittest::kittest::Queryable;
+        let s = strings();
+        let mut h = title_bar_harness(WindowFrame::new(Flavor::Windows));
+        h.input_mut()
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .maximized = Some(true);
+        h.run();
+        assert!(h.query_by_label(s.window_maximize).is_none());
+        h.get_by_label(s.window_restore).click();
+        h.step();
+        assert_eq!(commands(&h), vec![ViewportCommand::Maximized(false)]);
+    }
+
+    /// Two clicks at `pos`, one frame per event (50 ms apart).
+    fn double_click_at(h: &mut egui_kittest::Harness<'_>, pos: Pos2) {
+        h.hover_at(pos);
+        for pressed in [true, false, true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+    }
+
+    #[test]
+    fn windows_double_clicks_maximize_on_the_bar_and_close_on_the_icon() {
+        use egui_kittest::kittest::Queryable;
+        let s = strings();
+        let mut h = title_bar_harness(WindowFrame::new(Flavor::Windows));
+        // The bar's empty space (the title is not in the way).
+        double_click_at(&mut h, pos2(300.0, 20.0));
+        assert_eq!(commands(&h), vec![ViewportCommand::Maximized(true)]);
+        h.run();
+
+        // One click on the icon opens the window menu, two close the window.
+        h.get_by_label(crate::branding::PRODUCT_NAME).click();
+        h.run();
+        assert_eq!(h.query_all_by_label(s.window_close).count(), 2);
+        h.key_press(egui::Key::Escape);
+        h.run();
+        let icon = h
+            .get_by_label(crate::branding::PRODUCT_NAME)
+            .rect()
+            .center();
+        double_click_at(&mut h, icon);
         assert_eq!(commands(&h), vec![ViewportCommand::Close]);
     }
 

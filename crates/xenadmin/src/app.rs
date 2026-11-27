@@ -544,8 +544,8 @@ impl XenAdminApp {
 
     // ---- panels -----------------------------------------------------------
 
-    /// The menus and the toolbar; on GNOME and KDE Plasma the menus are in
-    /// the title bar.
+    /// The menus and the toolbar; on Windows, GNOME and KDE Plasma the
+    /// menus are in the title bar.
     fn menu_bar(&mut self, ui: &mut Ui, state: &AppState) {
         if let Some(mut frame) = self.window_frame.take() {
             frame.title_bar(ui, branding::PRODUCT_NAME, |ui| self.menus(ui, state));
@@ -2346,10 +2346,14 @@ impl eframe::App for XenAdminApp {
         }
     }
 
-    /// With the app's own title bar the window is transparent outside its
-    /// rounded corners.
+    /// With the app's own title bar on GNOME and KDE the window is
+    /// transparent outside its rounded corners.
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        if self.window_frame.is_some() {
+        if self
+            .window_frame
+            .as_ref()
+            .is_some_and(WindowFrame::transparent)
+        {
             [0.0; 4]
         } else {
             visuals.panel_fill.to_normalized_gamma_f32()

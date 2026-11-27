@@ -615,8 +615,8 @@ impl Consoles {
     }
 
     /// The undocked consoles' windows, with the app's own title bar when
-    /// `frame` is given (GNOME, KDE Plasma): Redock and Send Ctrl+Alt+Del
-    /// then sit in it.
+    /// `frame` is given (Windows, GNOME, KDE Plasma): Redock and Send
+    /// Ctrl+Alt+Del then sit in it.
     pub fn windows(
         &mut self,
         ctx: &Context,
@@ -642,11 +642,12 @@ impl Consoles {
             let mut redock = false;
             let mut requests = Requests::default();
             let own_frame = frame.is_some();
+            let transparent = frame.as_deref().is_some_and(WindowFrame::transparent);
             let builder = ViewportBuilder::default()
                 .with_title(title.clone())
                 .with_inner_size([f32::from(w), f32::from(h) + 36.0])
                 .with_decorations(!own_frame)
-                .with_transparent(own_frame);
+                .with_transparent(transparent);
             ctx.show_viewport_immediate(id, builder, |ui, _class| {
                 if ui.input(|i| i.viewport().close_requested()) {
                     redock = true;

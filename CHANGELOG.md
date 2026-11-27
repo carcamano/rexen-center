@@ -11,6 +11,16 @@ All notable changes to ReXen Center. Versions follow the workspace version in
   Adwaita's or Breeze's look, in the order the desktop's settings give
   (`button-layout`, `kwinrc`), rounded corners, and resizing at the edges.
   `REXENCENTER_TITLE_BAR=system` brings the system's frame back.
+- **Windows title bar**: the main window and the undocked consoles put the
+  menus in the title bar, with the title and Windows 11's caption buttons
+  (Minimize, Maximize or Restore, Close; light and dark; faded while the
+  window is inactive), instead of the system's frame above an in-window menu
+  row. Dragging the bar uses the system's move loop (Snap still works),
+  double-click maximizes or restores, and the system keeps the shadow and the
+  rounded corners. Snap Layouts on hovering Maximize is not available (winit
+  cannot answer `WM_NCHITTEST` without unsafe code).
+  `REXENCENTER_TITLE_BAR=system` brings the system's frame back; `windows`
+  forces this look elsewhere.
 
 ## 0.1.1 — 2026-11-27
 
