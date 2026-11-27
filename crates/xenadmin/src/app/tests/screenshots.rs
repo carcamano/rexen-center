@@ -266,8 +266,9 @@ fn readme_screenshots() {
     shoot(&mut h, &dir, "about-light.png");
 }
 
-/// The title bar drawn on GNOME and KDE Plasma, light and dark, with a
-/// button under the pointer: for checking its look by eye.
+/// The title bar drawn on GNOME, KDE Plasma and Windows, light and dark,
+/// with a button under the pointer (and Windows' while the window is
+/// inactive): for checking its look by eye.
 ///
 /// ```text
 /// REXEN_SCREENSHOTS_DIR=/some/dir cargo test -p xenadmin \
@@ -288,6 +289,7 @@ fn title_bar_screenshots() {
     gnome_left.layout.left = vec![Control::Close, Control::Minimize, Control::Maximize];
     gnome_left.layout.right = vec![Control::Icon];
     let kde = WindowFrame::new(Flavor::Kde);
+    let windows = WindowFrame::new(Flavor::Windows);
     let shots = [
         ("gnome", gnome.clone(), ThemeSetting::Light, None),
         ("gnome", gnome, ThemeSetting::Dark, Some(s.window_close)),
@@ -304,10 +306,58 @@ fn title_bar_screenshots() {
             Some(s.window_minimize),
         ),
         ("kde", kde, ThemeSetting::Dark, Some(s.window_close)),
+        (
+            "windows",
+            windows.clone(),
+            ThemeSetting::Light,
+            Some(s.window_maximize),
+        ),
+        (
+            "windows",
+            windows.clone(),
+            ThemeSetting::Dark,
+            Some(s.window_close),
+        ),
+        (
+            "windows-close",
+            windows.clone(),
+            ThemeSetting::Light,
+            Some(s.window_close),
+        ),
+        (
+            "windows-inactive",
+            windows.clone(),
+            ThemeSetting::Light,
+            None,
+        ),
+        (
+            "windows-inactive",
+            windows.clone(),
+            ThemeSetting::Dark,
+            None,
+        ),
+        (
+            "windows-maximized",
+            windows,
+            ThemeSetting::Dark,
+            Some(s.window_restore),
+        ),
     ];
     for (name, frame, theme, hovered) in shots {
         let mut h = framed_screenshot_harness(&runtime, Some(frame));
         set_theme(&mut h, theme);
+        let viewport = h
+            .input_mut()
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default();
+        if name.ends_with("-inactive") {
+            viewport.focused = Some(false);
+        }
+        if name.ends_with("-maximized") {
+            viewport.maximized = Some(true);
+        }
+        h.step();
         if let Some(label) = hovered {
             h.get_by_label(label).hover();
         }

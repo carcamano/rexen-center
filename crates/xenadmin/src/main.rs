@@ -141,13 +141,13 @@ fn main() -> eframe::Result<()> {
         .expect("failed to start the async runtime");
     let handle = runtime.handle().clone();
 
-    // GNOME and KDE Plasma: the window draws its own title bar.
+    // Windows, GNOME and KDE Plasma: the window draws its own title bar.
     let window_frame = window_frame::detect();
     if let Some(frame) = &window_frame {
         tracing::info!(flavor = ?frame.flavor, layout = ?frame.layout, "own title bar");
     }
     let options = eframe::NativeOptions {
-        viewport: viewport(window_frame.is_some()),
+        viewport: viewport(window_frame.as_ref()),
         ..Default::default()
     };
     let store = Arc::new(store);
@@ -306,18 +306,21 @@ fn run_mcp(
     code
 }
 
-/// The main window: titled with the product's name. With `own_title_bar`
-/// (GNOME, KDE Plasma) it has no system frame and a transparent background,
-/// so that the title bar drawn by the app gives it rounded corners.
-fn viewport(own_title_bar: bool) -> egui::ViewportBuilder {
+/// The main window: titled with the product's name. With the app's own
+/// title bar (`frame`: Windows, GNOME, KDE Plasma) it has no system frame;
+/// on GNOME and KDE also a transparent background, so that the title bar
+/// drawn by the app gives it rounded corners (on Windows the system keeps
+/// rounding them and drawing the shadow, which eframe asks winit for on
+/// borderless windows).
+fn viewport(frame: Option<&window_frame::WindowFrame>) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_title(branding::PRODUCT_NAME)
         .with_app_id(branding::APP_ID)
         .with_inner_size([1100.0, 760.0])
         .with_min_inner_size([640.0, 400.0])
         .with_icon(window_icon())
-        .with_decorations(!own_title_bar)
-        .with_transparent(own_title_bar)
+        .with_decorations(frame.is_none())
+        .with_transparent(frame.is_some_and(window_frame::WindowFrame::transparent))
 }
 
 /// The application icon ([`branding::ICON_PNG`]).
@@ -360,14 +363,25 @@ mod tests {
 
     #[test]
     fn the_window_is_titled_with_the_product_name() {
-        let viewport = viewport(false);
+        use window_frame::{Flavor, WindowFrame};
+        let viewport = viewport(None);
         assert_eq!(viewport.title.as_deref(), Some("ReXen Center"));
         assert_eq!(viewport.app_id.as_deref(), Some("rexen-center"));
-        assert_eq!(viewport.decorations, Some(true));
-        let own = super::viewport(true);
+        assert_eq!(
+            (viewport.decorations, viewport.transparent),
+            (Some(true), Some(false))
+        );
+        let own = super::viewport(Some(&WindowFrame::new(Flavor::Gnome)));
         assert_eq!(
             (own.decorations, own.transparent),
             (Some(false), Some(true))
+        );
+        // Windows keeps an opaque window: the system rounds its corners.
+        // The look forced elsewhere rounds them itself.
+        let windows = super::viewport(Some(&WindowFrame::new(Flavor::Windows)));
+        assert_eq!(
+            (windows.decorations, windows.transparent),
+            (Some(false), Some(!cfg!(windows)))
         );
         assert_eq!(
             branding::originator(),

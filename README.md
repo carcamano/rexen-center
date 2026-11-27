@@ -670,9 +670,20 @@ questions and messages. Open an area to see what works:
   desktop puts them (`button-layout` in GNOME, `ButtonsOnLeft` and
   `ButtonsOnRight` in `kwinrc`). Drag it to move the window; double-,
   middle- and right-clicks do what the desktop's settings say; the window's
-  edges resize it. Undocked consoles get the same bar.
-  `REXENCENTER_TITLE_BAR=system` keeps the system's frame, `gnome` or `kde`
-  forces that look on any desktop;
+  edges resize it. Undocked consoles get the same bar;
+- **Windows title bar** (this console's own): the menus sit in the title
+  bar, as in Office or Visual Studio Code, with the icon, the title and
+  Windows 11's caption buttons (46×32 Minimize, Maximize or Restore and
+  Close, a subtle fill under the pointer and red under it on Close, faded
+  while the window is inactive, in light and dark). Dragging the bar moves
+  the window with the system's move loop, so Snap keeps working;
+  double-clicking it maximizes or restores; right-clicking it or clicking
+  the icon opens the window menu. The system keeps the window's shadow,
+  border and rounded corners. Snap Layouts (the flyout over Maximize) is not
+  offered: it needs a `WM_NCHITTEST` answer that winit cannot give without
+  unsafe code. Undocked consoles get the same bar.
+  `REXENCENTER_TITLE_BAR=system` keeps the system's frame on Windows, GNOME
+  and KDE; `gnome`, `kde` or `windows` forces that look on any platform;
 - **native file dialogs**: a Browse... button beside every file or folder
   field (certificates, server backups, XVA and OVF/OVA import and export,
   saved searches, the external tools) opens the platform's Open, Save or
