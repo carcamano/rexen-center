@@ -7,10 +7,15 @@
 # Environment: TARGET=<rust target triple> to cross-build for the other
 # architecture (e.g. x86_64-apple-darwin, after `rustup target add`).
 #
-# Needs only Xcode's command line tools (iconutil, hdiutil, plutil). The
-# bundle is not signed or notarized: Gatekeeper blocks the first start until
-# System Settings > Privacy & Security > Open Anyway (right-click > Open on
-# macOS 14 and earlier), or `xattr -dr com.apple.quarantine "ReXen Center.app"`.
+# Needs only Xcode's command line tools (iconutil, hdiutil, plutil,
+# codesign). The bundle is ad-hoc signed, not signed with an Apple Developer
+# ID or notarized: Gatekeeper says Apple could not verify it and blocks the
+# first start until System Settings > Privacy & Security > Open Anyway
+# (right-click > Open on macOS 14 and earlier), or
+# `xattr -dr com.apple.quarantine "ReXen Center.app"`. Without the ad-hoc
+# signature of the whole bundle, the executable keeps only the linker's
+# signature, which seals neither Info.plist nor Resources, and macOS calls
+# the downloaded app "damaged" instead, with no Open Anyway.
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -55,14 +60,39 @@ sed -e "s/@VERSION@/$version/g" -e "s/@NAME@/$brand_name/g" -e "s/@SUBTITLE@/$br
     "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
+# Ad-hoc signature of the assembled bundle (last, as nothing may change it
+# afterwards): it replaces the linker's signature of the executable, seals
+# Resources and binds Info.plist; the signing identifier is the bundle's
+# CFBundleIdentifier. The bundle has a single Mach-O, so no --deep.
+codesign --force --sign - "$app"
+verify() {
+    if ! codesign --verify --deep --strict --verbose=2 "$1"; then
+        echo "the code signature of $1 does not verify" >&2
+        exit 1
+    fi
+}
+verify "$app"
+
 # Disk image: the app and a link to /Applications.
 stage="$work/dmg"
 mkdir -p "$stage"
-cp -R "$app" "$stage/"
+ditto "$app" "$stage/$brand_name.app"
 ln -s /Applications "$stage/Applications"
 dmg="$out/$brand_id-$version-macos-$arch.dmg"
 rm -f "$dmg"
 hdiutil create -quiet -volname "$brand_name $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+
+# The app as users get it: from the disk image.
+mnt="$work/mnt"
+mkdir -p "$mnt"
+hdiutil attach -nobrowse -readonly -noautoopen -quiet -mountpoint "$mnt" "$dmg"
+status=0
+( verify "$mnt/$brand_name.app" ) || status=1
+hdiutil detach -quiet "$mnt" || hdiutil detach -quiet -force "$mnt"
+if [ "$status" -ne 0 ]; then
+    rm -f "$dmg"
+    exit 1
+fi
 
 echo "$app"
 echo "$dmg"

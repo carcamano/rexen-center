@@ -17,7 +17,10 @@
 # signed, and a tag makes a *draft* release for the owner to sign offline
 # with packaging/sign-release.sh and then publish (see
 # packaging/release-signing/README.md). The packages themselves are not
-# code-signed or notarized.
+# signed with an Apple Developer ID or a Windows certificate, nor notarized;
+# packaging/macos/build.sh gives the macOS app an ad-hoc signature (without
+# it, macOS calls the downloaded app "damaged") and fails if it does not
+# verify.
 name: Release
 
 on:

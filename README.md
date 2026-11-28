@@ -103,26 +103,37 @@ signature of the checksum file:
 (the key is also in [`packaging/release-signing/`](packaging/release-signing/)).
 
 > [!IMPORTANT]
-> The packages are **not code-signed or notarized**, so macOS and Windows warn before the
-> first start (the minisign signature above is for checking downloads, not for the
-> operating system). The steps below get past the warning.
+> The packages are **not signed with an Apple Developer ID or a Windows code-signing
+> certificate, and not notarized**, so macOS and Windows warn before the first start (the
+> minisign signature above is for checking downloads, not for the operating system). The
+> steps below get past the warning. Only a Developer ID signature with Apple's
+> notarization would remove the macOS warning entirely; the project does not have one.
 
 ## Install
 
 <details>
-<summary><b>🍎 macOS</b> — open the <code>.dmg</code>, drag to Applications, then allow the unsigned app once</summary>
+<summary><b>🍎 macOS</b> — open the <code>.dmg</code>, drag to Applications, then allow the app once</summary>
+
+The app is ad-hoc signed: its signature is complete and macOS checks it, but it names
+no Apple Developer ID, so macOS cannot tell who made it.
 
 1. Open the `.dmg` and drag **ReXen Center** to **Applications**.
-2. Start it. macOS says it cannot check the app for malicious software: click **Done**.
-3. Open **System Settings › Privacy & Security** and click **Open Anyway** next to the
-   message about ReXen Center, then confirm. (On macOS 14 and earlier, right-click the
-   app in Finder and choose **Open** instead.)
+2. Start it. macOS says **"ReXen Center" Not Opened** — Apple could not verify it is free
+   of malware: click **Done** (not Move to Trash).
+3. Open **System Settings › Privacy & Security**, click **Open Anyway** next to the
+   message that ReXen Center was blocked, then **Open Anyway** again and confirm with
+   your password or Touch ID. macOS remembers the choice. (On macOS 14 and earlier,
+   right-click the app in Finder and choose **Open** instead.)
 
-Or clear the quarantine flag from a terminal:
+Or clear the quarantine flag from a terminal, which skips the warning:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/ReXen Center.app"
 ```
+
+The packages of 0.2.0 and earlier lack the bundle's signature, and macOS says
+**"ReXen Center" is damaged and can't be opened** instead, with no Open Anyway. The
+download is not damaged (check it with `SHA256SUMS` above): use the command above.
 
 </details>
 
@@ -206,7 +217,9 @@ files are put back, the old version starts again and tells you why the update wa
 undone. Updating in place needs write access to the folder the app is in: an app in
 `/Applications` installed by an administrator cannot be updated by a standard user
 (the dialog says so and links to the release page). On macOS the new copy may ask
-again for access to the saved passwords in the keychain, as after a manual update.
+again for access to the saved passwords in the keychain, as after a manual update:
+an ad-hoc signed app is known to the keychain only by its exact code, which changes
+with every version.
 
 **Integrity.** Each release publishes `SHA256SUMS` with the checksum of every
 package, and `SHA256SUMS.minisig`, a [minisign](https://jedisct1.github.io/minisign/)
@@ -222,8 +235,9 @@ What the signature guarantees: the package is the one the holder of the release 
 signed for that release. Someone who can change the release page (a stolen GitHub
 account or token, a compromised download path) cannot make the app install
 something else, because they cannot sign it. What it does not: it is **not the
-operating system's code signing** — the packages are still not code-signed or
-notarized, so macOS Gatekeeper and Windows SmartScreen warn exactly as before
+operating system's code signing** — the packages are not signed with an Apple
+Developer ID or a Windows certificate, nor notarized, so macOS Gatekeeper and Windows
+SmartScreen warn exactly as before
 (see [Install](#install)), and installing by hand is not checked unless you run
 `minisign` yourself. It does not protect against a stolen release key (that is
 what the key's rotation is for, see
@@ -1094,12 +1108,15 @@ XAPI_HOST=192.0.2.10 XAPI_USER=root XAPI_PASSWORD=... cargo run -p xapi --exampl
 Each platform has a script under `packaging/` that builds a release binary
 (`cargo build --release --locked`) and packs it with the icon
 (`packaging/icons/`: SVG sources, rendered sizes and `render.sh`, see its
-README; the Windows `.ico` is embedded in the executable). Packages are not
-code-signed or notarized. The output folder defaults to `target/dist`.
+README; the Windows `.ico` is embedded in the executable). The macOS app is ad-hoc
+signed (`codesign --sign -`), and the build fails unless `codesign --verify --deep
+--strict` accepts it, as built and inside the disk image; no package is signed with a
+Developer ID or a Windows certificate, or notarized. The output folder defaults to
+`target/dist`.
 
 | Platform | Command | Result |
 |---|---|---|
-| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`; `TARGET=x86_64-apple-darwin` builds for Intel) |
+| macOS | `packaging/macos/build.sh [out-dir]` | `ReXen Center.app` and `rexen-center-<version>-macos-<arch>.dmg` (Xcode command line tools only: `iconutil`, `hdiutil`, `plutil`, `codesign`; `TARGET=x86_64-apple-darwin` builds for Intel) |
 | Linux | `packaging/linux/build.sh [out-dir]` | `rexen-center-<version>-linux-<arch>.tar.gz`, plus a `.deb` with [cargo-deb](https://crates.io/crates/cargo-deb), an `.rpm` with [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm) and an AppImage with `appimagetool`, each when installed (the `.deb` and `.rpm` are described in `crates/xenadmin/Cargo.toml`) |
 | Windows | `powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Out <dir>]` | `rexen-center-<version>-windows-<arch>.zip` (`rexencenter.exe`, `LICENSE`, `README.md`), plus an `.msi` installer (`packaging/windows/rexen-center.wxs`) when the [WiX Toolset](https://wixtoolset.org) 5 is installed (`dotnet tool install --global wix --version 5.0.2`) |
 

@@ -5,6 +5,21 @@ All notable changes to ReXen Center. Versions follow the workspace version in
 
 ## Unreleased
 
+- **macOS: "is damaged and can't be opened"**: the disk images up to 0.2.0
+  held an app whose executable kept only the linker's ad-hoc signature, which
+  seals neither `Info.plist` nor `Resources`, so the bundle's signature did
+  not verify and macOS refused the downloaded (quarantined) app as damaged,
+  with no Open Anyway (the Intel build was not signed at all).
+  `packaging/macos/build.sh` now signs the assembled bundle ad hoc
+  (`codesign --force --sign -`; the signing identifier becomes the bundle
+  identifier `local.rexen-center.console` instead of `rexencenter`) and fails
+  unless `codesign --verify --deep --strict` accepts the app, both as built
+  and inside the disk image. macOS now shows its usual warning that Apple
+  could not verify the app, which System Settings › Privacy & Security ›
+  Open Anyway passes; only a Developer ID signature with notarization would
+  remove it. The README's macOS install notes say so, and keep the
+  `xattr -dr com.apple.quarantine` command for the older packages.
+
 ## 0.2.0 — 2026-11-27
 
 Automatic updates with signed releases, and each desktop's own title bar,
