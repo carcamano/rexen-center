@@ -1,5 +1,5 @@
 <!--
-  The download links below name the release version (v0.2.0); update them
+  The download links below name the release version (v0.2.1); update them
   together with the workspace version in Cargo.toml at each release.
   Screenshots: docs/screenshots/, rendered from the mock server (see
   "Development and tests").
@@ -79,19 +79,19 @@
 
 ## Download
 
-Version **0.2.0** — [all releases](https://github.com/carcamano/rexen-center/releases) · [release notes](https://github.com/carcamano/rexen-center/releases/tag/v0.2.0) ·
-[`SHA256SUMS`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/SHA256SUMS) ·
-[`SHA256SUMS.minisig`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/SHA256SUMS.minisig)
+Version **0.2.1** — [all releases](https://github.com/carcamano/rexen-center/releases) · [release notes](https://github.com/carcamano/rexen-center/releases/tag/v0.2.1) ·
+[`SHA256SUMS`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/SHA256SUMS) ·
+[`SHA256SUMS.minisig`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/SHA256SUMS.minisig)
 
 | Platform | File | Kind |
 |---|---|---|
-| 🍎 macOS 11+ — Apple Silicon | [`rexen-center-0.2.0-macos-arm64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-macos-arm64.dmg) | disk image |
-| 🍎 macOS 11+ — Intel | [`rexen-center-0.2.0-macos-x86_64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-macos-x86_64.dmg) | disk image |
-| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.0-windows-x64.msi`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-windows-x64.msi) | installer |
-| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.0-windows-x64.zip`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-windows-x64.zip) | portable |
-| 🐧 Debian 12+, Ubuntu 22.04+ — x86_64 | [`rexen-center_0.2.0-1_amd64.deb`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center_0.2.0-1_amd64.deb) | package |
-| 🐧 Fedora — x86_64 | [`rexen-center-0.2.0-1.x86_64.rpm`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-1.x86_64.rpm) | package |
-| 🐧 Other Linux — x86_64, glibc 2.35+ | [`rexen-center-0.2.0-linux-x86_64.tar.gz`](https://github.com/carcamano/rexen-center/releases/download/v0.2.0/rexen-center-0.2.0-linux-x86_64.tar.gz) | archive |
+| 🍎 macOS 11+ — Apple Silicon | [`rexen-center-0.2.1-macos-arm64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-macos-arm64.dmg) | disk image |
+| 🍎 macOS 11+ — Intel | [`rexen-center-0.2.1-macos-x86_64.dmg`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-macos-x86_64.dmg) | disk image |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.1-windows-x64.msi`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-windows-x64.msi) | installer |
+| 🪟 Windows 10 / 11 — x64 | [`rexen-center-0.2.1-windows-x64.zip`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-windows-x64.zip) | portable |
+| 🐧 Debian 12+, Ubuntu 22.04+ — x86_64 | [`rexen-center_0.2.1-1_amd64.deb`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center_0.2.1-1_amd64.deb) | package |
+| 🐧 Fedora — x86_64 | [`rexen-center-0.2.1-1.x86_64.rpm`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-1.x86_64.rpm) | package |
+| 🐧 Other Linux — x86_64, glibc 2.35+ | [`rexen-center-0.2.1-linux-x86_64.tar.gz`](https://github.com/carcamano/rexen-center/releases/download/v0.2.1/rexen-center-0.2.1-linux-x86_64.tar.gz) | archive |
 
 The packages are built by GitHub Actions from the tagged source
 ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Check them with
@@ -154,7 +154,7 @@ SmartScreen may say **"Windows protected your PC"**: click **More info**, then
 <summary><b>🐧 Debian and Ubuntu</b> — the <code>.deb</code> package</summary>
 
 ```sh
-sudo apt install ./rexen-center_0.2.0-1_amd64.deb
+sudo apt install ./rexen-center_0.2.1-1_amd64.deb
 ```
 
 apt pulls in the libraries it needs. Remove it with `sudo apt remove rexen-center`.
@@ -165,7 +165,7 @@ apt pulls in the libraries it needs. Remove it with `sudo apt remove rexen-cente
 <summary><b>🐧 Fedora</b> — the <code>.rpm</code> package</summary>
 
 ```sh
-sudo dnf install ./rexen-center-0.2.0-1.x86_64.rpm
+sudo dnf install ./rexen-center-0.2.1-1.x86_64.rpm
 ```
 
 Remove it with `sudo dnf remove rexen-center`.
@@ -176,8 +176,8 @@ Remove it with `sudo dnf remove rexen-center`.
 <summary><b>🐧 Other Linux</b> — the <code>.tar.gz</code> archive</summary>
 
 ```sh
-tar xzf rexen-center-0.2.0-linux-x86_64.tar.gz
-rexen-center-0.2.0/bin/rexencenter
+tar xzf rexen-center-0.2.1-linux-x86_64.tar.gz
+rexen-center-0.2.1/bin/rexencenter
 ```
 
 Copy `share/` to `~/.local/share` for the menu entry and icon. It needs glibc 2.35 or

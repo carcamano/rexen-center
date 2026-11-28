@@ -157,7 +157,7 @@ fn license(ui: &mut Ui) {
         });
 }
 
-/// "Version 0.2.0 · Release build for macOS (aarch64)".
+/// "Version 0.2.1 · Release build for macOS (aarch64)".
 pub fn version_line() -> String {
     let s = strings();
     let build = if cfg!(debug_assertions) {

@@ -5466,7 +5466,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xapi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytes",
  "reqwest",
@@ -5483,7 +5483,7 @@ dependencies = [
 
 [[package]]
 name = "xapi-codegen"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ring",
  "serde_json",
@@ -5491,7 +5491,7 @@ dependencies = [
 
 [[package]]
 name = "xapi-mock"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -5522,7 +5522,7 @@ dependencies = [
 
 [[package]]
 name = "xen-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "arc-swap",
  "directories",
@@ -5547,7 +5547,7 @@ dependencies = [
 
 [[package]]
 name = "xen-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5563,7 +5563,7 @@ dependencies = [
 
 [[package]]
 name = "xen-rrd"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "quick-xml",
  "reqwest",
@@ -5576,7 +5576,7 @@ dependencies = [
 
 [[package]]
 name = "xen-update"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "flate2",
  "reqwest",
@@ -5596,7 +5596,7 @@ dependencies = [
 
 [[package]]
 name = "xen-vnc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "flate2",
  "rustls",
@@ -5608,7 +5608,7 @@ dependencies = [
 
 [[package]]
 name = "xenadmin"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "eframe",
  "egui",

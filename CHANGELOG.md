@@ -5,6 +5,10 @@ All notable changes to ReXen Center. Versions follow the workspace version in
 
 ## Unreleased
 
+## 0.2.1 — 2026-11-27
+
+The macOS app opens again: the disk images carry a properly signed bundle.
+
 - **macOS: "is damaged and can't be opened"**: the disk images up to 0.2.0
   held an app whose executable kept only the linker's ad-hoc signature, which
   seals neither `Info.plist` nor `Resources`, so the bundle's signature did
